@@ -1,0 +1,32 @@
+# =============================================================================
+# CORE runtime for the FastAPI app — everything Phase 1 needs, pinned & buildable.
+# The heavy document-parsing / embedding / evaluation stack lives in
+# requirements-ml.txt and is added in the phase that implements ingestion &
+# retrieval (see the note in that file and in the Dockerfile).
+# Never use unpinned ranges or :latest — reproducible offline builds only.
+# =============================================================================
+
+# ---- Web framework / server ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20          # file uploads on /ingest
+sse-starlette==2.1.3              # SSE streaming for /v1/chat/completions
+
+# ---- Config / models ----
+pydantic==2.10.4
+pydantic-settings==2.7.1
+pyyaml==6.0.2                     # glossary loading
+
+# ---- Clients (local services only) ----
+httpx==0.28.1                    # async calls to Ollama + Qdrant health
+qdrant-client==1.12.2
+
+# ---- Model fetch (setup-time only) ----
+# Lightweight, conflict-free. Lets setup_models.sh pre-download the reranker
+# weights into ./models so the stack can later run fully offline. The reranker
+# *runtime* (FlagEmbedding/transformers) arrives with requirements-ml.txt.
+huggingface-hub==0.27.1
+
+# ---- Dev / test / lint ----
+pytest==8.3.4
+ruff==0.9.1

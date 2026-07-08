@@ -1,0 +1,60 @@
+# =============================================================================
+# Từ điển thuật ngữ định phí bảo hiểm (public actuarial terminology only).
+# Committed to the repo. NEVER add confidential/company-specific content here.
+# Schema (see .claude/skills/insurance-rag-pipeline, section 4):
+#   - term: canonical Vietnamese term
+#     synonyms: [alternate VI terms, English equivalents]
+#     symbol: standard actuarial notation (LaTeX, no $ delimiters)
+#     definition: one-sentence Vietnamese definition
+# Used by: query_expansion.py, indexed as doc_type "glossary", notation repair.
+# =============================================================================
+
+- term: "phí thuần"
+  synonyms: ["net premium", "phí rủi ro thuần", "phí ròng"]
+  symbol: "P"
+  definition: "Phần phí bảo hiểm chỉ đủ để trang trải quyền lợi bảo hiểm dự kiến, chưa bao gồm chi phí hoạt động."
+
+- term: "phí gộp"
+  synonyms: ["gross premium", "phí toàn phần", "phí thực thu"]
+  symbol: "G"
+  definition: "Phí bảo hiểm thực tế thu của khách hàng, bằng phí thuần cộng phần phụ phí cho chi phí và lợi nhuận."
+
+- term: "dự phòng nghiệp vụ"
+  synonyms: ["reserve", "dự phòng toán học", "policy reserve", "net premium reserve"]
+  symbol: "{}_tV_x"
+  definition: "Giá trị hiện tại của các nghĩa vụ tương lai trừ đi giá trị hiện tại của phí thuần tương lai tại thời điểm t."
+
+- term: "xác suất tử vong"
+  synonyms: ["mortality rate", "tỷ lệ tử vong", "tỷ suất chết"]
+  symbol: "q_x"
+  definition: "Xác suất một người sống ở tuổi x sẽ chết trước khi đạt tuổi x+1."
+
+- term: "xác suất sống"
+  synonyms: ["survival probability", "tỷ lệ sống sót"]
+  symbol: "p_x"
+  definition: "Xác suất một người sống ở tuổi x còn sống đến tuổi x+1; bằng 1 trừ xác suất tử vong."
+
+- term: "bảng tỷ lệ tử vong"
+  synonyms: ["life table", "mortality table", "bảng sinh mệnh", "bảng tuổi thọ"]
+  symbol: "l_x"
+  definition: "Bảng thống kê số người còn sống l_x tại mỗi tuổi x dùng để tính toán các đại lượng định phí."
+
+- term: "niên kim nhân thọ"
+  synonyms: ["life annuity", "trái khoản nhân thọ", "annuity"]
+  symbol: "\\ddot{a}_x"
+  definition: "Giá trị hiện tại của một dòng chi trả định kỳ trong khi người được bảo hiểm còn sống (đầu kỳ nếu có dấu hai chấm trên)."
+
+- term: "bảo hiểm tử kỳ trọn đời"
+  synonyms: ["whole life insurance", "bảo hiểm trọn đời", "whole life assurance"]
+  symbol: "A_x"
+  definition: "Giá trị hiện tại của khoản chi trả 1 đơn vị vào cuối năm tử vong của người được bảo hiểm tuổi x."
+
+- term: "hệ số chiết khấu"
+  synonyms: ["discount factor", "hệ số hiện tại hóa", "present value factor"]
+  symbol: "v"
+  definition: "Hệ số quy đổi một đơn vị tiền tệ tương lai về hiện tại, bằng 1 chia cho (1 cộng lãi suất kỹ thuật): v = 1/(1+i)."
+
+- term: "lãi suất kỹ thuật"
+  synonyms: ["technical interest rate", "lãi suất định phí", "valuation interest rate", "assumed interest rate"]
+  symbol: "i"
+  definition: "Lãi suất giả định dùng để chiết khấu dòng tiền khi tính phí và dự phòng của hợp đồng bảo hiểm."

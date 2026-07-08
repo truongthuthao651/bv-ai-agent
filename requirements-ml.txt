@@ -1,0 +1,27 @@
+# =============================================================================
+# HEAVY parsers + evaluation — DEFERRED to the hard-parser increment (Increment
+# D). NOT installed in the current image. The embedding/reranking/DOCX deps the
+# earlier slice needs live in requirements-embed.txt instead.
+#
+# When enabling these, also install a CPU torchvision from the PyTorch CPU index
+# in the Dockerfile (docling/easyocr pull torchvision, which must match the
+# CPU torch already installed):
+#   pip install torchvision==<ver> --index-url https://download.pytorch.org/whl/cpu
+#
+# Pin top-level libs only; let docling/paddle drive their own transitive
+# versions (they carry exact pins that conflict with hand-pinning). Finalize
+# against the resolved lock when this increment lands.
+# =============================================================================
+
+# ---- Document parsing (PDF, images, spreadsheets) ----
+docling==2.15.1                  # PDF parsing + formula enrichment
+pandas==2.2.3                    # XLSX -> Markdown tables
+openpyxl==3.1.5
+pillow==11.1.0
+
+# ---- OCR / vision (Vietnamese, formula regions) ----
+paddleocr==2.9.1
+paddlepaddle==2.6.2
+
+# ---- Evaluation ----
+ragas==0.2.10
