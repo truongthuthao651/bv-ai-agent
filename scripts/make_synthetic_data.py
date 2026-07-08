@@ -100,6 +100,57 @@ $$v = \\frac{1}{1+i}$$
 Với lãi suất kỹ thuật giả định $i = 0{,}05$ thì $v \\approx 0{,}952$.
 """
 
+ANNUITY_MORTALITY = """\
+# Hướng dẫn Tính Niên kim Nhân thọ và Sử dụng Bảng Tỷ lệ Tử vong (tài liệu nội bộ giả định)
+
+## Điều 1: Bảng tỷ lệ tử vong minh họa
+
+Bảng dưới đây minh họa số người còn sống $l_x$ tại một số độ tuổi (số liệu giả
+định phục vụ kiểm thử):
+
+| Tuổi $x$ | $l_x$ | $q_x$ |
+| --- | --- | --- |
+| 30 | 970000 | 0,00120 |
+| 31 | 968836 | 0,00125 |
+| 32 | 967625 | 0,00131 |
+| 33 | 966358 | 0,00138 |
+| 34 | 965024 | 0,00145 |
+
+Xác suất tử vong $q_x$ và xác suất sống $p_x$ tại tuổi $x$ liên hệ với bảng tỷ
+lệ tử vong theo công thức:
+
+$$q_x = \\frac{l_x - l_{x+1}}{l_x}, \\qquad p_x = 1 - q_x = \\frac{l_{x+1}}{l_x}$$
+
+trong đó:
+
+- $l_x$ là số người còn sống ở tuổi $x$ trong bảng tỷ lệ tử vong;
+- $q_x$ là xác suất một người tuổi $x$ tử vong trước khi đạt tuổi $x+1$;
+- $p_x$ là xác suất một người tuổi $x$ sống đến tuổi $x+1$.
+
+## Điều 2: Niên kim nhân thọ trọn đời trả đầu kỳ
+
+Niên kim nhân thọ trọn đời trả đầu kỳ (1 đơn vị mỗi năm, đầu năm, khi người
+được bảo hiểm còn sống), tuổi $x$, được xác định theo:
+
+$$\\ddot{a}_x = \\sum_{k=0}^{\\infty} v^k \\cdot {}_kp_x$$
+
+trong đó:
+
+- $v = \\dfrac{1}{1+i}$ là hệ số chiết khấu ứng với lãi suất kỹ thuật $i$;
+- ${}_kp_x = \\dfrac{l_{x+k}}{l_x}$ là xác suất một người tuổi $x$ còn sống sau $k$ năm;
+- $\\ddot{a}_x$ là giá trị hiện tại của niên kim (1 đơn vị/năm, trả đầu kỳ) trọn đời.
+
+## Điều 3: Liên hệ giữa bảo hiểm trọn đời và niên kim
+
+Giá trị hiện tại của bảo hiểm tử kỳ trọn đời $A_x$ và niên kim nhân thọ trọn
+đời $\\ddot{a}_x$ liên hệ với nhau qua hệ số chiết khấu:
+
+$$A_x = 1 - d \\cdot \\ddot{a}_x, \\qquad d = 1 - v$$
+
+trong đó $d$ là suất chiết khấu (discount rate) tương ứng với lãi suất kỹ
+thuật $i$.
+"""
+
 PROCEDURE_CLAIMS = """\
 # Quy trình Giải quyết Quyền lợi Bảo hiểm (bản giả định)
 
@@ -128,6 +179,7 @@ Công ty giải quyết trong vòng 30 ngày kể từ ngày nhận đủ hồ s
 DOCUMENTS: dict[str, str] = {
     "quy_tac_tu_ky_an_tam.md": POLICY_TERM_LIFE,
     "huong_dan_du_phong_toan_hoc.md": DOC_RESERVES,
+    "cong_thuc_nien_kim_bang_ty_le_tu_vong.md": ANNUITY_MORTALITY,
     "quy_trinh_giai_quyet_quyen_loi.md": PROCEDURE_CLAIMS,
 }
 
