@@ -1,8 +1,8 @@
 """FastAPI entrypoint.
 
-Wires up routers and application lifespan (model warmup). Phase 1 ships a working
-``/health`` endpoint; the chat and ingest routers are registered as stubs and will
-be implemented in later phases.
+Wires up routers and application lifespan (model warmup): ``/health``, ``/ingest``
++ ``/documents`` (Markdown/DOCX), and the OpenAI-compatible ``/v1/chat/completions``.
+Hard parsers (PDF/XLSX/image) arrive in the hard-parser increment (Increment D).
 """
 
 from __future__ import annotations

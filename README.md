@@ -86,10 +86,17 @@ ruff check app/ && ruff format app/                                    # lint + 
 
 ### Project status
 
-**Phase 1 (foundation) — done:** directory structure, config (`settings.py`),
-Docker Compose (CPU + GPU), Dockerfile, `requirements.txt`, a working `/health`
-endpoint, setup/healthcheck scripts, and the starter glossary. Parsing,
-enrichment, chunking, retrieval, and generation are stubs to be implemented next.
+**Done:** foundation (directory structure, `settings.py`, Docker Compose CPU+GPU,
+Dockerfile, `requirements.txt`, `/health`, setup/healthcheck scripts, starter
+glossary); Markdown/DOCX ingestion (parsing, equation-safe chunking, formula
+verbalization, bge-m3 dense+sparse indexing into Qdrant) via `POST /ingest`;
+retrieval (glossary query expansion, LLM standalone-question rewrite, hybrid
+RRF-fused search, bge-reranker-v2-m3 reranking) and generation (Vietnamese
+system prompt with citations/refusal/math-disclaimer rules, SSE streaming) via
+`POST /v1/chat/completions`; a 21-question golden set (`eval/golden_set.jsonl`).
+
+**Next:** hard parsers (PDF/XLSX/image/OCR/formula-OCR/figures — Increment D),
+and wiring `eval/run_ragas.py` against the golden set.
 
 See `CLAUDE.md` for architecture and the non-negotiable security rules, and
 `.claude/skills/insurance-rag-pipeline/SKILL.md` for the implementation guide.

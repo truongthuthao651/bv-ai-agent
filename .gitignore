@@ -13,8 +13,11 @@ data/glossary/*
 !data/glossary/*.yml
 
 # ---- Models & vector store (large / machine-local) ----
-models/
-qdrant_storage/
+# Leading slash: anchor to repo root ONLY — an unanchored "models/" also
+# matches app/models/ (the shared schemas module) and silently drops it
+# from version control. Same reasoning for qdrant_storage/.
+/models/
+/qdrant_storage/
 
 # ---- Python ----
 __pycache__/
