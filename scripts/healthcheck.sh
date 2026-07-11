@@ -9,12 +9,13 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ -f .env ]]; then
-  # shellcheck disable=SC1091
-  set -a; source .env; set +a
-fi
+# Read one variable from .env. Never `source` it: values contain spaces and
+# UTF-8 (ASSISTANT_NAME, WEBUI_NAME), which the shell would try to execute.
+env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 
+API_PORT="$(env_get API_PORT)"
 API_PORT="${API_PORT:-8000}"
+OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"
 OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
 
 fail=0

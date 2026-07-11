@@ -13,10 +13,9 @@
 # against the resolved lock when this increment lands.
 # =============================================================================
 
-# ---- Document parsing (PDF, images, spreadsheets) ----
+# ---- Document parsing (PDF, images) ----
+# (XLSX moved to requirements-embed.txt — handled by openpyxl, already live.)
 docling==2.15.1                  # PDF parsing + formula enrichment
-pandas==2.2.3                    # XLSX -> Markdown tables
-openpyxl==3.1.5
 pillow==11.1.0
 
 # ---- OCR / vision (Vietnamese, formula regions) ----

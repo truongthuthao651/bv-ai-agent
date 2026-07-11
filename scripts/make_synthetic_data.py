@@ -6,9 +6,10 @@ actuarial formulas are textbook-standard (life contingencies) and therefore not
 confidential. See the insurance-rag-pipeline skill, section 7, and the security
 rules in CLAUDE.md.
 
-Phase 2 (easy path) emits Markdown — the canonical format the pipeline already
-speaks. A DOCX (with real OMML equations, via pandoc) and scanned/figure samples
-are added in the hard-parser increment.
+Emits Markdown (the canonical format) plus a claims-payout XLSX exercising the
+spreadsheet path (multi-sheet, dates, VND amounts). A DOCX (with real OMML
+equations, via pandoc) and scanned/figure samples are added in the hard-parser
+increment.
 
 Run:
     python scripts/make_synthetic_data.py
@@ -17,6 +18,7 @@ Run:
 from __future__ import annotations
 
 import unicodedata
+from datetime import date
 from pathlib import Path
 
 # Repo-relative output dir (this script runs on the host, not in the container,
@@ -183,6 +185,123 @@ DOCUMENTS: dict[str, str] = {
     "quy_trinh_giai_quyet_quyen_loi.md": PROCEDURE_CLAIMS,
 }
 
+# --------------------------------------------------------------------------- #
+# Claims-payout XLSX (invented data; matches golden_set.jsonl q22-q25)
+# --------------------------------------------------------------------------- #
+
+XLSX_FILENAME = "danh_sach_chi_tra_quyen_loi_q1_2025.xlsx"
+
+_CLAIMS_HEADER = [
+    "Mã hồ sơ",
+    "Sản phẩm",
+    "Loại quyền lợi",
+    "Ngày nộp hồ sơ",
+    "Số ngày xử lý",
+    "Số tiền chi trả (VND)",
+    "Trạng thái",
+]
+_CLAIMS_ROWS: list[list[object]] = [
+    [
+        "HS-2025-0001",
+        "An Tâm Bảo Vệ",
+        "Quyền lợi tử vong",
+        date(2025, 1, 14),
+        22,
+        500_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0002",
+        "An Tâm Bảo Vệ",
+        "Quyền lợi đáo hạn",
+        date(2025, 1, 20),
+        12,
+        150_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0003",
+        "An Khang Hưu Trí",
+        "Tạm ứng giá trị hoàn lại",
+        date(2025, 2, 3),
+        8,
+        40_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0004",
+        "An Tâm Bảo Vệ",
+        "Quyền lợi tử vong",
+        date(2025, 2, 11),
+        28,
+        750_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0005",
+        "An Khang Hưu Trí",
+        "Quyền lợi đáo hạn",
+        date(2025, 2, 25),
+        14,
+        200_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0006",
+        "An Tâm Bảo Vệ",
+        "Quyền lợi tử vong",
+        date(2025, 3, 7),
+        35,
+        0,
+        "Từ chối",
+    ],
+    [
+        "HS-2025-0007",
+        "An Tâm Bảo Vệ",
+        "Quyền lợi đáo hạn",
+        date(2025, 3, 18),
+        9,
+        120_000_000,
+        "Đã chi trả",
+    ],
+    [
+        "HS-2025-0008",
+        "An Khang Hưu Trí",
+        "Tạm ứng giá trị hoàn lại",
+        date(2025, 3, 28),
+        5,
+        30_000_000,
+        "Đang xử lý",
+    ],
+]
+_SUMMARY_ROWS: list[list[object]] = [
+    ["Chỉ tiêu", "Giá trị"],
+    ["Tổng số hồ sơ Q1/2025", 8],
+    ["Số hồ sơ đã chi trả", 6],
+    ["Số hồ sơ từ chối", 1],
+    ["Số hồ sơ đang xử lý", 1],
+    ["Tổng số tiền đã chi trả (VND)", 1_760_000_000],
+    ["Số ngày xử lý trung bình của hồ sơ đã chi trả", 15.5],
+]
+
+
+def write_claims_xlsx(path: Path) -> None:
+    """Write the fake claims-payout workbook (two sheets: detail + summary)."""
+    from openpyxl import Workbook  # dev-time dependency (requirements-embed.txt)
+
+    wb = Workbook()
+    # Read back by parse_xlsx as doc_title (filenames lose VN diacritics).
+    wb.properties.title = "Danh sách chi trả quyền lợi bảo hiểm Quý 1/2025"
+    detail = wb.active
+    detail.title = "Chi trả Q1-2025"
+    detail.append(_CLAIMS_HEADER)
+    for row in _CLAIMS_ROWS:
+        detail.append(row)
+    summary = wb.create_sheet("Tổng hợp")
+    for row in _SUMMARY_ROWS:
+        summary.append(row)
+    wb.save(path)
+
 
 def main() -> None:
     """Write the synthetic corpus (NFC-normalized) to data/synthetic/."""
@@ -193,7 +312,10 @@ def main() -> None:
         path = SYNTHETIC_DIR / filename
         path.write_text(normalized, encoding="utf-8")
         print(f"wrote {path.relative_to(SYNTHETIC_DIR.parent.parent)}")
-    print(f"\n{len(DOCUMENTS)} synthetic documents written to {SYNTHETIC_DIR}")
+    xlsx_path = SYNTHETIC_DIR / XLSX_FILENAME
+    write_claims_xlsx(xlsx_path)
+    print(f"wrote {xlsx_path.relative_to(SYNTHETIC_DIR.parent.parent)}")
+    print(f"\n{len(DOCUMENTS) + 1} synthetic documents written to {SYNTHETIC_DIR}")
 
 
 if __name__ == "__main__":

@@ -35,7 +35,9 @@ def _heading_label(text: str) -> str:
     return text.split(":", 1)[0].strip()
 
 
-def sections_from_markdown(md: str, *, doc_title: str | None = None) -> list[ParsedSection]:
+def sections_from_markdown(
+    md: str, *, doc_title: str | None = None
+) -> list[ParsedSection]:
     """Split Markdown into ordered sections keyed by their heading path.
 
     Text before the first heading (if any) becomes an untitled lead section.

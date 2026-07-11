@@ -73,7 +73,7 @@ async def ingest_file(
     file: UploadFile = File(...),
     doc_type: DocType | None = Form(default=None),
 ) -> IngestResponse:
-    """Ingest a single document (Markdown/DOCX in Phase 2)."""
+    """Ingest a single document (Markdown/DOCX/XLSX/glossary YAML)."""
     filename = _safe_filename(file.filename)
     uploads = settings.data_dir / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)

@@ -64,7 +64,9 @@ def _to_sparse(lexical_weights: dict[str, float]) -> models.SparseVector:
     return models.SparseVector(indices=indices, values=values)
 
 
-def embed_texts(texts: list[str]) -> tuple[list[list[float]], list[models.SparseVector]]:
+def embed_texts(
+    texts: list[str],
+) -> tuple[list[list[float]], list[models.SparseVector]]:
     """Embed texts, returning aligned dense vectors and sparse vectors."""
     out = get_embedder().encode(
         texts,

@@ -35,8 +35,8 @@ its own selectable "model" whose code we control.
 
 1. In a chat, open the model dropdown at the top and select **📥 Nạp tài liệu**.
 2. Attach a file (paperclip icon) — currently supported: `.md`, `.docx`,
-   `.yaml`/`.yml` (PDF/Excel/scanned images are still in development and will
-   return a clear error if selected).
+   `.xlsx`, `.yaml`/`.yml` (PDF/scanned images are still in development and
+   will return a clear error if selected).
 3. Send. The reply reports the document title, chunk count, and doc id, or a
    specific error if something went wrong.
 4. Switch back to the normal chat model to ask questions — retrieval/citation

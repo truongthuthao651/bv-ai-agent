@@ -1,8 +1,8 @@
 """FastAPI entrypoint.
 
 Wires up routers and application lifespan (model warmup): ``/health``, ``/ingest``
-+ ``/documents`` (Markdown/DOCX), and the OpenAI-compatible ``/v1/chat/completions``.
-Hard parsers (PDF/XLSX/image) arrive in the hard-parser increment (Increment D).
++ ``/documents`` (Markdown/DOCX/XLSX/glossary), and the OpenAI-compatible
+``/v1/chat/completions``. Hard parsers (PDF/image) arrive in Increment D.
 
 Also serves a small dependency-free admin UI (``app/static/index.html``) at ``/``
 for uploading documents and smoke-testing chat — Open WebUI (port 3000) has no

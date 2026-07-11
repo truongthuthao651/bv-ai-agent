@@ -119,17 +119,19 @@ ruff check app/ && ruff format app/                                    # lint + 
 
 **Done:** foundation (directory structure, `settings.py`, Docker Compose CPU+GPU,
 Dockerfile, `requirements.txt`, `/health`, setup/healthcheck scripts, starter
-glossary); Markdown/DOCX/glossary ingestion (parsing, equation-safe chunking, formula
-verbalization, bge-m3 dense+sparse indexing into Qdrant) via `POST /ingest`;
+glossary); Markdown/DOCX/XLSX/glossary ingestion (parsing, equation-safe chunking,
+spreadsheet-to-Markdown-table conversion, formula verbalization, bge-m3
+dense+sparse indexing into Qdrant) via `POST /ingest` and batch via
+`scripts/ingest.sh`;
 retrieval (glossary query expansion, LLM standalone-question rewrite, hybrid
 RRF-fused search, bge-reranker-v2-m3 reranking) and generation (Vietnamese
 system prompt with citations/refusal/math-disclaimer rules, SSE streaming) via
-`POST /v1/chat/completions`; a 21-question golden set (`eval/golden_set.jsonl`);
+`POST /v1/chat/completions`; a 25-question golden set (`eval/golden_set.jsonl`);
 document upload wired into the user-facing Open WebUI chat itself via a Pipe
 function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
 (`http://localhost:8000`) for system status / manual upload / quick testing.
 
-**Next:** hard parsers (PDF/XLSX/image/OCR/formula-OCR/figures — Increment D),
+**Next:** hard parsers (PDF/image/OCR/formula-OCR/figures — Increment D),
 and wiring `eval/run_ragas.py` against the golden set.
 
 See `CLAUDE.md` for architecture and the non-negotiable security rules, and

@@ -85,7 +85,11 @@ def _bind_equation_units(blocks: list[_Block]) -> list[_Block]:
         while j < len(blocks):
             nb = blocks[j]
             low = nb.text.strip().lower()
-            if nb.kind == "list" or low.startswith("trong đó") or low.startswith("trong do"):
+            if (
+                nb.kind == "list"
+                or low.startswith("trong đó")
+                or low.startswith("trong do")
+            ):
                 parts.append(nb.text)
                 j += 1
             else:

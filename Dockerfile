@@ -32,11 +32,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir torch==2.12.1 \
         --index-url https://download.pytorch.org/whl/cpu
 
-# Embedding (bge-m3 dense+sparse) + reranking + DOCX parsing for the ingest slice.
+# Embedding (bge-m3 dense+sparse) + reranking + DOCX/XLSX parsing for the ingest slice.
 COPY requirements-embed.txt .
 RUN pip install --no-cache-dir -r requirements-embed.txt
 
-# Heavy parsers (PDF/OCR/XLSX) + eval — enabled in the hard-parser increment.
+# Heavy parsers (PDF/OCR) + eval — enabled in the hard-parser increment.
 # Uncomment (and add a CPU torchvision) once those modules are implemented:
 # RUN pip install --no-cache-dir torchvision==0.27.1 \
 #         --index-url https://download.pytorch.org/whl/cpu

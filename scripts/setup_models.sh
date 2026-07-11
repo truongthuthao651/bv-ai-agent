@@ -9,17 +9,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# ---- Load .env (fall back to .env.example defaults) ----
-if [[ -f .env ]]; then
-  # shellcheck disable=SC1091
-  set -a; source .env; set +a
-else
+# ---- Load model names from .env (fall back to built-in defaults) ----
+# Read one variable from .env. Never `source` it: values contain spaces and
+# UTF-8 (ASSISTANT_NAME, WEBUI_NAME), which the shell would try to execute —
+# under `set -e` that aborts the whole script.
+env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+
+if [[ ! -f .env ]]; then
   echo "WARN: .env not found; using built-in defaults." >&2
 fi
 
+CHAT_MODEL="$(env_get CHAT_MODEL)"
 CHAT_MODEL="${CHAT_MODEL:-qwen3:8b}"
+VISION_MODEL="$(env_get VISION_MODEL)"
 VISION_MODEL="${VISION_MODEL:-qwen2.5vl:7b}"
+EMBED_MODEL="$(env_get EMBED_MODEL)"
 EMBED_MODEL="${EMBED_MODEL:-bge-m3}"
+RERANK_MODEL="$(env_get RERANK_MODEL)"
 RERANK_MODEL="${RERANK_MODEL:-bge-reranker-v2-m3}"
 
 # Ollama serves chat + vision. Embeddings/reranking use FlagEmbedding with local
