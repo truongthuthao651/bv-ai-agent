@@ -6,7 +6,12 @@ from __future__ import annotations
 
 import json
 
-from app.generation.generator import build_messages, parse_ollama_line
+from app.generation.generator import (
+    ThinkStripper,
+    build_messages,
+    parse_ollama_line,
+    strip_think,
+)
 from app.generation.prompts import SYSTEM_PROMPT, build_user_prompt, format_context
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
 
@@ -109,3 +114,43 @@ def test_parse_ollama_line_final_chunk() -> None:
     content, done = parse_ollama_line(line)
     assert content == ""
     assert done is True
+
+
+# --------------------------------------------------------------------------- #
+# <think> stripping (reasoning models must never leak chain-of-thought)
+# --------------------------------------------------------------------------- #
+
+
+def test_strip_think_removes_full_block() -> None:
+    text = "<think>reasoning here</think>\n\nPhí thuần là ... [1]"
+    assert strip_think(text) == "Phí thuần là ... [1]"
+
+
+def test_strip_think_passthrough_when_no_tags() -> None:
+    assert strip_think("Câu trả lời bình thường.") == "Câu trả lời bình thường."
+
+
+def _feed_all(stripper: ThinkStripper, deltas: list[str]) -> str:
+    return "".join(stripper.feed(d) for d in deltas) + stripper.flush()
+
+
+def test_think_stripper_streaming_drops_reasoning() -> None:
+    deltas = ["<think>", "suy ", "luận", "</think>", "Đáp ", "án [1]"]
+    assert _feed_all(ThinkStripper(), deltas) == "Đáp án [1]"
+
+
+def test_think_stripper_handles_tag_split_across_deltas() -> None:
+    # Opening/closing tags arrive in fragments spanning multiple deltas.
+    deltas = ["<thi", "nk>hidden</thi", "nk>Kết quả cuối"]
+    assert _feed_all(ThinkStripper(), deltas) == "Kết quả cuối"
+
+
+def test_think_stripper_without_any_think_tags() -> None:
+    deltas = ["Phí ", "thuần ", "là gì"]
+    assert _feed_all(ThinkStripper(), deltas) == "Phí thuần là gì"
+
+
+def test_think_stripper_unclosed_think_is_dropped() -> None:
+    # If generation ends mid-reasoning, emit nothing rather than raw thoughts.
+    deltas = ["<think>đang nghĩ dở"]
+    assert _feed_all(ThinkStripper(), deltas) == ""

@@ -44,7 +44,11 @@ services:
       - .env
     environment:
       # Container-to-container hostnames override the .env host-facing defaults.
-      OLLAMA_BASE_URL: http://ollama:11434
+      # OLLAMA_BASE_URL is overridable so a dev machine can point at a native
+      # Ollama on the host (e.g. macOS Metal): set it to
+      # http://host.docker.internal:11434 in .env. Deployment leaves it unset and
+      # gets the in-compose "ollama" service by default.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       QDRANT_URL: http://qdrant:6333
     volumes:
       - ./data:/app/data
@@ -69,6 +73,10 @@ services:
       OPENAI_API_BASE_URL: http://api:8000/v1
       OPENAI_API_KEY: ${OPENAI_API_KEY:-local-no-auth}
       WEBUI_AUTH: ${WEBUI_AUTH:-false}
+      # Branding: app name shown in the browser tab/header, and the model
+      # pre-selected in new chats (matches ASSISTANT_MODEL_ID served by our API).
+      WEBUI_NAME: ${WEBUI_NAME:-Trợ lý AI Bảo Việt Life}
+      DEFAULT_MODELS: ${DEFAULT_MODELS:-bao-viet-life}
     volumes:
       - open_webui_data:/app/backend/data
     ports:

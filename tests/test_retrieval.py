@@ -57,6 +57,17 @@ def test_expand_query_empty_glossary_is_noop() -> None:
     assert expand_query(query, glossary=()) == query
 
 
+def test_expand_query_disabled_flag_returns_unchanged() -> None:
+    # Even with a matching glossary term, disabling expansion is a no-op.
+    query = "net premium là gì?"
+    assert expand_query(query, enabled=False, glossary=_GLOSSARY) == query
+
+
+def test_expand_query_enabled_flag_still_expands() -> None:
+    out = expand_query("net premium là gì?", enabled=True, glossary=_GLOSSARY)
+    assert "phí thuần" in out
+
+
 # --------------------------------------------------------------------------- #
 # Query rewrite (LLM, gated + injectable)
 # --------------------------------------------------------------------------- #

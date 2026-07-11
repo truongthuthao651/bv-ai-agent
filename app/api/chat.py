@@ -23,6 +23,8 @@ from app.models.schemas import (
     ChatCompletionResponse,
     ChatMessage,
     Hit,
+    ModelCard,
+    ModelList,
 )
 from app.retrieval.query_expansion import expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
@@ -30,6 +32,25 @@ from app.retrieval.reranker import rerank
 from app.retrieval.retriever import hybrid_search
 
 router = APIRouter(prefix="/v1", tags=["chat"])
+
+
+@router.get("/models", response_model=ModelList)
+async def list_models() -> ModelList:
+    """Advertise the single branded assistant model.
+
+    Open WebUI calls this to populate its model dropdown; without it our backend
+    contributes no selectable model and the chat UI stays empty. The id/label are
+    branding only — ``chat_completions`` always serves ``settings.chat_model``.
+    """
+    return ModelList(
+        data=[
+            ModelCard(
+                id=settings.assistant_model_id,
+                created=int(time.time()),
+                name=settings.assistant_name,
+            )
+        ]
+    )
 
 
 def _split_request(request: ChatCompletionRequest) -> tuple[str, list[ChatMessage]]:

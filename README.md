@@ -1,9 +1,13 @@
-# Trợ lý AI nội bộ (RAG) cho tài liệu công ty bảo hiểm nhân thọ
+# Trợ lý AI Bảo Việt Life — RAG nội bộ cho tài liệu công ty
 
 > **Local RAG Assistant for a Vietnamese Life Insurance Firm** — English section below.
 
 Trợ lý AI chạy **hoàn toàn nội bộ** (offline) giúp nhân viên tra cứu và hỏi đáp
 về tài liệu công ty: hợp đồng, quy trình, biểu mẫu, bảng tính, hình ảnh scan.
+
+> **Thương hiệu:** tên hiển thị ("Trợ lý AI Bảo Việt Life") đặt qua `ASSISTANT_NAME`
+> / `WEBUI_NAME` trong `.env` — chỉ là phần hiển thị, mô hình chạy nền không đổi.
+> Đổi các giá trị này (và `ASSISTANT_MODEL_ID` / `DEFAULT_MODELS`) để đổi thương hiệu.
 Câu trả lời bằng **tiếng Việt**, có **trích dẫn nguồn**, và **hiển thị công thức
 toán** (LaTeX). Toàn bộ dữ liệu **không rời khỏi máy** — không gọi API bên ngoài.
 
@@ -43,17 +47,22 @@ bash scripts/setup_models.sh
 # 5) Kiểm tra hệ thống
 bash scripts/healthcheck.sh
 
-# 6) Nạp dữ liệu (khi các bước ingestion đã sẵn sàng — Phase sau)
-#    bash scripts/ingest.sh data/glossary
-#    bash scripts/ingest.sh data/synthetic     # dev/test
-#    (Trên máy công ty: nạp tài liệu thật từ thư mục nội bộ — KHÔNG commit)
+# 6) Cài đặt tính năng "Nạp tài liệu" ngay trong Open WebUI (một lần, xem
+#    scripts/open_webui/README.md để biết chi tiết từng bước)
 
 # 7) Mở giao diện
-#    Trình duyệt: http://localhost:3000  (Open WebUI)
+#    Trình duyệt: http://localhost:3000  (Open WebUI — trò chuyện + nạp tài liệu)
+#    Trang quản trị (tuỳ chọn, để xem trạng thái hệ thống): http://localhost:8000
 #    API sức khỏe: http://localhost:8000/health
 ```
 
 Dừng hệ thống: `docker compose down` (thêm `-v` để xoá cả dữ liệu volume).
+
+> **Nạp tài liệu:** người dùng nạp tài liệu ngay trong Open WebUI (chọn model
+> "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem `scripts/open_webui/README.md`
+> cho bước cài đặt một lần (admin). Trang `http://localhost:8000` là một tiện
+> ích quản trị tuỳ chọn (trạng thái hệ thống, danh sách tài liệu, nạp/hỏi thử
+> nhanh) — không bắt buộc dùng hằng ngày.
 
 > Mọi giá trị đặc thù theo máy nằm trong `.env`, **không** nằm trong mã nguồn.
 
@@ -73,6 +82,28 @@ render **math formulas** as LaTeX. Nothing leaves the machine — no external AP
 See the deployment steps above (they are the same commands). Development uses
 `data/synthetic/` only; `data/real/` is confidential and never touched.
 
+### Local dev on Apple Silicon (Metal GPU)
+
+Docker Desktop on macOS **cannot pass through any GPU** (NVIDIA or Apple Metal),
+so the in-compose `ollama` service is always CPU-only on a Mac. For real GPU
+acceleration on an Apple Silicon dev machine, run Ollama **natively** (it uses
+Metal automatically) and point the API container at it:
+
+```bash
+# 1) Stop the in-compose Ollama so it doesn't hold port 11434
+docker compose stop ollama
+# 2) Run native, Metal-accelerated Ollama bound so the container can reach it
+OLLAMA_HOST=0.0.0.0:11434 ollama serve &
+ollama pull qwen3:1.7b          # chat model (embeddings use local ./models/bge-m3, not Ollama)
+# 3) Point the API at the host, then recreate just the API container
+#    (.env)  OLLAMA_BASE_URL=http://host.docker.internal:11434
+docker compose up -d --no-deps api
+```
+
+Measured on this repo (M1 Pro): a formula answer dropped from ~440s (Docker CPU,
+reasoning on) to ~56s (native Metal, `LLM_THINKING=false`). The NVIDIA deployment
+box is unaffected — it keeps `OLLAMA_BASE_URL=http://ollama:11434` and the GPU override.
+
 ### Common commands
 
 ```bash
@@ -88,12 +119,15 @@ ruff check app/ && ruff format app/                                    # lint + 
 
 **Done:** foundation (directory structure, `settings.py`, Docker Compose CPU+GPU,
 Dockerfile, `requirements.txt`, `/health`, setup/healthcheck scripts, starter
-glossary); Markdown/DOCX ingestion (parsing, equation-safe chunking, formula
+glossary); Markdown/DOCX/glossary ingestion (parsing, equation-safe chunking, formula
 verbalization, bge-m3 dense+sparse indexing into Qdrant) via `POST /ingest`;
 retrieval (glossary query expansion, LLM standalone-question rewrite, hybrid
 RRF-fused search, bge-reranker-v2-m3 reranking) and generation (Vietnamese
 system prompt with citations/refusal/math-disclaimer rules, SSE streaming) via
-`POST /v1/chat/completions`; a 21-question golden set (`eval/golden_set.jsonl`).
+`POST /v1/chat/completions`; a 21-question golden set (`eval/golden_set.jsonl`);
+document upload wired into the user-facing Open WebUI chat itself via a Pipe
+function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
+(`http://localhost:8000`) for system status / manual upload / quick testing.
 
 **Next:** hard parsers (PDF/XLSX/image/OCR/formula-OCR/figures — Increment D),
 and wiring `eval/run_ragas.py` against the golden set.

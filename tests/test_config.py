@@ -26,3 +26,21 @@ def test_app_imports_and_registers_health_route() -> None:
 
     paths = {route.path for route in app.routes}
     assert "/health" in paths
+
+
+def test_admin_ui_served_at_root_without_shadowing_api_routes() -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+
+    root = client.get("/")
+    assert root.status_code == 200
+    assert "text/html" in root.headers["content-type"]
+    assert "Trợ lý AI" in root.text
+
+    # The static mount is registered last specifically so it must not shadow
+    # API routes registered earlier (see app/main.py).
+    health = client.get("/health")
+    assert health.status_code in (200, 503)  # reachable either way; not a 404

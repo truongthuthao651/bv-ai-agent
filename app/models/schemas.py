@@ -231,3 +231,24 @@ class ChatCompletionResponse(BaseModel):
     created: int
     model: str
     choices: list[ChatCompletionChoice]
+
+
+class ModelCard(BaseModel):
+    """One entry in the OpenAI-compatible ``GET /v1/models`` list.
+
+    ``name`` is a non-standard extra field that Open WebUI reads to show a
+    friendly label in its model dropdown; plain OpenAI clients ignore it.
+    """
+
+    id: str
+    object: Literal["model"] = "model"
+    created: int
+    owned_by: str = "bao-viet-life"
+    name: str | None = None
+
+
+class ModelList(BaseModel):
+    """``GET /v1/models`` response envelope."""
+
+    object: Literal["list"] = "list"
+    data: list[ModelCard]

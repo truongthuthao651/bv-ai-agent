@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -32,6 +33,72 @@ _CONNECTION_ERROR_MESSAGE = (
     "Vui lòng thử lại sau."
 )
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def strip_think(text: str) -> str:
+    """Remove any complete ``<think>...</think>`` span from a full string."""
+    return _THINK_BLOCK_RE.sub("", text).strip()
+
+
+def _partial_tail_len(text: str, tag: str) -> int:
+    """Length of the longest suffix of ``text`` that is a prefix of ``tag``.
+
+    Lets the streaming stripper hold back a few chars in case a ``<think>`` /
+    ``</think>`` tag is split across two token deltas.
+    """
+    for k in range(min(len(text), len(tag) - 1), 0, -1):
+        if tag.startswith(text[-k:]):
+            return k
+    return 0
+
+
+class ThinkStripper:
+    """Incrementally drop ``<think>...</think>`` spans from a token stream.
+
+    Reasoning models interleave their hidden chain-of-thought as ``<think>``
+    tags in the content stream; we never want that in the user-facing answer.
+    ``feed`` returns only the display-safe text seen so far, buffering partial
+    tags across deltas so a tag split mid-token isn't missed.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._in_think = False
+
+    def feed(self, text: str) -> str:
+        self._buf += text
+        out: list[str] = []
+        while self._buf:
+            if not self._in_think:
+                idx = self._buf.find(_THINK_OPEN)
+                if idx == -1:
+                    keep = _partial_tail_len(self._buf, _THINK_OPEN)
+                    out.append(self._buf[: len(self._buf) - keep])
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                out.append(self._buf[:idx])
+                self._buf = self._buf[idx + len(_THINK_OPEN) :]
+                self._in_think = True
+            else:
+                idx = self._buf.find(_THINK_CLOSE)
+                if idx == -1:
+                    keep = _partial_tail_len(self._buf, _THINK_CLOSE)
+                    self._buf = self._buf[len(self._buf) - keep :]
+                    break
+                self._buf = self._buf[idx + len(_THINK_CLOSE) :]
+                self._in_think = False
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Emit any trailing buffered text (unless we ended inside a think span)."""
+        if self._in_think:
+            return ""
+        out, self._buf = self._buf, ""
+        return out
+
 
 def build_messages(
     query: str, hits: list[Hit], history: list[ChatMessage] | None = None
@@ -42,6 +109,27 @@ def build_messages(
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": build_user_prompt(query, hits)})
     return messages
+
+
+def _ollama_payload(
+    messages: list[dict[str, str]], *, stream: bool
+) -> dict[str, object]:
+    """Build the Ollama ``/api/chat`` request body.
+
+    ``think`` is sent explicitly so reasoning models (qwen3) skip their hidden
+    chain-of-thought when ``settings.llm_thinking`` is False — the single biggest
+    latency win on CPU-only setups.
+    """
+    return {
+        "model": settings.chat_model,
+        "messages": messages,
+        "stream": stream,
+        "think": settings.llm_thinking,
+        "options": {
+            "temperature": settings.llm_temperature,
+            "num_predict": settings.llm_max_tokens,
+        },
+    }
 
 
 def _sse_chunk(
@@ -79,20 +167,13 @@ async def stream_answer(
 
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
 
+    stripper = ThinkStripper()
     try:
         async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
             async with client.stream(
                 "POST",
                 f"{settings.ollama_base_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                    "options": {
-                        "temperature": settings.llm_temperature,
-                        "num_predict": settings.llm_max_tokens,
-                    },
-                },
+                json=_ollama_payload(messages, stream=True),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -100,11 +181,16 @@ async def stream_answer(
                         continue
                     content, done = parse_ollama_line(line)
                     if content:
-                        yield _sse_chunk(
-                            completion_id, model, {"content": content}, None
-                        )
+                        visible = stripper.feed(content)
+                        if visible:
+                            yield _sse_chunk(
+                                completion_id, model, {"content": visible}, None
+                            )
                     if done:
                         break
+        tail = stripper.flush()
+        if tail:
+            yield _sse_chunk(completion_id, model, {"content": tail}, None)
     except httpx.HTTPError as exc:
         logger.error("Generation failed: %s", exc)
         yield _sse_chunk(
@@ -115,6 +201,27 @@ async def stream_answer(
     yield "data: [DONE]\n\n"
 
 
+def preload_model() -> None:
+    """Load the chat model into Ollama's memory ahead of the first user request.
+
+    An empty-prompt ``/api/generate`` call makes Ollama load (and keep alive) the
+    model without generating tokens — on CPU the model load is the single biggest
+    slice of first-request latency. Raises ``httpx.HTTPError`` on failure so the
+    caller can log it; warmup treats that as non-fatal.
+    """
+    resp = httpx.post(
+        f"{settings.ollama_base_url}/api/generate",
+        json={
+            "model": settings.chat_model,
+            "prompt": "",
+            "stream": False,
+            "think": False,
+        },
+        timeout=settings.ollama_timeout,
+    )
+    resp.raise_for_status()
+
+
 def generate_answer(
     query: str, hits: list[Hit], history: list[ChatMessage] | None = None
 ) -> str:
@@ -123,19 +230,12 @@ def generate_answer(
     try:
         resp = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
-            json={
-                "model": settings.chat_model,
-                "messages": messages,
-                "stream": False,
-                "options": {
-                    "temperature": settings.llm_temperature,
-                    "num_predict": settings.llm_max_tokens,
-                },
-            },
+            json=_ollama_payload(messages, stream=False),
             timeout=settings.ollama_timeout,
         )
         resp.raise_for_status()
-        return resp.json().get("message", {}).get("content", "").strip()
+        content = resp.json().get("message", {}).get("content", "")
+        return strip_think(content)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
         return _CONNECTION_ERROR_MESSAGE

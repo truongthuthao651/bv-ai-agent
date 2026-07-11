@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Trợ lý AI Bảo Việt Life — Quản trị</title>
+<style>
+  :root {
+    --navy: #0f3d5c;
+    --navy-dark: #0a2c43;
+    --teal: #1a8f8f;
+    --bg: #f4f7f9;
+    --card: #ffffff;
+    --border: #e1e8ed;
+    --text: #1e2b33;
+    --muted: #6b7c85;
+    --ok: #1a8f5a;
+    --bad: #c23b3b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: linear-gradient(135deg, var(--navy), var(--navy-dark));
+    color: #fff;
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header p { margin: 2px 0 0; font-size: 12.5px; color: #cfe0ea; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--teal);
+    color: #fff;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: .5px;
+    flex-shrink: 0;
+  }
+  .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #33465420;
+    color: #fff;
+  }
+  .badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .badge.ok::before { background: #38d68a; }
+  .badge.bad::before { background: #ff6b6b; }
+  .btn-link {
+    color: #fff;
+    background: var(--teal);
+    text-decoration: none;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .btn-link:hover { background: #157878; }
+
+  main {
+    max-width: 980px;
+    margin: 28px auto;
+    padding: 0 20px 60px;
+    display: grid;
+    gap: 22px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+  }
+  .card h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    color: var(--navy-dark);
+  }
+  .card .hint {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.drag { border-color: var(--teal); background: #f0fbfb; }
+  .dropzone p { margin: 6px 0; color: var(--muted); font-size: 13.5px; }
+  .dropzone .filename { color: var(--navy-dark); font-weight: 600; }
+  input[type="file"] { display: none; }
+
+  .upload-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  select, button, input[type="text"] {
+    font: inherit;
+    padding: 9px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+  }
+  button {
+    background: var(--teal);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    padding: 9px 18px;
+  }
+  button:hover:not(:disabled) { background: #157878; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #uploadStatus, #askStatus { font-size: 13px; margin-top: 10px; color: var(--muted); white-space: pre-wrap; }
+  #uploadStatus.ok, #askStatus.ok { color: var(--ok); }
+  #uploadStatus.bad, #askStatus.bad { color: var(--bad); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  td.empty { color: var(--muted); text-align: center; padding: 22px 0; }
+  .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #eaf3f6;
+    color: var(--navy);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  textarea, .ask-row input[type="text"] {
+    width: 100%;
+    font: inherit;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .ask-row { display: flex; gap: 10px; }
+  .ask-row input[type="text"] { flex: 1; }
+  #answerBox {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: #f8fafb;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    font-size: 13.5px;
+    line-height: 1.55;
+    min-height: 24px;
+  }
+  #answerBox:empty { display: none; }
+  .note {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-mark">BV</span>
+    <div>
+      <h1>Trợ lý AI Bảo Việt Life — Quản trị tài liệu</h1>
+      <p>Trợ lý nội bộ Bảo Việt Life · chạy hoàn toàn nội bộ, không gọi API bên ngoài</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <span id="ollamaBadge" class="badge">Ollama</span>
+    <span id="qdrantBadge" class="badge">Qdrant</span>
+    <a class="btn-link" href="http://localhost:3000" target="_blank" rel="noopener">Mở giao diện trò chuyện ↗</a>
+  </div>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>Nạp tài liệu</h2>
+    <p class="hint">
+      Hỗ trợ hiện tại: Markdown (.md), Word (.docx), từ điển thuật ngữ (.yaml/.yml).
+      PDF / Excel / hình ảnh scan đang được phát triển (sẽ báo lỗi rõ ràng nếu chọn nhầm).
+    </p>
+
+    <div id="dropzone" class="dropzone">
+      <p><span class="filename" id="filenameLabel">Kéo thả tệp vào đây, hoặc bấm để chọn</span></p>
+      <p>.md · .docx · .yaml · .yml</p>
+    </div>
+    <input type="file" id="fileInput" accept=".md,.docx,.yaml,.yml,.pdf,.xlsx,.xls,.png,.jpg,.jpeg" />
+
+    <div class="upload-row">
+      <select id="docTypeSelect">
+        <option value="">Loại tài liệu: tự động theo phần mở rộng</option>
+        <option value="policy">Hợp đồng / Quy tắc bảo hiểm (policy)</option>
+        <option value="procedure">Quy trình (procedure)</option>
+        <option value="form">Biểu mẫu (form)</option>
+        <option value="spreadsheet">Bảng tính (spreadsheet)</option>
+        <option value="image">Hình ảnh scan (image)</option>
+        <option value="figure">Hình vẽ / biểu đồ (figure)</option>
+        <option value="glossary">Từ điển thuật ngữ (glossary)</option>
+        <option value="other">Khác (other)</option>
+      </select>
+      <button id="uploadBtn">Nạp tài liệu</button>
+    </div>
+    <div id="uploadStatus"></div>
+  </section>
+
+  <section class="card">
+    <h2>Tài liệu đã nạp</h2>
+    <p class="hint">Danh sách tài liệu hiện có trong Qdrant (<code>GET /documents</code>).</p>
+    <table>
+      <thead>
+        <tr><th>Tên tài liệu</th><th>Loại</th><th>Phòng ban</th><th>Số đoạn</th><th>Thời gian nạp</th></tr>
+      </thead>
+      <tbody id="docsBody">
+        <tr><td class="empty" colspan="5">Đang tải…</td></tr>
+      </tbody>
+    </table>
+    <div class="upload-row">
+      <button id="refreshBtn">Làm mới danh sách</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Hỏi thử nhanh</h2>
+    <p class="hint">
+      Gọi thẳng <code>POST /v1/chat/completions</code> (SSE) để kiểm tra toàn bộ luồng truy xuất + sinh câu trả lời.
+      Công thức LaTeX hiển thị dạng thô ở đây — dùng giao diện trò chuyện ở trên để xem LaTeX được render đẹp.
+    </p>
+    <div class="ask-row">
+      <input type="text" id="askInput" placeholder="Ví dụ: Phí thuần là gì?" />
+      <button id="askBtn">Hỏi</button>
+    </div>
+    <div id="askStatus"></div>
+    <div id="answerBox"></div>
+  </section>
+
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fileInput = $("fileInput");
+  const dropzone = $("dropzone");
+  const filenameLabel = $("filenameLabel");
+  const uploadBtn = $("uploadBtn");
+  const uploadStatus = $("uploadStatus");
+  const docTypeSelect = $("docTypeSelect");
+  const docsBody = $("docsBody");
+  const askInput = $("askInput");
+  const askBtn = $("askBtn");
+  const askStatus = $("askStatus");
+  const answerBox = $("answerBox");
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  // ---- Health badges ----
+  function setBadge(el, status) {
+    el.textContent = (el.id === "ollamaBadge" ? "Ollama" : "Qdrant") + ": " + (status === "up" ? "Hoạt động" : "Ngừng");
+    el.className = "badge " + (status === "up" ? "ok" : "bad");
+  }
+
+  async function loadHealth() {
+    try {
+      const resp = await fetch("/health");
+      const data = await resp.json();
+      setBadge($("ollamaBadge"), data.services?.ollama?.status ?? "down");
+      setBadge($("qdrantBadge"), data.services?.qdrant?.status ?? "down");
+    } catch {
+      setBadge($("ollamaBadge"), "down");
+      setBadge($("qdrantBadge"), "down");
+    }
+  }
+
+  // ---- Documents table ----
+  async function loadDocuments() {
+    try {
+      const resp = await fetch("/documents");
+      const docs = await resp.json();
+      if (!docs.length) {
+        docsBody.innerHTML = '<tr><td class="empty" colspan="5">Chưa có tài liệu nào được nạp.</td></tr>';
+        return;
+      }
+      docsBody.innerHTML = docs.map((d) => `
+        <tr>
+          <td>${escapeHtml(d.doc_title)}</td>
+          <td><span class="tag">${escapeHtml(d.doc_type)}</span></td>
+          <td>${d.department ? escapeHtml(d.department) : "—"}</td>
+          <td>${d.n_chunks}</td>
+          <td>${d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—"}</td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      docsBody.innerHTML = `<tr><td class="empty" colspan="5">Không tải được danh sách: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  // ---- Upload ----
+  dropzone.addEventListener("click", () => fileInput.click());
+  ["dragenter", "dragover"].forEach((evt) =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add("drag"); })
+  );
+  ["dragleave", "drop"].forEach((evt) =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove("drag"); })
+  );
+  dropzone.addEventListener("drop", (e) => {
+    if (e.dataTransfer.files.length) {
+      fileInput.files = e.dataTransfer.files;
+      updateFilenameLabel();
+    }
+  });
+  fileInput.addEventListener("change", updateFilenameLabel);
+
+  function updateFilenameLabel() {
+    const file = fileInput.files[0];
+    filenameLabel.textContent = file ? file.name : "Kéo thả tệp vào đây, hoặc bấm để chọn";
+  }
+
+  async function uploadFile() {
+    const file = fileInput.files[0];
+    if (!file) {
+      uploadStatus.textContent = "Chọn một tệp trước.";
+      uploadStatus.className = "bad";
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    if (docTypeSelect.value) fd.append("doc_type", docTypeSelect.value);
+
+    uploadBtn.disabled = true;
+    uploadStatus.className = "";
+    uploadStatus.textContent = `Đang nạp "${file.name}"… (có thể mất một lúc do enrichment công thức)`;
+
+    try {
+      const resp = await fetch("/ingest", { method: "POST", body: fd });
+      const data = await resp.json();
+      if (!resp.ok) {
+        uploadStatus.className = "bad";
+        uploadStatus.textContent = "Lỗi: " + (data.detail || `HTTP ${resp.status}`);
+      } else {
+        uploadStatus.className = "ok";
+        uploadStatus.textContent =
+          `Đã nạp "${data.doc_title}" (${data.doc_type}) — ${data.n_chunks} đoạn` +
+          (data.n_figures ? `, ${data.n_figures} hình` : "") + ".";
+        fileInput.value = "";
+        updateFilenameLabel();
+        loadDocuments();
+      }
+    } catch (err) {
+      uploadStatus.className = "bad";
+      uploadStatus.textContent = "Lỗi mạng: " + err.message;
+    } finally {
+      uploadBtn.disabled = false;
+    }
+  }
+  uploadBtn.addEventListener("click", uploadFile);
+
+  // ---- Quick ask (SSE) ----
+  async function ask() {
+    const query = askInput.value.trim();
+    if (!query) return;
+    askBtn.disabled = true;
+    answerBox.textContent = "";
+    askStatus.className = "";
+    askStatus.textContent = "Đang truy xuất tài liệu và sinh câu trả lời…";
+
+    try {
+      const resp = await fetch("/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stream: true, messages: [{ role: "user", content: query }] }),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const events = buf.split("\n\n");
+        buf = events.pop();
+        for (const evt of events) {
+          const line = evt.trim();
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          const json = JSON.parse(payload);
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) answerBox.textContent += delta;
+        }
+      }
+      askStatus.className = "ok";
+      askStatus.textContent = "Hoàn tất.";
+    } catch (err) {
+      askStatus.className = "bad";
+      askStatus.textContent = "Lỗi: " + err.message;
+    } finally {
+      askBtn.disabled = false;
+    }
+  }
+  askBtn.addEventListener("click", ask);
+  askInput.addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+  $("refreshBtn").addEventListener("click", loadDocuments);
+
+  loadHealth();
+  loadDocuments();
+  setInterval(loadHealth, 15000);
+</script>
+
+</body>
+</html>

@@ -37,6 +37,21 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "INFO"
+    # Warm the heavy, lazily-loaded pieces at startup (bge-m3 + reranker weights,
+    # the Qdrant collection, and the Ollama chat model) so the first user request
+    # doesn't pay their cold-load latency — significant on CPU-only hosts. Each
+    # step is best-effort; a failure is logged and never blocks startup. Set False
+    # to keep startup light (e.g. running only the ingestion CLI, or in tests).
+    warmup_on_startup: bool = True
+
+    # ---- Assistant identity / branding ----
+    # Display name shown in Open WebUI (browser title/header) and the admin page.
+    # The underlying local model never changes — this is presentation only.
+    assistant_name: str = "Trợ lý AI Bảo Việt Life"
+    # OpenAI-style model id advertised by GET /v1/models. Open WebUI lists this in
+    # its model dropdown; chat_completions ignores the requested model and always
+    # serves settings.chat_model, so this is purely a stable, branded label.
+    assistant_model_id: str = "bao-viet-life"
     # NoDecode: keep pydantic-settings from JSON-decoding this from `.env`;
     # the validator below splits the comma-separated string instead.
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -57,6 +72,10 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
     ollama_timeout: float = 120.0
+    # Reasoning models (e.g. qwen3) emit hidden <think> tokens before the answer.
+    # On CPU these dominate latency. False sends Ollama ``think: false`` to skip
+    # them entirely; any that still leak are stripped server-side before display.
+    llm_thinking: bool = False
 
     # ---- Qdrant ----
     qdrant_url: str = "http://qdrant:6333"

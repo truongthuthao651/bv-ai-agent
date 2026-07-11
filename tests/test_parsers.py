@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from app.ingestion.parsers.glossary_parser import parse_glossary
 from app.ingestion.parsers.markdown import sections_from_markdown
+from app.ingestion.router import route_to_parser
+from app.models.schemas import DocType
 
 
 def test_section_path_builds_legal_hierarchy() -> None:
@@ -34,3 +39,31 @@ def test_empty_sections_dropped() -> None:
     sections = sections_from_markdown(md, doc_title="Title")
     assert all(s.text.strip() for s in sections)
     assert any("Có nội dung." in s.text for s in sections)
+
+
+def _write_glossary_fixture(tmp_path: Path) -> Path:
+    p = tmp_path / "thuat_ngu.yaml"
+    p.write_text(
+        "- term: \"phí thuần\"\n"
+        "  synonyms: [\"net premium\"]\n"
+        "  symbol: \"P\"\n"
+        "  definition: \"Phần phí bảo hiểm chỉ đủ để trang trải quyền lợi.\"\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_parse_glossary_one_section_per_term(tmp_path: Path) -> None:
+    doc = parse_glossary(_write_glossary_fixture(tmp_path))
+    assert doc.doc_type == DocType.GLOSSARY
+    assert len(doc.sections) == 1
+    section = doc.sections[0]
+    assert section.section_path == "phí thuần"
+    assert "$P$" in section.text
+    assert "net premium" in section.text
+
+
+def test_router_dispatches_yaml_to_glossary_parser(tmp_path: Path) -> None:
+    doc = route_to_parser(_write_glossary_fixture(tmp_path))
+    assert doc.doc_type == DocType.GLOSSARY
+    assert doc.sections[0].section_path == "phí thuần"

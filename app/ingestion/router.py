@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.ingestion.parsers.docx_parser import parse_docx, parse_markdown
+from app.ingestion.parsers.glossary_parser import parse_glossary
 from app.models.schemas import DocType, ParsedDocument
 
 # Default doc_type per extension when the caller doesn't specify one.
@@ -23,6 +24,8 @@ _DEFAULT_DOCTYPE: dict[str, DocType] = {
     ".png": DocType.IMAGE,
     ".jpg": DocType.IMAGE,
     ".jpeg": DocType.IMAGE,
+    ".yaml": DocType.GLOSSARY,
+    ".yml": DocType.GLOSSARY,
 }
 
 
@@ -43,6 +46,8 @@ def route_to_parser(
         return parse_markdown(p, doc_type=resolved_type)
     if ext == ".docx":
         return parse_docx(p, doc_type=resolved_type)
+    if ext in (".yaml", ".yml"):
+        return parse_glossary(p, doc_type=resolved_type)
     if ext in (".pdf", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"):
         raise NotImplementedError(
             f"Parser for '{ext}' arrives in the hard-parser increment (Increment D)."

@@ -71,6 +71,7 @@ def load_glossary(path: Path | None = None) -> tuple[GlossaryEntry, ...]:
 def expand_query(
     query: str,
     *,
+    enabled: bool | None = None,
     glossary: tuple[GlossaryEntry, ...] | list[GlossaryEntry] | None = None,
 ) -> str:
     """Append glossary synonyms for any term already mentioned in ``query``.
@@ -78,7 +79,16 @@ def expand_query(
     Matching is a case-insensitive substring check on Vietnamese/English surface
     forms (no tokenization needed for a small controlled glossary). Only names
     not already present verbatim are appended, so short queries don't balloon.
+
+    ``enabled`` defaults to ``settings.enable_query_expansion``; when disabled the
+    query is returned unchanged (mirrors the gating of ``rewrite_standalone`` and
+    ``enrich_chunks``).
     """
+    if enabled is None:
+        enabled = settings.enable_query_expansion
+    if not enabled:
+        return query
+
     entries = load_glossary() if glossary is None else glossary
     if not entries:
         return query

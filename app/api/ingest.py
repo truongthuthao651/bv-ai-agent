@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unicodedata
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +26,20 @@ router = APIRouter(tags=["ingest"])
 
 # Stable doc_id per filename so re-uploading the same file replaces its points.
 _DOC_NAMESPACE = uuid.UUID("6f4a1d9e-0b2c-4e77-9a1b-000000000002")
+
+
+def _safe_filename(name: str | None) -> str:
+    """Reduce an uploaded filename to a safe basename.
+
+    The client-supplied name is untrusted: a value like ``../../etc/passwd`` (or
+    an absolute path) would otherwise let the write escape ``data/uploads``. Take
+    only the final path component and reject the traversal specials, falling back
+    to a fixed name so ingestion still proceeds.
+    """
+    base = PurePosixPath((name or "").replace("\\", "/")).name
+    if not base or base in {".", ".."}:
+        return "upload"
+    return base
 
 
 def _run_pipeline(path: Path, doc_type: DocType | None) -> IngestResponse:
@@ -60,7 +74,7 @@ async def ingest_file(
     doc_type: DocType | None = Form(default=None),
 ) -> IngestResponse:
     """Ingest a single document (Markdown/DOCX in Phase 2)."""
-    filename = file.filename or "upload"
+    filename = _safe_filename(file.filename)
     uploads = settings.data_dir / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)
     dest = uploads / filename
