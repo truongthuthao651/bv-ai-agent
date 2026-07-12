@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     pdf_min_chars_per_page: int = 20
     do_formula_enrichment: bool = True
     enable_enrichment: bool = True
+    # Docling layout/tableformer weights pre-fetched by setup_models.sh; when
+    # the directory exists (and is non-empty) the PDF parser runs offline from
+    # it. Deliberately NOT named DOCLING_ARTIFACTS_PATH: docling itself reads
+    # that env var and hard-fails at convert time if the dir doesn't exist.
+    docling_models_path: Path = Path("/app/models/docling")
 
     # ---- Paths ----
     data_dir: Path = Path("/app/data")

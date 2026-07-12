@@ -50,6 +50,10 @@ services:
       # gets the in-compose "ollama" service by default.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       QDRANT_URL: http://qdrant:6333
+      # Any model weights fetched from the HF hub at runtime (e.g. Docling's
+      # formula model on first PDF) cache under the host-mounted ./models dir,
+      # so they persist and the stack runs offline afterwards.
+      HF_HOME: /app/models/hf
     volumes:
       - ./data:/app/data
       # Persist downloaded model weights (reranker, etc.) on the host so the

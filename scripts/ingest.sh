@@ -25,8 +25,8 @@ if [[ ! -d "$TARGET" ]]; then
   exit 1
 fi
 
-# Keep in sync with app/ingestion/router.py (PDF/images land in Increment D).
-SUPPORTED="md markdown docx xlsx yaml yml"
+# Keep in sync with app/ingestion/router.py (scanned images land with OCR).
+SUPPORTED="md markdown docx xlsx pdf yaml yml"
 
 ok=0 failed=0 skipped=0
 while IFS= read -r file; do

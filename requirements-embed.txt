@@ -10,7 +10,13 @@
 # =============================================================================
 
 # bge-m3 (dense + sparse) via BGEM3FlagModel, and bge-reranker-v2-m3 via FlagReranker.
-FlagEmbedding==1.3.3
+# 1.3.5 (not 1.3.3) because 1.3.3 hard-pins transformers==4.44.2, which lacks
+# classes docling imports at module load (AutoModelForImageTextToText, 4.46+).
+FlagEmbedding==1.3.5
+# Shared with docling (requirements-pdf.txt): docling needs >=4.46, FlagEmbedding
+# needs >=4.44.2; pinned to the jointly-resolved version. <5 — transformers v5
+# is untested with FlagEmbedding.
+transformers==4.57.6
 
 # DOCX -> gfm+tex_math_dollars (system pandoc is installed in the Dockerfile).
 pypandoc==1.14

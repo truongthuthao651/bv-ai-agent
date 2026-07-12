@@ -36,12 +36,23 @@ RUN pip install --no-cache-dir torch==2.12.1 \
 COPY requirements-embed.txt .
 RUN pip install --no-cache-dir -r requirements-embed.txt
 
-# Heavy parsers (PDF/OCR) + eval — enabled in the hard-parser increment.
-# Uncomment (and add a CPU torchvision) once those modules are implemented:
-# RUN pip install --no-cache-dir torchvision==0.27.1 \
-#         --index-url https://download.pytorch.org/whl/cpu
+# CPU torchvision (must come from the CPU index and match the torch above,
+# BEFORE docling so its transitive deps see both already satisfied).
+RUN pip install --no-cache-dir torchvision==0.27.1 \
+        --index-url https://download.pytorch.org/whl/cpu
+
+# PDF parsing: Docling + formula enrichment.
+COPY requirements-pdf.txt .
+RUN pip install --no-cache-dir -r requirements-pdf.txt
+
+# Scanned-image OCR (PaddleOCR) + eval (ragas) — the remaining deferred slice:
 # COPY requirements-ml.txt .
 # RUN pip install --no-cache-dir -r requirements-ml.txt
+
+# Model downloads (Docling layout/formula weights, HF hub cache) land under
+# /app/models, which docker-compose mounts from the host — they persist across
+# container recreation and the stack stays offline after setup.
+ENV HF_HOME=/app/models/hf
 
 # App code.
 COPY app ./app

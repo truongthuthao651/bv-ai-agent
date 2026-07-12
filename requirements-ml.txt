@@ -13,12 +13,9 @@
 # against the resolved lock when this increment lands.
 # =============================================================================
 
-# ---- Document parsing (PDF, images) ----
-# (XLSX moved to requirements-embed.txt — handled by openpyxl, already live.)
-docling==2.15.1                  # PDF parsing + formula enrichment
-pillow==11.1.0
-
 # ---- OCR / vision (Vietnamese, formula regions) ----
+# (XLSX moved to requirements-embed.txt, PDF/Docling to requirements-pdf.txt —
+# both already live in the image.)
 paddleocr==2.9.1
 paddlepaddle==2.6.2
 

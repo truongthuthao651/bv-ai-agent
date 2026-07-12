@@ -64,4 +64,29 @@ print(f"      downloaded {repo} -> {path}")
 PY
 done
 
+# ---- Docling weights (PDF layout/tableformer + formula model) ----
+# Pre-fetched into ./models/docling so PDF parsing runs offline. Non-fatal:
+# without it, the first PDF ingest downloads on demand into HF_HOME
+# (./models/hf, host-mounted — still persistent, but needs network once).
+echo "==> Fetching Docling PDF-model weights into ./models/docling"
+if ! docker compose exec -T \
+    -e HF_HUB_DISABLE_XET=1 -e HF_HUB_DOWNLOAD_TIMEOUT=60 \
+    api python - <<'PY'
+from pathlib import Path
+
+target = Path("/app/models/docling")
+try:  # newer docling releases
+    from docling.utils.model_downloader import download_models
+
+    download_models(output_dir=target)
+except ImportError:  # docling 2.15.x
+    from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+
+    StandardPdfPipeline.download_models_hf(local_dir=target)
+print(f"      downloaded docling models -> {target}")
+PY
+then
+  echo "WARN: docling model download failed; first PDF ingest will fetch on demand (needs network once)." >&2
+fi
+
 echo "==> Done. Verify with: bash scripts/healthcheck.sh"

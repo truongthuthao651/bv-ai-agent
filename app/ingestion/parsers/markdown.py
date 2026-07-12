@@ -35,6 +35,25 @@ def _heading_label(text: str) -> str:
     return text.split(":", 1)[0].strip()
 
 
+def title_from_markdown(md: str, fallback: str) -> str:
+    """Doc title from the first H1 — else the first heading of any level, else
+    ``fallback`` (usually the filename, which loses Vietnamese diacritics).
+
+    The any-level fallback matters for PDFs: Docling often classifies a cover
+    title as H2, and a proper diacritics title is what citations display.
+    """
+    first_heading: str | None = None
+    for line in md.split("\n"):
+        m = _HEADING_RE.match(line)
+        if not m:
+            continue
+        if len(m.group(1)) == 1:
+            return m.group(2).strip()
+        if first_heading is None:
+            first_heading = m.group(2).strip()
+    return first_heading or fallback
+
+
 def sections_from_markdown(
     md: str, *, doc_title: str | None = None
 ) -> list[ParsedSection]:

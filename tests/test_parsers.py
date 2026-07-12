@@ -48,10 +48,10 @@ def test_empty_sections_dropped() -> None:
 def _write_glossary_fixture(tmp_path: Path) -> Path:
     p = tmp_path / "thuat_ngu.yaml"
     p.write_text(
-        "- term: \"phí thuần\"\n"
-        "  synonyms: [\"net premium\"]\n"
-        "  symbol: \"P\"\n"
-        "  definition: \"Phần phí bảo hiểm chỉ đủ để trang trải quyền lợi.\"\n",
+        '- term: "phí thuần"\n'
+        '  synonyms: ["net premium"]\n'
+        '  symbol: "P"\n'
+        '  definition: "Phần phí bảo hiểm chỉ đủ để trang trải quyền lợi."\n',
         encoding="utf-8",
     )
     return p
@@ -122,6 +122,59 @@ def test_parse_xlsx_forward_fills_merged_cells(tmp_path: Path) -> None:
     table = parse_xlsx(_write_xlsx_fixture(tmp_path)).sections[0].text
     hs04_row = next(ln for ln in table.split("\n") if "HS-04" in ln)
     assert "gộp" in hs04_row  # merged cell filled from its anchor
+
+
+_FAKE_PDF_MD = (
+    "# Hướng dẫn Thẩm định Sơ bộ\n\n"
+    "Trang 1\n\n"
+    "## Điều 2: Ngưỡng khám y tế\n\n"
+    "Khách hàng trên 50 tuổi phải khám y tế. <!-- image -->\n\n"
+    "$$P = \\frac{A}{a}$$\n\n"
+    "Công ty ABC — Lưu hành nội bộ\n\n"
+    "## Điều 3: Thời hạn\n\n"
+    "Xử lý trong 5 ngày làm việc.\n\n"
+    "Công ty ABC — Lưu hành nội bộ\n\n"
+    "Nội dung thêm.\n\n"
+    "Công ty ABC — Lưu hành nội bộ\n"
+)
+
+
+def test_parse_pdf_sections_titles_and_cleaning(monkeypatch) -> None:
+    from app.ingestion.parsers import pdf_parser
+
+    monkeypatch.setattr(
+        pdf_parser, "_convert_with_docling", lambda p: (_FAKE_PDF_MD, 2)
+    )
+    doc = pdf_parser.parse_pdf("hd_tham_dinh.pdf")
+    assert doc.doc_type == DocType.POLICY
+    assert doc.doc_title == "Hướng dẫn Thẩm định Sơ bộ"
+    text = "\n\n".join(s.text for s in doc.sections)
+    assert "$$P = \\frac{A}{a}$$" in text  # LaTeX survives cleaning untouched
+    assert "<!-- image -->" not in text  # docling placeholders removed
+    assert "Trang 1" not in text  # page-number line stripped
+    assert "Lưu hành nội bộ" not in text  # running footer stripped
+    dieu2 = next(s for s in doc.sections if "khám y tế" in s.text)
+    assert "Điều 2" in dieu2.section_path
+
+
+def test_title_falls_back_to_first_heading_of_any_level() -> None:
+    from app.ingestion.parsers.markdown import title_from_markdown
+
+    # H1 wins even when a lower-level heading comes first.
+    md = "## Điều 1\n\nx\n\n# Tiêu đề chính\n\ny\n"
+    assert title_from_markdown(md, "fallback") == "Tiêu đề chính"
+    # No H1 (Docling often classifies a PDF cover title as H2).
+    md = "## Hướng dẫn Thẩm định\n\nNội dung.\n"
+    assert title_from_markdown(md, "fallback") == "Hướng dẫn Thẩm định"
+    assert title_from_markdown("chỉ có nội dung\n", "fallback") == "fallback"
+
+
+def test_parse_pdf_scanned_raises_clear_error(monkeypatch) -> None:
+    from app.ingestion.parsers import pdf_parser
+
+    monkeypatch.setattr(pdf_parser, "_convert_with_docling", lambda p: ("x y", 5))
+    with pytest.raises(NotImplementedError, match="text layer"):
+        pdf_parser.parse_pdf("scan.pdf")
 
 
 def test_router_dispatches_xlsx_and_rejects_legacy_xls(tmp_path: Path) -> None:

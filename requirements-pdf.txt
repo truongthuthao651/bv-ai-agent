@@ -1,0 +1,13 @@
+# =============================================================================
+# PDF parsing slice (first half of Increment D): Docling with formula
+# enrichment (PDF math -> LaTeX). Installed in the image.
+#
+# torch/torchvision are installed SEPARATELY in the Dockerfile from the PyTorch
+# CPU index (avoids the ~5 GB CUDA stack). Do not pin them here, or pip may
+# pull the CUDA build from PyPI. Docling drives its own transitive pins
+# (docling-core, docling-ibm-models, pillow, rapidocr, ...) — leave those
+# unpinned; the old placeholder pin 2.15.1 made pip's resolver explode
+# (ResolutionTooDeep) against the FlagEmbedding stack, 2.112.0 resolves clean.
+# =============================================================================
+
+docling==2.112.0                 # PDF parsing + formula enrichment

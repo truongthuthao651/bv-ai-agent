@@ -37,7 +37,9 @@ def test_display_equation_kept_with_definition() -> None:
 
 
 def test_no_chunk_splits_inline_math() -> None:
-    text = "\n\n".join(f"Đoạn số {i} có công thức $x_{i} = {i}$ ở giữa." for i in range(20))
+    text = "\n\n".join(
+        f"Đoạn số {i} có công thức $x_{i} = {i}$ ở giữa." for i in range(20)
+    )
     chunks = chunk_document(_doc(text), "d2", max_tokens=30, overlap_pct=0.12)
     assert len(chunks) > 1  # actually split
     for c in chunks:

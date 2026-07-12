@@ -6,10 +6,10 @@ actuarial formulas are textbook-standard (life contingencies) and therefore not
 confidential. See the insurance-rag-pipeline skill, section 7, and the security
 rules in CLAUDE.md.
 
-Emits Markdown (the canonical format) plus a claims-payout XLSX exercising the
-spreadsheet path (multi-sheet, dates, VND amounts). A DOCX (with real OMML
-equations, via pandoc) and scanned/figure samples are added in the hard-parser
-increment.
+Emits Markdown (the canonical format), a claims-payout XLSX exercising the
+spreadsheet path (multi-sheet, dates, VND amounts), and a text-layer PDF
+exercising the Docling path (requires ``reportlab``, dev-time only). A DOCX
+(real OMML equations) and scanned/figure samples arrive with the OCR increment.
 
 Run:
     python scripts/make_synthetic_data.py
@@ -303,19 +303,113 @@ def write_claims_xlsx(path: Path) -> None:
     wb.save(path)
 
 
+# --------------------------------------------------------------------------- #
+# Underwriting-guide PDF (invented; matches golden_set.jsonl q26-q27)
+# --------------------------------------------------------------------------- #
+
+PDF_FILENAME = "huong_dan_tham_dinh_so_bo.pdf"
+
+_PDF_TITLE = "Hướng dẫn Thẩm định Sơ bộ Hợp đồng (bản giả định)"
+# (heading, body) pairs; rendered with distinct font sizes so Docling's layout
+# model classifies the headings and the sectionizer builds Điều paths.
+_PDF_SECTIONS: list[tuple[str, str]] = [
+    (
+        "Điều 1: Mục đích",
+        "Tài liệu này hướng dẫn quy trình thẩm định sơ bộ hồ sơ yêu cầu bảo hiểm "
+        "trước khi phát hành hợp đồng. Toàn bộ nội dung là giả định phục vụ kiểm thử.",
+    ),
+    (
+        "Điều 2: Ngưỡng khám y tế",
+        "Khách hàng trên 50 tuổi hoặc có Số tiền bảo hiểm trên 2 tỷ đồng phải "
+        "thực hiện khám y tế trước khi phát hành hợp đồng. Các trường hợp còn lại "
+        "được thẩm định trên hồ sơ kê khai sức khỏe.",
+    ),
+    (
+        "Điều 3: Thời hạn xử lý",
+        "Hồ sơ thẩm định sơ bộ được xử lý trong vòng 5 ngày làm việc kể từ ngày "
+        "nhận đủ giấy tờ hợp lệ. Trường hợp cần khám y tế, thời hạn tính từ ngày "
+        "nhận kết quả khám.",
+    ),
+]
+
+# Vietnamese text needs a Unicode TTF; reportlab's built-in Helvetica is Latin-1.
+_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",  # macOS
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Debian/Ubuntu
+]
+
+
+def write_underwriting_pdf(path: Path) -> bool:
+    """Write the fake underwriting-guide PDF (text layer, VN diacritics).
+
+    Dev-time only; returns False (with a hint) when reportlab or a suitable
+    Unicode font is unavailable instead of failing the whole corpus.
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.pdfgen.canvas import Canvas
+    except ImportError:
+        print(
+            f"WARN: reportlab not installed; skipped {path.name} (pip install reportlab)"
+        )
+        return False
+
+    font_file = next((f for f in _FONT_CANDIDATES if Path(f).exists()), None)
+    if font_file is None:
+        print(f"WARN: no Unicode TTF found; skipped {path.name}")
+        return False
+    pdfmetrics.registerFont(TTFont("VNFont", font_file))
+
+    canvas = Canvas(str(path), pagesize=A4)
+    _, height = A4
+    y = height - 70
+
+    def line(text: str, size: int, gap: int) -> None:
+        nonlocal y
+        canvas.setFont("VNFont", size)
+        canvas.drawString(60, y, unicodedata.normalize("NFC", text))
+        y -= gap
+
+    line(_PDF_TITLE, 16, 34)
+    for heading, body in _PDF_SECTIONS:
+        line(heading, 13, 24)
+        # Naive wrap: the body strings are short enough for ~90-char lines.
+        words, cur = body.split(), ""
+        for word in words:
+            if len(cur) + len(word) + 1 > 90:
+                line(cur, 11, 16)
+                cur = word
+            else:
+                cur = f"{cur} {word}".strip()
+        if cur:
+            line(cur, 11, 26)
+    canvas.showPage()
+    canvas.save()
+    return True
+
+
 def main() -> None:
     """Write the synthetic corpus (NFC-normalized) to data/synthetic/."""
     SYNTHETIC_DIR.mkdir(parents=True, exist_ok=True)
+    n_written = 0
     for filename, content in DOCUMENTS.items():
         # NFC-normalize at generation so fixtures match ingestion expectations.
         normalized = unicodedata.normalize("NFC", content)
         path = SYNTHETIC_DIR / filename
         path.write_text(normalized, encoding="utf-8")
         print(f"wrote {path.relative_to(SYNTHETIC_DIR.parent.parent)}")
+        n_written += 1
     xlsx_path = SYNTHETIC_DIR / XLSX_FILENAME
     write_claims_xlsx(xlsx_path)
     print(f"wrote {xlsx_path.relative_to(SYNTHETIC_DIR.parent.parent)}")
-    print(f"\n{len(DOCUMENTS) + 1} synthetic documents written to {SYNTHETIC_DIR}")
+    n_written += 1
+    pdf_path = SYNTHETIC_DIR / PDF_FILENAME
+    if write_underwriting_pdf(pdf_path):
+        print(f"wrote {pdf_path.relative_to(SYNTHETIC_DIR.parent.parent)}")
+        n_written += 1
+    print(f"\n{n_written} synthetic documents written to {SYNTHETIC_DIR}")
 
 
 if __name__ == "__main__":

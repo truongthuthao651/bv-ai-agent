@@ -1,11 +1,94 @@
-"""PDF parser (STUB — Phase 1 placeholder).
+"""PDF parser: Docling -> Markdown+LaTeX -> sections.
 
-Docling with ``do_formula_enrichment=True`` so formulas emerge as LaTeX. If the
-text layer averages < PDF_MIN_CHARS_PER_PAGE chars/page, route to ocr.py
-(PaddleOCR, lang="vi"); never silently return empty text. Extract figure regions
-via figure_extract.py. Returns a ``ParsedDocument``. See skill section 1.
+Docling runs with ``do_formula_enrichment`` (settings) so rendered formulas come
+out as LaTeX, and with local weights (``settings.docling_models_path``,
+pre-fetched by setup_models.sh) so parsing stays offline. The exported Markdown
+goes through cleaning (NFC + running header/footer strip — PDFs are the one
+format where page furniture leaks into the text) and then the shared
+sectionizer, like every other parser.
+
+A PDF whose text layer averages fewer than ``settings.pdf_min_chars_per_page``
+characters per page is almost certainly a scan; per the skill we never silently
+return empty text, so it raises a clear error until the OCR increment lands.
 """
 
 from __future__ import annotations
 
-# TODO(phase-ingestion): implement parse_pdf(path) -> ParsedDocument.
+import logging
+import re
+import unicodedata
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from app.config.settings import settings
+from app.ingestion.cleaning import normalize_text, strip_headers_footers
+from app.ingestion.parsers.docx_parser import title_from_path
+from app.ingestion.parsers.markdown import sections_from_markdown, title_from_markdown
+from app.models.schemas import DocType, ParsedDocument
+
+logger = logging.getLogger(__name__)
+
+# Docling emits placeholders like "<!-- image -->" for undecoded regions; they
+# are noise for embedding and display alike.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+
+
+@lru_cache
+def _get_converter() -> Any:
+    """Build and cache the Docling converter (heavy model load, once per process)."""
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+
+    opts = PdfPipelineOptions()
+    opts.do_formula_enrichment = settings.do_formula_enrichment
+    models_dir = settings.docling_models_path
+    if models_dir.is_dir() and any(models_dir.iterdir()):
+        # Offline weights from setup_models.sh; a missing or EMPTY dir is
+        # ignored (docling would hard-fail on it) and Docling downloads on
+        # first use instead (cached under HF_HOME -> host-mounted ./models).
+        opts.artifacts_path = models_dir
+    logger.info(
+        "Loading Docling PDF pipeline (formula_enrichment=%s)",
+        settings.do_formula_enrichment,
+    )
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+    )
+
+
+def _convert_with_docling(path: Path) -> tuple[str, int]:
+    """Run Docling on a PDF; returns (markdown, page_count). Mocked in tests."""
+    result = _get_converter().convert(str(path))
+    md = result.document.export_to_markdown()
+    n_pages = max(len(result.document.pages), 1)
+    return md, n_pages
+
+
+def parse_pdf(
+    path: str | Path, *, doc_type: DocType = DocType.POLICY
+) -> ParsedDocument:
+    """Parse a text-layer PDF into cleaned, sectioned Markdown+LaTeX."""
+    p = Path(path)
+    md, n_pages = _convert_with_docling(p)
+
+    density = len("".join(md.split())) / n_pages
+    if density < settings.pdf_min_chars_per_page:
+        raise NotImplementedError(
+            f"'{p.name}' has no usable text layer (~{density:.0f} chars/page — "
+            "likely a scan). Scanned-PDF OCR arrives in the OCR increment; "
+            "re-export the PDF with a text layer or use .docx/.md for now."
+        )
+
+    md = _HTML_COMMENT_RE.sub("", md)
+    md = unicodedata.normalize("NFC", md)
+    md = strip_headers_footers(normalize_text(md))
+    title = title_from_markdown(md, title_from_path(p))
+    sections = sections_from_markdown(md, doc_title=title)
+    return ParsedDocument(
+        doc_title=title,
+        doc_type=doc_type,
+        sections=sections,
+        source_path=str(p),
+    )

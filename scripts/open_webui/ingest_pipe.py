@@ -5,8 +5,8 @@ version: 0.1.0
 license: MIT
 description: >
     Select this model, attach a file (paperclip icon) with
-    .md/.docx/.xlsx/.yaml/.yml, and send. It forwards the attachment to the
-    insurance RAG backend's
+    .md/.docx/.xlsx/.pdf/.yaml/.yml, and send. It forwards the attachment to
+    the insurance RAG backend's
     POST /ingest and returns the result as the assistant's reply — so document
     upload happens inside the same chat UI users already use, with no separate
     admin page.
@@ -121,9 +121,9 @@ class Pipe:
         files = __files__ or body.get("files") or []
         if not files:
             return (
-                "Đính kèm một tệp (.md, .docx, .xlsx, .yaml/.yml — hỗ trợ PDF/ảnh "
-                "đang được phát triển) vào tin nhắn này bằng biểu tượng ghim, rồi "
-                "gửi lại để nạp vào hệ thống."
+                "Đính kèm một tệp (.md, .docx, .xlsx, .pdf có lớp chữ, .yaml/.yml — "
+                "hỗ trợ PDF scan/ảnh đang được phát triển) vào tin nhắn này bằng "
+                "biểu tượng ghim, rồi gửi lại để nạp vào hệ thống."
             )
 
         if not self.valves.OPENWEBUI_API_KEY:

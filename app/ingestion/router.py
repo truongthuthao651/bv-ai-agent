@@ -1,8 +1,9 @@
 """File-type detection -> correct parser.
 
 Maps a file (by extension) to a parser returning a ``ParsedDocument``.
-Currently handled: Markdown, DOCX, XLSX, and the glossary YAML; PDF/image
-parsers arrive in the hard-parser increment and raise ``NotImplementedError``.
+Currently handled: Markdown, DOCX, XLSX, PDF (text-layer), and the glossary
+YAML; image/scan parsers arrive with the OCR increment and raise
+``NotImplementedError``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from app.ingestion.parsers.docx_parser import parse_docx, parse_markdown
 from app.ingestion.parsers.glossary_parser import parse_glossary
+from app.ingestion.parsers.pdf_parser import parse_pdf
 from app.ingestion.parsers.xlsx_parser import parse_xlsx
 from app.models.schemas import DocType, ParsedDocument
 
@@ -51,12 +53,12 @@ def route_to_parser(
         return parse_glossary(p, doc_type=resolved_type)
     if ext == ".xlsx":
         return parse_xlsx(p, doc_type=resolved_type)
+    if ext == ".pdf":
+        return parse_pdf(p, doc_type=resolved_type)
     if ext == ".xls":
         raise NotImplementedError(
             "Legacy '.xls' is not supported; re-save the file as '.xlsx' and retry."
         )
-    if ext in (".pdf", ".png", ".jpg", ".jpeg"):
-        raise NotImplementedError(
-            f"Parser for '{ext}' arrives in the hard-parser increment (Increment D)."
-        )
+    if ext in (".png", ".jpg", ".jpeg"):
+        raise NotImplementedError(f"Parser for '{ext}' arrives with the OCR increment.")
     raise ValueError(f"Unsupported file type: '{ext}' ({p.name})")
