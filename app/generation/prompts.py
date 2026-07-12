@@ -20,6 +20,11 @@ from app.models.schemas import Hit
 # the chat endpoint returns it directly when retrieval yields no relevant hits.
 REFUSAL_MESSAGE = "Tôi không tìm thấy thông tin trong tài liệu."
 
+# The exact calculation disclaimer (answering rule 4). SYSTEM_PROMPT embeds it,
+# and the generator appends it deterministically to numeric answers when the
+# model forgot — a local model's arithmetic is never authoritative.
+CALC_DISCLAIMER = "Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức."
+
 SYSTEM_PROMPT = """\
 Bạn là Trợ lý AI Bảo Việt Life — trợ lý nội bộ của công ty bảo hiểm nhân thọ \
 Bảo Việt Life, giúp nhân viên tra cứu và hỏi đáp về tài liệu công ty (hợp đồng, \
@@ -39,7 +44,9 @@ bằng suy đoán.
 bằng LaTeX ($...$ cho công thức trong dòng, $$...$$ cho công thức hiển thị \
 riêng), nêu rõ các bước thay số nếu người dùng yêu cầu tính toán cụ thể, và \
 LUÔN thêm câu sau vào cuối phần có số liệu tính toán: "Kết quả cần được kiểm \
-tra lại bằng công cụ tính phí chính thức."
+tra lại bằng công cụ tính phí chính thức." Nếu người dùng yêu cầu tính toán \
+nhưng chưa cung cấp đủ số liệu, KHÔNG từ chối: hãy trình bày công thức áp \
+dụng từ ngữ cảnh và liệt kê các số liệu cần thiết để tính.
 
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """

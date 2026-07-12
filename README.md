@@ -130,11 +130,16 @@ RRF-fused search, bge-reranker-v2-m3 reranking with a relevance floor —
 `RERANK_MIN_SCORE` — that refuses deterministically when nothing relevant is
 found) and generation (Vietnamese system prompt with
 citations/refusal/math-disclaimer rules, SSE streaming, an appended
-"Nguồn tham khảo" sources block, Ollama `keep_alive` so the model stays warm
-between questions) via `POST /v1/chat/completions`; document deletion via
+"Nguồn tham khảo" sources block, a deterministic calculation guardrail that
+appends the "Kết quả cần được kiểm tra lại..." disclaimer whenever an answer
+contains computed numbers even if the model forgot it, and Ollama `keep_alive`
+so the model stays warm between questions) via `POST /v1/chat/completions`;
+document deletion via
 `DELETE /documents/{doc_id}` (with a delete button on the admin page);
 per-stage latency logging (rewrite/search/rerank/first-token) in the api logs;
-a 27-question golden set plus an offline eval harness —
+a 32-question golden set (27 Vietnamese + 5 English — glossary synonym
+expansion bridges English queries to Vietnamese documents) plus an offline
+eval harness —
 `docker compose exec api python eval/run_ragas.py` — reporting retrieval hit
 rates/MRR, refusal & citation compliance, and LLM-judged
 correctness/faithfulness, with per-run JSON under `eval/results/`;
@@ -142,8 +147,9 @@ document upload wired into the user-facing Open WebUI chat itself via a Pipe
 function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
 (`http://localhost:8000`) for system status / manual upload / quick testing.
 
-**Next:** scanned-document OCR (PaddleOCR + formula-OCR + figures), English
-golden queries, and a KaTeX end-to-end rendering spot-check.
+**Next:** scanned-document OCR (PaddleOCR + formula-OCR + figures), and
+reranker latency reduction on CPU-only machines (measured ~50s/query on an
+M1 CPU container — see the api logs' `retrieval timings`).
 
 See `CLAUDE.md` for architecture and the non-negotiable security rules, and
 `.claude/skills/insurance-rag-pipeline/SKILL.md` for the implementation guide.

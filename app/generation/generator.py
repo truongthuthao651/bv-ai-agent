@@ -20,6 +20,7 @@ import httpx
 
 from app.config.settings import settings
 from app.generation.prompts import (
+    CALC_DISCLAIMER,
     REFUSAL_MESSAGE,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -170,6 +171,41 @@ def _is_refusal(answer: str) -> bool:
     return REFUSAL_MESSAGE.rstrip(".") in answer
 
 
+_MATH_SPAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
+# A concrete numeric value (decimal or 2+ digits) — as opposed to structural
+# constants like the "1" in $A_x = 1 - d\ddot{a}_x$.
+_NUMERIC_VALUE_RE = re.compile(r"\d[.,]\d|\d{2,}")
+
+
+def _needs_calc_disclaimer(answer: str) -> bool:
+    """True when the answer presents computed numbers (answering rule 4).
+
+    Triggers on approximate-result markers or concrete numeric values inside
+    LaTeX math spans (substitution steps). Plain-text figures quoted from a
+    document ("60 ngày") deliberately do NOT trigger — the disclaimer is about
+    the model's own arithmetic, not about cited values.
+    """
+    if "\\approx" in answer or "≈" in answer:
+        return True
+    return any(_NUMERIC_VALUE_RE.search(span) for span in _MATH_SPAN_RE.findall(answer))
+
+
+def _disclaimer_suffix(answer: str) -> str:
+    """The calculation disclaimer to append, or "" when absent-by-design.
+
+    Deterministic guardrail: a small local model both miscalculates and forgets
+    instructions, so rule 4's disclaimer is enforced here rather than trusted
+    to the prompt. No-op when the model already included the sentence.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if CALC_DISCLAIMER.rstrip(".") in answer:
+        return ""
+    if not _needs_calc_disclaimer(answer):
+        return ""
+    return f"\n\n{CALC_DISCLAIMER}"
+
+
 def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     """The sources block to append after ``answer``, or "" when inapplicable.
 
@@ -232,7 +268,8 @@ async def stream_answer(
         if tail:
             answer_parts.append(tail)
             yield _sse_chunk(completion_id, model, {"content": tail}, None)
-        suffix = _sources_suffix("".join(answer_parts), hits)
+        body = "".join(answer_parts)
+        suffix = _disclaimer_suffix(body) + _sources_suffix(body, hits)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
         total_ms = (time.perf_counter() - started) * 1000
@@ -274,6 +311,27 @@ def preload_model() -> None:
     resp.raise_for_status()
 
 
+def generate_plain(prompt: str) -> str:
+    """Context-free passthrough for UI meta-tasks (chat title/tag generation).
+
+    Open WebUI sends these through the same chat endpoint; they must NOT run
+    the RAG pipeline (minutes of retrieval on CPU) nor see the grounded system
+    prompt (whose refusal rule would turn every chat title into the refusal
+    sentence). Returns "" on failure — Open WebUI then keeps its default title.
+    """
+    try:
+        resp = httpx.post(
+            f"{settings.ollama_base_url}/api/chat",
+            json=_ollama_payload([{"role": "user", "content": prompt}], stream=False),
+            timeout=settings.ollama_timeout,
+        )
+        resp.raise_for_status()
+        return strip_think(resp.json().get("message", {}).get("content", ""))
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Meta-task generation failed: %s", exc)
+        return ""
+
+
 def generate_answer(
     query: str, hits: list[Hit], history: list[ChatMessage] | None = None
 ) -> str:
@@ -288,7 +346,7 @@ def generate_answer(
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
         answer = strip_think(content)
-        return answer + _sources_suffix(answer, hits)
+        return answer + _disclaimer_suffix(answer) + _sources_suffix(answer, hits)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
         return _CONNECTION_ERROR_MESSAGE

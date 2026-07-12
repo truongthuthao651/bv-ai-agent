@@ -10,6 +10,7 @@ import json
 from app.config.settings import settings
 from app.generation.generator import (
     ThinkStripper,
+    _disclaimer_suffix,
     _is_refusal,
     _ollama_payload,
     _sources_suffix,
@@ -19,6 +20,7 @@ from app.generation.generator import (
     strip_think,
 )
 from app.generation.prompts import (
+    CALC_DISCLAIMER,
     REFUSAL_MESSAGE,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -183,6 +185,37 @@ def test_is_refusal_matches_with_and_without_trailing_period() -> None:
 # --------------------------------------------------------------------------- #
 # Ollama payload + deterministic refusal streaming
 # --------------------------------------------------------------------------- #
+
+
+def test_calc_disclaimer_constant_matches_system_prompt() -> None:
+    # The guardrail and the prompt must agree on the exact sentence.
+    assert CALC_DISCLAIMER.rstrip(".") in SYSTEM_PROMPT
+
+
+def test_disclaimer_appended_to_numeric_answers() -> None:
+    answer = "Với $i = 0,05$: $v \\approx 0,952$ [Tài liệu, Điều 3]"
+    assert _disclaimer_suffix(answer) == f"\n\n{CALC_DISCLAIMER}"
+
+
+def test_disclaimer_triggers_on_numeric_substitution_without_approx() -> None:
+    answer = "Thay số: $P = 750000000 \\cdot 0,0042$ [Tài liệu, Điều 5]"
+    assert _disclaimer_suffix(answer) == f"\n\n{CALC_DISCLAIMER}"
+
+
+def test_disclaimer_not_duplicated_when_model_already_included_it() -> None:
+    answer = f"$v \\approx 0,952$. {CALC_DISCLAIMER}"
+    assert _disclaimer_suffix(answer) == ""
+
+
+def test_disclaimer_skipped_for_pure_formulas_and_cited_figures() -> None:
+    # Structural constants ($1$ in the identity) are not computed results.
+    assert (
+        _disclaimer_suffix("$A_x = 1 - d \\cdot \\ddot{a}_x$ [Tài liệu, Điều 3]") == ""
+    )
+    # Plain-text figures quoted from a document are citations, not arithmetic.
+    assert _disclaimer_suffix("Thời gian gia hạn là 60 ngày. [Tài liệu, Điều 6]") == ""
+    assert _disclaimer_suffix(REFUSAL_MESSAGE) == ""
+    assert _disclaimer_suffix("") == ""
 
 
 def test_ollama_payload_sends_keep_alive() -> None:

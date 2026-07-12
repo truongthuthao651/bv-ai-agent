@@ -90,3 +90,40 @@ def test_delete_unknown_document_is_404_and_deletes_nothing(monkeypatch) -> None
     resp = _client().delete("/documents/khong-ton-tai")
     assert resp.status_code == 404
     assert deleted == []
+
+
+# --------------------------------------------------------------------------- #
+# Open WebUI meta-task bypass (chat titles/tags must not run the RAG pipeline)
+# --------------------------------------------------------------------------- #
+
+
+def test_meta_task_detection() -> None:
+    from app.api.chat import _is_meta_task
+
+    assert _is_meta_task("### Task:\nGenerate 1-3 broad tags...")
+    assert _is_meta_task("Create a concise, 3-5 word title with an emoji...")
+    assert not _is_meta_task("Phí thuần là gì?")
+    assert not _is_meta_task("tính net premium")
+
+
+def test_meta_task_bypasses_retrieval(monkeypatch) -> None:
+    import app.api.chat as chat_module
+    from app.generation import generator
+
+    def boom(*_args):  # retrieval must never run for meta-tasks
+        raise AssertionError("retrieval was called for a meta-task")
+
+    monkeypatch.setattr(chat_module, "_retrieve", boom)
+    monkeypatch.setattr(generator, "generate_plain", lambda prompt: "Tiêu đề chat")
+
+    resp = _client().post(
+        "/v1/chat/completions",
+        json={
+            "stream": False,
+            "messages": [
+                {"role": "user", "content": "Create a concise, 3-5 word title ..."}
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == "Tiêu đề chat"

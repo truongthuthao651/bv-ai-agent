@@ -57,6 +57,22 @@ async def list_models() -> ModelList:
     )
 
 
+# Opening text of Open WebUI's built-in task prompts (title/tag generation,
+# etc. — pinned image open-webui:0.5.4, so these templates are stable). Such
+# requests arrive on this same endpoint and must bypass the RAG pipeline: a
+# full retrieval+rerank costs minutes on CPU, and the grounded system prompt
+# would turn every chat title into the refusal sentence.
+_META_TASK_PREFIXES = (
+    "### Task:",
+    "Create a concise, 3-5 word title",
+)
+
+
+def _is_meta_task(query: str) -> bool:
+    """True for Open WebUI meta-requests (title/tags), not real user questions."""
+    return query.lstrip().startswith(_META_TASK_PREFIXES)
+
+
 def _split_request(request: ChatCompletionRequest) -> tuple[str, list[ChatMessage]]:
     """Split ``messages`` into (latest user turn, prior history)."""
     if not request.messages:
@@ -97,6 +113,26 @@ def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
 async def chat_completions(request: ChatCompletionRequest):
     """Answer a chat request, grounded only in retrieved document chunks."""
     query, history = _split_request(request)
+
+    # Open WebUI meta-tasks (chat titles/tags) skip retrieval entirely.
+    if _is_meta_task(query):
+        answer = await run_in_threadpool(generator.generate_plain, query)
+        if request.stream:
+            return StreamingResponse(
+                generator.stream_static_answer(answer),
+                media_type="text/event-stream",
+            )
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4().hex}",
+            created=int(time.time()),
+            model=settings.chat_model,
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatMessage(role="assistant", content=answer)
+                )
+            ],
+        )
+
     standalone_query, hits = await run_in_threadpool(_retrieve, query, history)
 
     # No hit survived the reranker's relevance floor: refuse deterministically

@@ -95,8 +95,12 @@ class Settings(BaseSettings):
     # Reranker (bge-reranker-v2-m3, normalized 0-1) hits scoring below this are
     # dropped before generation; when nothing survives, the API returns the
     # refusal message deterministically instead of trusting the LLM to refuse
-    # on irrelevant context. 0 disables the floor.
-    rerank_min_score: float = 0.2
+    # on irrelevant context. 0 disables the floor. Calibrated on the synthetic
+    # corpus: off-topic queries score <= 0.001 everywhere, while genuinely
+    # related secondary chunks (e.g. the formula article for a terse
+    # "tính net premium") land around 0.05-0.15 — a higher floor starves the
+    # model of usable context and causes false refusals.
+    rerank_min_score: float = 0.05
     enable_query_expansion: bool = True
     enable_query_rewrite: bool = True
 
