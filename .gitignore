@@ -48,3 +48,6 @@ htmlcov/
 # ---- Ingestion artifacts (extracted figure images, etc.) ----
 data/assets/
 *.log
+
+# ---- Eval outputs (per-run JSON reports; compare locally, don't commit) ----
+/eval/results/

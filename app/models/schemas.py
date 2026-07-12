@@ -173,6 +173,13 @@ class IngestResponse(BaseModel):
     n_figures: int = Field(default=0, ge=0)
 
 
+class DocumentDeleteResponse(BaseModel):
+    """Result of ``DELETE /documents/{doc_id}``."""
+
+    doc_id: str
+    deleted_chunks: int = Field(..., ge=0)
+
+
 class DocumentInfo(BaseModel):
     """Summary of one indexed document (``GET /documents``)."""
 

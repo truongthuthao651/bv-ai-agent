@@ -153,6 +153,14 @@
   th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
   td.empty { color: var(--muted); text-align: center; padding: 22px 0; }
+  .btn-danger {
+    background: #fff;
+    color: var(--bad);
+    border: 1px solid var(--bad);
+    padding: 5px 12px;
+    font-size: 12.5px;
+  }
+  .btn-danger:hover:not(:disabled) { background: #fbeeee; }
   .tag {
     display: inline-block;
     padding: 2px 8px;
@@ -246,10 +254,10 @@
     <p class="hint">Danh sách tài liệu hiện có trong Qdrant (<code>GET /documents</code>).</p>
     <table>
       <thead>
-        <tr><th>Tên tài liệu</th><th>Loại</th><th>Phòng ban</th><th>Số đoạn</th><th>Thời gian nạp</th></tr>
+        <tr><th>Tên tài liệu</th><th>Loại</th><th>Phòng ban</th><th>Số đoạn</th><th>Thời gian nạp</th><th></th></tr>
       </thead>
       <tbody id="docsBody">
-        <tr><td class="empty" colspan="5">Đang tải…</td></tr>
+        <tr><td class="empty" colspan="6">Đang tải…</td></tr>
       </tbody>
     </table>
     <div class="upload-row">
@@ -317,7 +325,7 @@
       const resp = await fetch("/documents");
       const docs = await resp.json();
       if (!docs.length) {
-        docsBody.innerHTML = '<tr><td class="empty" colspan="5">Chưa có tài liệu nào được nạp.</td></tr>';
+        docsBody.innerHTML = '<tr><td class="empty" colspan="6">Chưa có tài liệu nào được nạp.</td></tr>';
         return;
       }
       docsBody.innerHTML = docs.map((d) => `
@@ -327,12 +335,35 @@
           <td>${d.department ? escapeHtml(d.department) : "—"}</td>
           <td>${d.n_chunks}</td>
           <td>${d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—"}</td>
+          <td><button class="btn-danger" data-doc-id="${escapeHtml(d.doc_id)}" data-doc-title="${escapeHtml(d.doc_title)}">Xoá</button></td>
         </tr>
       `).join("");
     } catch (err) {
-      docsBody.innerHTML = `<tr><td class="empty" colspan="5">Không tải được danh sách: ${escapeHtml(err.message)}</td></tr>`;
+      docsBody.innerHTML = `<tr><td class="empty" colspan="6">Không tải được danh sách: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
+
+  // ---- Delete (event delegation so doc ids never go through inline JS) ----
+  docsBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-doc-id]");
+    if (!btn) return;
+    const title = btn.dataset.docTitle;
+    if (!confirm(`Xoá tài liệu "${title}" khỏi hệ thống? Thao tác này không thể hoàn tác.`)) return;
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/documents/${encodeURIComponent(btn.dataset.docId)}`, { method: "DELETE" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert("Không xoá được: " + (data.detail || `HTTP ${resp.status}`));
+        btn.disabled = false;
+        return;
+      }
+      loadDocuments();
+    } catch (err) {
+      alert("Lỗi mạng khi xoá: " + err.message);
+      btn.disabled = false;
+    }
+  });
 
   // ---- Upload ----
   dropzone.addEventListener("click", () => fileInput.click());

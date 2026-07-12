@@ -97,6 +97,25 @@ def ensure_collection() -> None:
     logger.info("Created Qdrant collection '%s'", settings.qdrant_collection)
 
 
+def count_document_points(doc_id: str) -> int:
+    """Number of indexed points for a document (0 when unknown / no collection)."""
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return 0
+    result = client.count(
+        collection_name=settings.qdrant_collection,
+        count_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="doc_id", match=models.MatchValue(value=doc_id)
+                )
+            ]
+        ),
+        exact=True,
+    )
+    return result.count
+
+
 def delete_document(doc_id: str) -> None:
     """Remove all points for a document (idempotent re-ingest / deletion)."""
     client = get_client()

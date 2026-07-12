@@ -4,23 +4,36 @@ the pure message/SSE-building helpers in generator.py. No Ollama needed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
+from app.config.settings import settings
 from app.generation.generator import (
     ThinkStripper,
+    _is_refusal,
+    _ollama_payload,
+    _sources_suffix,
     build_messages,
     parse_ollama_line,
+    stream_static_answer,
     strip_think,
 )
-from app.generation.prompts import SYSTEM_PROMPT, build_user_prompt, format_context
+from app.generation.prompts import (
+    REFUSAL_MESSAGE,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    format_context,
+    format_sources,
+)
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
 
 
-def _hit(doc_title: str, section_path: str, text: str) -> Hit:
+def _hit(doc_title: str, section_path: str, text: str, page: int | None = None) -> Hit:
     payload = QdrantPayload(
         doc_id="d1",
         doc_title=doc_title,
         section_path=section_path,
+        page=page,
         doc_type=DocType.OTHER,
         display_text=text,
         chunk_index=0,
@@ -119,6 +132,87 @@ def test_parse_ollama_line_final_chunk() -> None:
 # --------------------------------------------------------------------------- #
 # <think> stripping (reasoning models must never leak chain-of-thought)
 # --------------------------------------------------------------------------- #
+
+
+def test_refusal_message_constant_matches_system_prompt() -> None:
+    # The deterministic-refusal path and the prompt must agree on the sentence.
+    assert REFUSAL_MESSAGE.rstrip(".") in SYSTEM_PROMPT
+
+
+# --------------------------------------------------------------------------- #
+# Sources block ("Nguồn tham khảo")
+# --------------------------------------------------------------------------- #
+
+
+def test_format_sources_numbers_match_context_and_dedupes() -> None:
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "A", page=3),
+        _hit("Quy tắc An Tâm", "Điều 5", "B", page=3),  # same doc+section: once
+        _hit("Hướng dẫn dự phòng", "Điều 2", "C"),
+    ]
+    block = format_sources(hits)
+    assert "**Nguồn tham khảo:**" in block
+    assert "- [1] Quy tắc An Tâm — Điều 5 (trang 3)" in block
+    assert "[2]" not in block  # deduped, and numbering keeps context indices
+    assert "- [3] Hướng dẫn dự phòng — Điều 2" in block
+
+
+def test_format_sources_empty_hits() -> None:
+    assert format_sources([]) == ""
+
+
+def test_sources_suffix_appended_to_normal_answers() -> None:
+    hits = [_hit("Tài liệu A", "Điều 1", "Nội dung.")]
+    suffix = _sources_suffix("Phí thuần là ... [Tài liệu A, Điều 1]", hits)
+    assert suffix.startswith("\n\n**Nguồn tham khảo:**")
+
+
+def test_sources_suffix_skipped_for_refusals_and_empty() -> None:
+    hits = [_hit("Tài liệu A", "Điều 1", "Nội dung.")]
+    assert _sources_suffix(REFUSAL_MESSAGE, hits) == ""
+    assert _sources_suffix("", hits) == ""
+    assert _sources_suffix("Câu trả lời.", []) == ""
+
+
+def test_is_refusal_matches_with_and_without_trailing_period() -> None:
+    assert _is_refusal(REFUSAL_MESSAGE)
+    assert _is_refusal("Tôi không tìm thấy thông tin trong tài liệu")
+    assert not _is_refusal("Phí thuần là ...")
+
+
+# --------------------------------------------------------------------------- #
+# Ollama payload + deterministic refusal streaming
+# --------------------------------------------------------------------------- #
+
+
+def test_ollama_payload_sends_keep_alive() -> None:
+    payload = _ollama_payload([{"role": "user", "content": "hi"}], stream=True)
+    assert payload["keep_alive"] == settings.ollama_keep_alive
+
+
+def _collect_sse_content(chunks: list[str]) -> str:
+    text = ""
+    for chunk in chunks:
+        payload = chunk.removeprefix("data: ").strip()
+        if not payload or payload == "[DONE]":
+            continue
+        delta = json.loads(payload)["choices"][0]["delta"]
+        text += delta.get("content", "")
+    return text
+
+
+def test_stream_static_answer_is_valid_openai_sse() -> None:
+    async def collect() -> list[str]:
+        return [chunk async for chunk in stream_static_answer(REFUSAL_MESSAGE)]
+
+    chunks = asyncio.run(collect())
+    assert chunks[-1] == "data: [DONE]\n\n"
+    assert _collect_sse_content(chunks) == REFUSAL_MESSAGE
+    finish_reasons = [
+        json.loads(c.removeprefix("data: "))["choices"][0]["finish_reason"]
+        for c in chunks[:-1]
+    ]
+    assert finish_reasons[-1] == "stop"
 
 
 def test_strip_think_removes_full_block() -> None:

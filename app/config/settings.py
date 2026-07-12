@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
     ollama_timeout: float = 120.0
+    # Ollama unloads a model after ~5 idle minutes by default, so the next
+    # question after a break pays a full model reload (warmup only covers the
+    # first request). Duration string ("2h", "30m") or "-1" to keep loaded
+    # forever; sent with every Ollama call.
+    ollama_keep_alive: str = "2h"
     # Reasoning models (e.g. qwen3) emit hidden <think> tokens before the answer.
     # On CPU these dominate latency. False sends Ollama ``think: false`` to skip
     # them entirely; any that still leak are stripped server-side before display.
@@ -87,6 +92,11 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     rrf_k: int = 60
     rerank_top_k: int = 5
+    # Reranker (bge-reranker-v2-m3, normalized 0-1) hits scoring below this are
+    # dropped before generation; when nothing survives, the API returns the
+    # refusal message deterministically instead of trusting the LLM to refuse
+    # on irrelevant context. 0 disables the floor.
+    rerank_min_score: float = 0.2
     enable_query_expansion: bool = True
     enable_query_rewrite: bool = True
 

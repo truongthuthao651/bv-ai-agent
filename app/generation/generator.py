@@ -19,7 +19,12 @@ from collections.abc import AsyncIterator
 import httpx
 
 from app.config.settings import settings
-from app.generation.prompts import SYSTEM_PROMPT, build_user_prompt
+from app.generation.prompts import (
+    REFUSAL_MESSAGE,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    format_sources,
+)
 from app.models.schemas import ChatMessage, Hit
 
 logger = logging.getLogger(__name__)
@@ -125,6 +130,9 @@ def _ollama_payload(
         "messages": messages,
         "stream": stream,
         "think": settings.llm_thinking,
+        # Without this Ollama unloads the model after ~5 idle minutes and the
+        # next question pays a full reload; see settings.ollama_keep_alive.
+        "keep_alive": settings.ollama_keep_alive,
         "options": {
             "temperature": settings.llm_temperature,
             "num_predict": settings.llm_max_tokens,
@@ -157,6 +165,32 @@ def parse_ollama_line(line: str) -> tuple[str, bool]:
     return content, bool(data.get("done"))
 
 
+def _is_refusal(answer: str) -> bool:
+    """True when the answer is (or contains) the mandated refusal sentence."""
+    return REFUSAL_MESSAGE.rstrip(".") in answer
+
+
+def _sources_suffix(answer: str, hits: list[Hit]) -> str:
+    """The sources block to append after ``answer``, or "" when inapplicable.
+
+    Refusals and error messages get no sources — listing documents under an
+    "I couldn't find it" answer would look like a contradiction.
+    """
+    if not answer.strip() or not hits or _is_refusal(answer):
+        return ""
+    return f"\n\n{format_sources(hits)}"
+
+
+async def stream_static_answer(text: str) -> AsyncIterator[str]:
+    """Stream a fixed message as OpenAI SSE chunks (deterministic refusal path)."""
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    model = settings.chat_model
+    yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
+    yield _sse_chunk(completion_id, model, {"content": text}, None)
+    yield _sse_chunk(completion_id, model, {}, "stop")
+    yield "data: [DONE]\n\n"
+
+
 async def stream_answer(
     query: str, hits: list[Hit], history: list[ChatMessage] | None = None
 ) -> AsyncIterator[str]:
@@ -168,6 +202,9 @@ async def stream_answer(
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
 
     stripper = ThinkStripper()
+    answer_parts: list[str] = []
+    started = time.perf_counter()
+    first_token_at: float | None = None
     try:
         async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
             async with client.stream(
@@ -183,6 +220,9 @@ async def stream_answer(
                     if content:
                         visible = stripper.feed(content)
                         if visible:
+                            if first_token_at is None:
+                                first_token_at = time.perf_counter()
+                            answer_parts.append(visible)
                             yield _sse_chunk(
                                 completion_id, model, {"content": visible}, None
                             )
@@ -190,7 +230,18 @@ async def stream_answer(
                         break
         tail = stripper.flush()
         if tail:
+            answer_parts.append(tail)
             yield _sse_chunk(completion_id, model, {"content": tail}, None)
+        suffix = _sources_suffix("".join(answer_parts), hits)
+        if suffix:
+            yield _sse_chunk(completion_id, model, {"content": suffix}, None)
+        total_ms = (time.perf_counter() - started) * 1000
+        first_ms = (
+            (first_token_at - started) * 1000 if first_token_at is not None else -1.0
+        )
+        logger.info(
+            "generation timings: first_token=%.0fms total=%.0fms", first_ms, total_ms
+        )
     except httpx.HTTPError as exc:
         logger.error("Generation failed: %s", exc)
         yield _sse_chunk(
@@ -216,6 +267,7 @@ def preload_model() -> None:
             "prompt": "",
             "stream": False,
             "think": False,
+            "keep_alive": settings.ollama_keep_alive,
         },
         timeout=settings.ollama_timeout,
     )
@@ -235,7 +287,8 @@ def generate_answer(
         )
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
-        return strip_think(content)
+        answer = strip_think(content)
+        return answer + _sources_suffix(answer, hits)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
         return _CONNECTION_ERROR_MESSAGE

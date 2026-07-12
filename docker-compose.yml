@@ -62,6 +62,9 @@ services:
       # Dev iteration: reflect app code edits on container restart, no rebuild.
       # (The image still COPYs app/ so it runs standalone without this mount.)
       - ./app:/app/app
+      # Golden-set eval runs inside this container (docker compose exec api
+      # python eval/run_ragas.py); mounted so results land back on the host.
+      - ./eval:/app/eval
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

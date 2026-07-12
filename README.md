@@ -112,6 +112,7 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # start (
 bash scripts/setup_models.sh                                           # pull models
 bash scripts/healthcheck.sh                                            # smoke test
 pytest tests/ -x -q                                                    # unit tests (no Docker)
+docker compose exec api python eval/run_ragas.py                       # golden-set eval (needs stack up)
 ruff check app/ && ruff format app/                                    # lint + format
 ```
 
@@ -125,15 +126,24 @@ formula enrichment + header/footer cleaning, formula verbalization, bge-m3
 dense+sparse indexing into Qdrant) via `POST /ingest` and batch via
 `scripts/ingest.sh`;
 retrieval (glossary query expansion, LLM standalone-question rewrite, hybrid
-RRF-fused search, bge-reranker-v2-m3 reranking) and generation (Vietnamese
-system prompt with citations/refusal/math-disclaimer rules, SSE streaming) via
-`POST /v1/chat/completions`; a 27-question golden set (`eval/golden_set.jsonl`);
+RRF-fused search, bge-reranker-v2-m3 reranking with a relevance floor —
+`RERANK_MIN_SCORE` — that refuses deterministically when nothing relevant is
+found) and generation (Vietnamese system prompt with
+citations/refusal/math-disclaimer rules, SSE streaming, an appended
+"Nguồn tham khảo" sources block, Ollama `keep_alive` so the model stays warm
+between questions) via `POST /v1/chat/completions`; document deletion via
+`DELETE /documents/{doc_id}` (with a delete button on the admin page);
+per-stage latency logging (rewrite/search/rerank/first-token) in the api logs;
+a 27-question golden set plus an offline eval harness —
+`docker compose exec api python eval/run_ragas.py` — reporting retrieval hit
+rates/MRR, refusal & citation compliance, and LLM-judged
+correctness/faithfulness, with per-run JSON under `eval/results/`;
 document upload wired into the user-facing Open WebUI chat itself via a Pipe
 function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
 (`http://localhost:8000`) for system status / manual upload / quick testing.
 
-**Next:** scanned-document OCR (PaddleOCR + formula-OCR + figures), and wiring
-`eval/run_ragas.py` against the golden set.
+**Next:** scanned-document OCR (PaddleOCR + formula-OCR + figures), English
+golden queries, and a KaTeX end-to-end rendering spot-check.
 
 See `CLAUDE.md` for architecture and the non-negotiable security rules, and
 `.claude/skills/insurance-rag-pipeline/SKILL.md` for the implementation guide.

@@ -177,3 +177,32 @@ def test_rerank_reorders_by_score_and_cuts_to_top_k() -> None:
 
 def test_rerank_empty_hits() -> None:
     assert rerank("query", [], score_fn=lambda _q, _d: []) == []
+
+
+def test_rerank_drops_hits_below_min_score() -> None:
+    hits = [_hit("1", "irrelevant"), _hit("2", "relevant"), _hit("3", "borderline")]
+    fake_scores = {"irrelevant": 0.05, "relevant": 0.9, "borderline": 0.3}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [fake_scores[d] for d in docs]
+
+    ranked = rerank("query", hits, top_k=5, min_score=0.2, score_fn=score_fn)
+    assert [h.point_id for h in ranked] == ["2", "3"]
+
+
+def test_rerank_returns_empty_when_nothing_clears_min_score() -> None:
+    # The deterministic-refusal path in the chat endpoint depends on this:
+    # all-irrelevant retrieval must yield [] rather than "the best of the bad".
+    hits = [_hit("1", "a"), _hit("2", "b")]
+    ranked = rerank(
+        "query", hits, top_k=5, min_score=0.2, score_fn=lambda _q, d: [0.1] * len(d)
+    )
+    assert ranked == []
+
+
+def test_rerank_min_score_zero_disables_the_floor() -> None:
+    hits = [_hit("1", "a"), _hit("2", "b")]
+    ranked = rerank(
+        "query", hits, top_k=5, min_score=0.0, score_fn=lambda _q, d: [0.01, 0.02]
+    )
+    assert len(ranked) == 2

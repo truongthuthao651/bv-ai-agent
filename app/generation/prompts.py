@@ -16,6 +16,10 @@ from __future__ import annotations
 
 from app.models.schemas import Hit
 
+# The exact refusal sentence (answering rule 3). SYSTEM_PROMPT embeds it, and
+# the chat endpoint returns it directly when retrieval yields no relevant hits.
+REFUSAL_MESSAGE = "Tôi không tìm thấy thông tin trong tài liệu."
+
 SYSTEM_PROMPT = """\
 Bạn là Trợ lý AI Bảo Việt Life — trợ lý nội bộ của công ty bảo hiểm nhân thọ \
 Bảo Việt Life, giúp nhân viên tra cứu và hỏi đáp về tài liệu công ty (hợp đồng, \
@@ -61,3 +65,28 @@ def format_context(hits: list[Hit]) -> str:
 def build_user_prompt(query: str, hits: list[Hit]) -> str:
     """Assemble the final user-turn content: numbered context + the question."""
     return f"Ngữ cảnh:\n{format_context(hits)}\n\nCâu hỏi: {query}"
+
+
+def format_sources(hits: list[Hit]) -> str:
+    """Deterministic "Nguồn tham khảo" block appended after non-refusal answers.
+
+    Lists the chunks that were actually in the generation context, keeping the
+    same numbering as ``format_context`` so the model's inline ``[n]``-style
+    citations stay checkable even when its citation formatting drifts.
+    Duplicate (doc, section) pairs are listed once.
+    """
+    if not hits:
+        return ""
+    lines = ["**Nguồn tham khảo:**"]
+    seen: set[tuple[str, str]] = set()
+    for i, hit in enumerate(hits, start=1):
+        payload = hit.payload
+        key = (payload.doc_title, payload.section_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        line = f"- [{i}] {payload.doc_title} — {payload.section_path}"
+        if payload.page is not None:
+            line += f" (trang {payload.page})"
+        lines.append(line)
+    return "\n".join(lines)

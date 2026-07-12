@@ -51,6 +51,7 @@ def _ollama_rewrite(prompt: str) -> str:
                 "prompt": prompt,
                 "stream": False,
                 "think": False,  # qwen3: skip chain-of-thought for this fast utility call
+                "keep_alive": settings.ollama_keep_alive,
                 "options": {"temperature": 0.0},
             },
             timeout=settings.ollama_timeout,

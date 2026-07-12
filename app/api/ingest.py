@@ -20,12 +20,26 @@ from app.ingestion import indexer
 from app.ingestion.chunking import chunk_document
 from app.ingestion.enrichment import enrich_chunks
 from app.ingestion.router import route_to_parser
-from app.models.schemas import DocType, DocumentInfo, IngestResponse
+from app.models.schemas import (
+    DocType,
+    DocumentDeleteResponse,
+    DocumentInfo,
+    IngestResponse,
+)
 
 router = APIRouter(tags=["ingest"])
 
 # Stable doc_id per filename so re-uploading the same file replaces its points.
 _DOC_NAMESPACE = uuid.UUID("6f4a1d9e-0b2c-4e77-9a1b-000000000002")
+
+
+def doc_id_for_filename(filename: str) -> str:
+    """Deterministic doc_id for an uploaded filename.
+
+    Public because the eval harness maps golden-set ``source_doc`` filenames to
+    the doc_ids it should find in retrieval results.
+    """
+    return str(uuid.uuid5(_DOC_NAMESPACE, filename))
 
 
 def _safe_filename(name: str | None) -> str:
@@ -49,7 +63,7 @@ def _run_pipeline(path: Path, doc_type: DocType | None) -> IngestResponse:
     for section in doc.sections:
         section.text = unicodedata.normalize("NFC", section.text)
 
-    doc_id = str(uuid.uuid5(_DOC_NAMESPACE, path.name))
+    doc_id = doc_id_for_filename(path.name)
     chunks = chunk_document(
         doc,
         doc_id,
@@ -90,3 +104,15 @@ async def ingest_file(
 async def list_documents() -> list[DocumentInfo]:
     """List documents currently indexed in Qdrant."""
     return await run_in_threadpool(indexer.list_documents)
+
+
+@router.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)
+async def delete_document(doc_id: str) -> DocumentDeleteResponse:
+    """Remove all indexed chunks of one document (by ``doc_id``)."""
+    n_chunks = await run_in_threadpool(indexer.count_document_points, doc_id)
+    if n_chunks == 0:
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
+        )
+    await run_in_threadpool(indexer.delete_document, doc_id)
+    return DocumentDeleteResponse(doc_id=doc_id, deleted_chunks=n_chunks)

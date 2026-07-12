@@ -54,8 +54,9 @@ RUN pip install --no-cache-dir -r requirements-pdf.txt
 # container recreation and the stack stays offline after setup.
 ENV HF_HOME=/app/models/hf
 
-# App code.
+# App code + eval harness (run via `docker compose exec api python eval/run_ragas.py`).
 COPY app ./app
+COPY eval ./eval
 
 EXPOSE 8000
 
