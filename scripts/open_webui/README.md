@@ -26,10 +26,11 @@ its own selectable "model" whose code we control.
    **Save**. Open WebUI should detect it as a `pipe`-type function named
    "Nạp tài liệu" — enable it (toggle on).
 3. **Configure its Valves**: click the ⚙️ gear on the function → paste the API
-   key from step 1 into `OPENWEBUI_API_KEY`. Leave `INGEST_API_BASE_URL`
-   (`http://api:8000`) and `OPENWEBUI_INTERNAL_URL` (`http://localhost:8080`)
-   at their defaults — those are container-to-container hostnames on the
-   compose network, not host-facing ports.
+   key from step 1 into `OPENWEBUI_API_KEY`. The other defaults fit the native
+   (no-Docker) deployment: `INGEST_API_BASE_URL=http://localhost:8000`,
+   `OPENWEBUI_INTERNAL_URL=http://localhost:3000`. On the Docker dev stack set
+   them to the in-container addresses instead: `http://api:8000` and
+   `http://localhost:8080`.
 
 ## Using it (everyone)
 

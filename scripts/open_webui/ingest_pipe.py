@@ -45,12 +45,12 @@ from pydantic import BaseModel, Field
 class Pipe:
     class Valves(BaseModel):
         INGEST_API_BASE_URL: str = Field(
-            default="http://api:8000",
-            description="Base URL of the insurance RAG FastAPI backend (container-to-container hostname on the compose network).",
+            default="http://localhost:8000",
+            description="Base URL of the insurance RAG FastAPI backend. Native (no-Docker) deployment: http://localhost:8000. Docker dev stack: http://api:8000 (compose service name).",
         )
         OPENWEBUI_INTERNAL_URL: str = Field(
-            default="http://localhost:8080",
-            description="Open WebUI's own internal URL (this Pipe runs inside the open-webui container, so 'localhost' is correct here, not 'open-webui').",
+            default="http://localhost:3000",
+            description="Open WebUI's own URL as seen from inside itself. Native deployment: http://localhost:3000 (the serve port). Docker: http://localhost:8080 (in-container port).",
         )
         OPENWEBUI_API_KEY: str = Field(
             default="",
@@ -91,7 +91,11 @@ class Pipe:
         return resp.content
 
     async def _ingest(
-        self, client: httpx.AsyncClient, filename: str, content: bytes, content_type: str | None
+        self,
+        client: httpx.AsyncClient,
+        filename: str,
+        content: bytes,
+        content_type: str | None,
     ) -> str:
         resp = await client.post(
             f"{self.valves.INGEST_API_BASE_URL}/ingest",
@@ -99,7 +103,9 @@ class Pipe:
                 "file": (
                     filename,
                     content,
-                    content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                    content_type
+                    or mimetypes.guess_type(filename)[0]
+                    or "application/octet-stream",
                 )
             },
         )
@@ -108,7 +114,7 @@ class Pipe:
                 detail = resp.json().get("detail", resp.text)
             except ValueError:
                 detail = resp.text
-            return f"❌ Nạp \"{filename}\" thất bại (HTTP {resp.status_code}): {detail}"
+            return f'❌ Nạp "{filename}" thất bại (HTTP {resp.status_code}): {detail}'
 
         data = resp.json()
         extra = f", {data['n_figures']} hình" if data.get("n_figures") else ""
@@ -129,7 +135,7 @@ class Pipe:
         if not self.valves.OPENWEBUI_API_KEY:
             return (
                 "⚠️ Chưa cấu hình khoá API. Vào Settings > Account > API Keys để "
-                "tạo một khoá, rồi dán vào Valves của function \"Nạp tài liệu\" "
+                'tạo một khoá, rồi dán vào Valves của function "Nạp tài liệu" '
                 "(Admin Panel > Settings > Functions)."
             )
 
@@ -147,10 +153,14 @@ class Pipe:
                 try:
                     content = await self._fetch_file_bytes(client, file_id)
                 except httpx.HTTPError as exc:
-                    results.append(f"❌ Không tải được nội dung tệp \"{filename}\": {exc}")
+                    results.append(
+                        f'❌ Không tải được nội dung tệp "{filename}": {exc}'
+                    )
                     continue
                 try:
-                    results.append(await self._ingest(client, filename, content, content_type))
+                    results.append(
+                        await self._ingest(client, filename, content, content_type)
+                    )
                 except httpx.HTTPError as exc:
                     results.append(f"❌ Không kết nối được API nạp tài liệu: {exc}")
 

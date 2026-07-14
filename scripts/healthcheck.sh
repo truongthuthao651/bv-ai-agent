@@ -17,6 +17,7 @@ API_PORT="$(env_get API_PORT)"
 API_PORT="${API_PORT:-8000}"
 OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"
 OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
+QDRANT_LOCAL_PATH="$(env_get QDRANT_LOCAL_PATH)"
 
 fail=0
 check() {
@@ -31,7 +32,13 @@ check() {
 
 echo "==> Health checks (host-facing ports)"
 check "Ollama"      "http://localhost:11434/api/tags"
-check "Qdrant"      "http://localhost:6333/healthz"
+if [[ -n "$QDRANT_LOCAL_PATH" ]]; then
+  # Native mode: Qdrant runs embedded inside the API process — no port to ping.
+  # The FastAPI /health check below exercises it in-process.
+  echo "  [ -- ] Qdrant  (embedded in the API — covered by the FastAPI check)"
+else
+  check "Qdrant"    "http://localhost:6333/healthz"
+fi
 check "FastAPI app" "http://localhost:${API_PORT}/health"
 check "Open WebUI"  "http://localhost:${OPEN_WEBUI_PORT}/"
 

@@ -59,15 +59,16 @@ class Settings(BaseSettings):
     )
 
     # ---- Ollama ----
-    ollama_base_url: str = "http://ollama:11434"
+    ollama_base_url: str = "http://localhost:11434"
     chat_model: str = "qwen3:8b"
     vision_model: str = "qwen2.5vl:7b"
     embed_model: str = "bge-m3"
     rerank_model: str = "bge-reranker-v2-m3"
     # Local weight dirs for FlagEmbedding (bge-m3 dense+sparse) and the reranker.
     # Downloaded by setup_models.sh so indexing/reranking run fully offline.
-    embed_model_path: str = "/app/models/bge-m3"
-    rerank_model_path: str = "/app/models/bge-reranker-v2-m3"
+    # Relative to the working directory: the repo root natively, /app in Docker.
+    embed_model_path: str = "./models/bge-m3"
+    rerank_model_path: str = "./models/bge-reranker-v2-m3"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
@@ -83,7 +84,14 @@ class Settings(BaseSettings):
     llm_thinking: bool = False
 
     # ---- Qdrant ----
-    qdrant_url: str = "http://qdrant:6333"
+    # Non-empty QDRANT_LOCAL_PATH switches the app to qdrant-client's EMBEDDED
+    # local mode: the vector DB runs in-process and persists to this directory —
+    # no Qdrant server (and no Docker) needed. This is the no-Docker deployment
+    # mode. Caveat: the storage dir is single-process; anything else that opens
+    # it (e.g. eval/run_ragas.py) must run while the API is stopped.
+    # Empty (default) = classic server mode via qdrant_url.
+    qdrant_local_path: str = ""
+    qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "insurance_docs"
     dense_vector_size: int = 1024
     dense_distance: str = "Cosine"
@@ -118,17 +126,18 @@ class Settings(BaseSettings):
     # the directory exists (and is non-empty) the PDF parser runs offline from
     # it. Deliberately NOT named DOCLING_ARTIFACTS_PATH: docling itself reads
     # that env var and hard-fails at convert time if the dir doesn't exist.
-    docling_models_path: Path = Path("/app/models/docling")
+    docling_models_path: Path = Path("./models/docling")
 
     # ---- Paths ----
-    data_dir: Path = Path("/app/data")
-    synthetic_dir: Path = Path("/app/data/synthetic")
-    glossary_path: Path = Path("/app/data/glossary/thuat_ngu.yaml")
-    asset_dir: Path = Path("/app/data/assets")
+    # Relative to the working directory: the repo root natively, /app in Docker.
+    data_dir: Path = Path("./data")
+    synthetic_dir: Path = Path("./data/synthetic")
+    glossary_path: Path = Path("./data/glossary/thuat_ngu.yaml")
+    asset_dir: Path = Path("./data/assets")
 
     # ---- Open WebUI / OpenAI-compatible surface ----
     open_webui_port: int = 3000
-    openai_api_base_url: str = "http://api:8000/v1"
+    openai_api_base_url: str = "http://localhost:8000/v1"
     openai_api_key: str = "local-no-auth"
     webui_auth: bool = False
 

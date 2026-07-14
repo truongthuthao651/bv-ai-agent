@@ -23,26 +23,32 @@ toán** (LaTeX). Toàn bộ dữ liệu **không rời khỏi máy** — không 
 
 ## 🚀 Hướng dẫn triển khai (dành cho người quản lý cài đặt trên máy công ty)
 
-Yêu cầu: máy đã cài **Docker Desktop** (hoặc Docker Engine + Compose). Có GPU
-NVIDIA thì tốt hơn nhưng không bắt buộc.
+**Không cần Docker.** Toàn bộ hệ thống chạy trực tiếp trên máy (macOS / Linux).
+Yêu cầu duy nhất, cài một lần:
+
+1. **Python 3.11 hoặc 3.12** — https://www.python.org/downloads/
+2. **Ollama** (phần mềm chạy mô hình AI cục bộ) — https://ollama.com
+
+Chỉ cần mạng Internet ở bước cài đặt (tải thư viện + mô hình); sau đó hệ
+thống chạy **hoàn toàn offline**. Cơ sở dữ liệu vector (Qdrant) chạy **nhúng
+ngay trong ứng dụng** — không phải cài thêm gì.
 
 ```bash
 # 1) Lấy mã nguồn
-git clone <repo-url> insurance-assistant
-cd insurance-assistant
+git clone <repo-url> bv-ai-agent
+cd bv-ai-agent
 
 # 2) Tạo file cấu hình cho máy này (chỉnh nếu cần)
 cp .env.example .env
 #    - Máy yếu: sửa CHAT_MODEL=qwen3:4b trong .env
 #    - Đổi cổng nếu bị trùng: API_PORT, OPEN_WEBUI_PORT
 
-# 3) Khởi động toàn bộ hệ thống (CPU)
-docker compose up -d
-#    Nếu có GPU NVIDIA:
-#    docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# 3) Cài đặt một lần (tạo môi trường Python + tải toàn bộ mô hình — cần mạng)
+bash scripts/setup_native.sh
 
-# 4) Tải các mô hình (chỉ cần mạng ở bước này)
-bash scripts/setup_models.sh
+# 4) Khởi động hệ thống (lần đầu hãy chạy khi còn mạng — Open WebUI tải một
+#    thành phần nhỏ ở lần khởi động đầu tiên; các lần sau hoàn toàn offline)
+bash scripts/run_native.sh
 
 # 5) Kiểm tra hệ thống
 bash scripts/healthcheck.sh
@@ -56,7 +62,7 @@ bash scripts/healthcheck.sh
 #    API sức khỏe: http://localhost:8000/health
 ```
 
-Dừng hệ thống: `docker compose down` (thêm `-v` để xoá cả dữ liệu volume).
+Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm trong `logs/`.
 
 > **Nạp tài liệu:** người dùng nạp tài liệu ngay trong Open WebUI (chọn model
 > "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem `scripts/open_webui/README.md`
@@ -79,8 +85,27 @@ render **math formulas** as LaTeX. Nothing leaves the machine — no external AP
 - **Vector DB:** Qdrant (hybrid dense + sparse), reranker `bge-reranker-v2-m3`
 - **Frontend:** Open WebUI pointed at the FastAPI endpoint (KaTeX for LaTeX)
 
-See the deployment steps above (they are the same commands). Development uses
-`data/synthetic/` only; `data/real/` is confidential and never touched.
+**Deployment is Docker-free** (company machines don't allow Docker): the
+`scripts/*_native.sh` scripts run everything directly — the API in a local
+venv (pandoc bundled via `pypandoc-binary`), Open WebUI pip-installed in its
+own venv, and Qdrant **embedded in-process** via qdrant-client local mode
+(`QDRANT_LOCAL_PATH` in `.env`; empty switches back to server mode at
+`QDRANT_URL`). Only Python 3.11/3.12 and Ollama need to be installed. See the
+deployment steps above (same commands). Development uses `data/synthetic/`
+only; `data/real/` is confidential and never touched.
+
+> Embedded-mode caveat: the storage directory is single-process. Stop the API
+> (`bash scripts/stop_native.sh`) before running `eval/run_ragas.py` natively.
+
+### Optional: Docker dev stack
+
+`docker-compose.yml` still works for dev machines that have Docker
+(`docker compose up -d`; add `docker-compose.gpu.yml` for an NVIDIA GPU).
+The container always uses server-mode Qdrant — compose overrides
+`QDRANT_LOCAL_PATH` internally — but `OLLAMA_BASE_URL` is substituted from
+`.env`: delete that line from `.env` to use the in-compose `ollama` service,
+or point it at `http://host.docker.internal:11434` for a native Ollama (next
+section).
 
 ### Local dev on Apple Silicon (Metal GPU)
 
@@ -107,13 +132,17 @@ box is unaffected — it keeps `OLLAMA_BASE_URL=http://ollama:11434` and the GPU
 ### Common commands
 
 ```bash
-docker compose up -d                                                   # start (CPU)
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # start (GPU)
-bash scripts/setup_models.sh                                           # pull models
-bash scripts/healthcheck.sh                                            # smoke test
-pytest tests/ -x -q                                                    # unit tests (no Docker)
-docker compose exec api python eval/run_ragas.py                       # golden-set eval (needs stack up)
-ruff check app/ && ruff format app/                                    # lint + format
+bash scripts/setup_native.sh                # one-time native setup (venvs + all models)
+bash scripts/run_native.sh                  # start the stack natively (no Docker)
+bash scripts/stop_native.sh                 # stop it
+bash scripts/setup_models.sh                # (re-)pull models — autodetects native vs docker
+bash scripts/healthcheck.sh                 # smoke test
+pytest tests/ -x -q                         # unit tests (no services needed)
+.venv/bin/python eval/run_ragas.py          # golden-set eval — native: stop the API first
+ruff check app/ && ruff format app/         # lint + format
+docker compose up -d                        # optional Docker dev stack (CPU)
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # …with NVIDIA GPU
+docker compose exec api python eval/run_ragas.py                       # eval inside Docker
 ```
 
 ### Project status
@@ -145,7 +174,10 @@ rates/MRR, refusal & citation compliance, and LLM-judged
 correctness/faithfulness, with per-run JSON under `eval/results/`;
 document upload wired into the user-facing Open WebUI chat itself via a Pipe
 function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
-(`http://localhost:8000`) for system status / manual upload / quick testing.
+(`http://localhost:8000`) for system status / manual upload / quick testing;
+Docker-free native deployment (`scripts/setup_native.sh` / `run_native.sh` /
+`stop_native.sh`, embedded in-process Qdrant via `QDRANT_LOCAL_PATH`, pandoc
+bundled via `pypandoc-binary`) for company machines where Docker isn't allowed.
 
 **Next:** scanned-document OCR (PaddleOCR + formula-OCR + figures), and
 reranker latency reduction on CPU-only machines (measured ~50s/query on an

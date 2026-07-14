@@ -26,7 +26,7 @@ from app.api import chat, health, ingest
 from app.config.settings import settings
 
 logging.basicConfig(level=settings.log_level)
-logger = logging.getLogger("insurance-assistant")
+logger = logging.getLogger("bv-ai-agent")
 
 
 async def _warmup() -> None:
@@ -63,11 +63,11 @@ async def _warmup() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: optional warmup on startup (see ``_warmup``)."""
-    logger.info("Starting insurance-assistant API (chat_model=%s)", settings.chat_model)
+    logger.info("Starting bv-ai-agent API (chat_model=%s)", settings.chat_model)
     if settings.warmup_on_startup:
         await _warmup()
     yield
-    logger.info("Shutting down insurance-assistant API")
+    logger.info("Shutting down bv-ai-agent API")
 
 
 app = FastAPI(

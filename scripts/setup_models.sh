@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Pull all models the stack needs. Run once after `docker compose up -d`.
+# Pull all models the stack needs. Works in BOTH deployment modes:
+#   - native (no Docker): uses the local `ollama` CLI and .venv/bin/python
+#     (created by scripts/setup_native.sh)
+#   - docker: uses `docker compose exec` against the running containers
 # Network access is allowed ONLY at this setup step (ollama pull + HF download).
 # Reads model names from .env so weak machines can drop CHAT_MODEL to qwen3:4b.
 # =============================================================================
@@ -28,12 +31,50 @@ EMBED_MODEL="${EMBED_MODEL:-bge-m3}"
 RERANK_MODEL="$(env_get RERANK_MODEL)"
 RERANK_MODEL="${RERANK_MODEL:-bge-reranker-v2-m3}"
 
+# ---- Mode detection: a running compose api container means docker mode ----
+MODE=native
+if command -v docker >/dev/null 2>&1 \
+    && [[ -n "$(docker compose ps -q api 2>/dev/null || true)" ]]; then
+  MODE=docker
+fi
+echo "==> Mode: $MODE"
+
+if [[ "$MODE" == "native" ]]; then
+  if [[ ! -x .venv/bin/python ]]; then
+    echo "ERROR: .venv not found — run 'bash scripts/setup_native.sh' first" >&2
+    echo "       (or 'docker compose up -d' for docker mode)." >&2
+    exit 1
+  fi
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "ERROR: ollama CLI not found. Install it from https://ollama.com" >&2
+    exit 1
+  fi
+fi
+
+# Run a Python snippet (stdin) in the right place. Downloads land under
+# ./models either way: relative paths resolve to the repo root natively and
+# to WORKDIR /app (host-mounted ./models) inside the container.
+run_py() {
+  if [[ "$MODE" == "docker" ]]; then
+    docker compose exec -T \
+      -e HF_HUB_DISABLE_XET=1 -e HF_HUB_DOWNLOAD_TIMEOUT=60 \
+      api python - "$@"
+  else
+    HF_HUB_DISABLE_XET=1 HF_HUB_DOWNLOAD_TIMEOUT=60 HF_HOME="$ROOT_DIR/models/hf" \
+      .venv/bin/python - "$@"
+  fi
+}
+
 # Ollama serves chat + vision. Embeddings/reranking use FlagEmbedding with local
 # HF weights (bge-m3 must produce dense+sparse, which Ollama cannot).
-echo "==> Pulling Ollama models via the ollama container"
+echo "==> Pulling Ollama models"
 for model in "$CHAT_MODEL" "$VISION_MODEL"; do
   echo "    - $model"
-  docker compose exec -T ollama ollama pull "$model"
+  if [[ "$MODE" == "docker" ]]; then
+    docker compose exec -T ollama ollama pull "$model"
+  else
+    ollama pull "$model"
+  fi
 done
 
 # ---- FlagEmbedding weights: bge-m3 (dense+sparse) + reranker, from Hugging Face ----
@@ -41,9 +82,7 @@ echo "==> Fetching embedding + reranker weights into ./models"
 mkdir -p models
 for model in "$EMBED_MODEL" "$RERANK_MODEL"; do
   echo "    - $model"
-  docker compose exec -T \
-    -e HF_HUB_DISABLE_XET=1 -e HF_HUB_DOWNLOAD_TIMEOUT=60 \
-    api python - "$model" <<'PY'
+  run_py "$model" <<'PY'
 import sys
 from huggingface_hub import snapshot_download
 
@@ -54,7 +93,7 @@ repo = model if "/" in model else f"BAAI/{model}"
 # linear layers). Skip ONNX/TF/Flax variants — large and unused.
 path = snapshot_download(
     repo_id=repo,
-    local_dir=f"/app/models/{model}",
+    local_dir=f"models/{model}",
     ignore_patterns=[
         "*.onnx", "*.onnx_data", "onnx/*",
         "*.h5", "*.msgpack", "tf_*", "flax_*", "imgs/*",
@@ -67,14 +106,12 @@ done
 # ---- Docling weights (PDF layout/tableformer + formula model) ----
 # Pre-fetched into ./models/docling so PDF parsing runs offline. Non-fatal:
 # without it, the first PDF ingest downloads on demand into HF_HOME
-# (./models/hf, host-mounted — still persistent, but needs network once).
+# (./models/hf — still persistent, but needs network once).
 echo "==> Fetching Docling PDF-model weights into ./models/docling"
-if ! docker compose exec -T \
-    -e HF_HUB_DISABLE_XET=1 -e HF_HUB_DOWNLOAD_TIMEOUT=60 \
-    api python - <<'PY'
+if ! run_py <<'PY'
 from pathlib import Path
 
-target = Path("/app/models/docling")
+target = Path("models/docling")
 try:  # newer docling releases
     from docling.utils.model_downloader import download_models
 

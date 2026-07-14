@@ -19,6 +19,11 @@ data/glossary/*
 /models/
 /qdrant_storage/
 
+# ---- Native (no-Docker) runtime state ----
+/open_webui_data/
+/logs/
+/run/
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
@@ -51,3 +56,5 @@ data/assets/
 
 # ---- Eval outputs (per-run JSON reports; compare locally, don't commit) ----
 /eval/results/
+.webui_secret_key
+.venv-webui/

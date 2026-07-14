@@ -3,7 +3,8 @@
 # Batch-ingest a folder: POST each supported file to the running API's /ingest.
 #   bash scripts/ingest.sh data/synthetic
 #   bash scripts/ingest.sh data/glossary
-# Requires the stack to be up (docker compose up -d). Enrichment calls the local
+# Requires the stack to be up (scripts/run_native.sh, or docker compose up -d
+# in docker dev mode). Enrichment calls the local
 # LLM once per math chunk, so formula-heavy files can take minutes each.
 # =============================================================================
 set -uo pipefail

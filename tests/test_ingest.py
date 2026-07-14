@@ -127,3 +127,20 @@ def test_meta_task_bypasses_retrieval(monkeypatch) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["choices"][0]["message"]["content"] == "Tiêu đề chat"
+
+
+# --------------------------------------------------------------------------- #
+# Embedded Qdrant (QDRANT_LOCAL_PATH — the no-Docker deployment mode)
+# --------------------------------------------------------------------------- #
+
+
+def test_get_client_embedded_local_mode(tmp_path, monkeypatch) -> None:
+    """A set QDRANT_LOCAL_PATH yields an in-process client — no server needed."""
+    from app.ingestion import indexer
+
+    monkeypatch.setattr(indexer.settings, "qdrant_local_path", str(tmp_path / "qdrant"))
+    client = indexer.get_client.__wrapped__()  # bypass the lru_cache
+    try:
+        assert not client.collection_exists("nonexistent")
+    finally:
+        client.close()

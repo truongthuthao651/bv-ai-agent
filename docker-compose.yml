@@ -44,12 +44,15 @@ services:
       - .env
     environment:
       # Container-to-container hostnames override the .env host-facing defaults.
-      # OLLAMA_BASE_URL is overridable so a dev machine can point at a native
-      # Ollama on the host (e.g. macOS Metal): set it to
-      # http://host.docker.internal:11434 in .env. Deployment leaves it unset and
-      # gets the in-compose "ollama" service by default.
+      # OLLAMA_BASE_URL is substituted from .env: on a Mac dev machine set it to
+      # http://host.docker.internal:11434 to reach a native (Metal) Ollama;
+      # DELETE the line from .env to use the in-compose "ollama" service. The
+      # native .env default (http://localhost:11434) does NOT work in-container.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       QDRANT_URL: http://qdrant:6333
+      # Force server-mode Qdrant in-container even when .env carries the native
+      # no-Docker default (QDRANT_LOCAL_PATH=./qdrant_storage/local).
+      QDRANT_LOCAL_PATH: ""
       # Any model weights fetched from the HF hub at runtime (e.g. Docling's
       # formula model on first PDF) cache under the host-mounted ./models dir,
       # so they persist and the stack runs offline afterwards.

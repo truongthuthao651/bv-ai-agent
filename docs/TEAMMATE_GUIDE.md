@@ -120,18 +120,23 @@ Hai khái niệm then chốt:
 Admin UI tuỳ chọn: `http://localhost:8000` (upload / health / hỏi thử nhanh).
 User hàng ngày chủ yếu dùng Open WebUI `:3000`.
 
+> Sơ đồ trên là chế độ Docker. Ở chế độ **native (không Docker)** hộp Qdrant
+> `:6333` biến mất: vector DB chạy **nhúng ngay trong process FastAPI** và lưu
+> vào `qdrant_storage/local/` (`QDRANT_LOCAL_PATH`). Ba process còn lại
+> (Ollama, FastAPI, Open WebUI) do `scripts/run_native.sh` quản lý.
+
 ### Stack chi tiết (tools & technologies)
 
 | Lớp | Công nghệ | Vai trò | Ghi chú |
 |-----|-----------|---------|---------|
-| **Orchestration** | Docker Compose | Chạy 4 service: ollama, qdrant, api, open-webui | Tag pinned, không dùng `:latest` |
+| **Orchestration** | Scripts native (`scripts/run_native.sh`) hoặc Docker Compose (dev) | Native: ollama + api (Qdrant nhúng) + open-webui, không cần Docker. Docker: 4 service | Máy công ty cấm Docker → luôn dùng native |
 | **API** | FastAPI + Uvicorn | HTTP API, SSE streaming, lifespan warmup | `app/main.py` |
 | **Config** | pydantic-settings | Mọi biến đọc từ `.env` qua `settings.py` | Không `os.getenv()` lung tung |
 | **Chat LLM** | Ollama + Qwen3 (`qwen3:8b`) | Sinh câu trả lời tiếng Việt | Máy yếu: `qwen3:4b` |
 | **Vision LLM** | Ollama + Qwen2.5-VL (`qwen2.5vl:7b`) | Mô tả biểu đồ / OCR công thức (enrichment) | Chậm — chỉ lúc ingest |
 | **Embeddings** | FlagEmbedding `bge-m3` | Dense + sparse vectors | **Không** qua Ollama (Ollama không đủ sparse) |
 | **Reranker** | `bge-reranker-v2-m3` | Cross-encoder xếp lại top hits | Có sàn điểm `RERANK_MIN_SCORE` |
-| **Vector DB** | Qdrant v1.12.4 | Named vectors `dense` / `sparse` | Telemetry tắt |
+| **Vector DB** | Qdrant v1.12.4 | Named vectors `dense` / `sparse` | Native: chạy **nhúng trong API** (`QDRANT_LOCAL_PATH`); Docker: server riêng. Telemetry tắt |
 | **PDF parse** | Docling (`do_formula_enrichment`) | PDF → Markdown + LaTeX | Weights trong `./models/docling` |
 | **DOCX parse** | pandoc (`gfm+tex_math_dollars`) | Word OMML → LaTeX | **Không** dùng `python-docx` làm path chính (nó drop equation) |
 | **XLSX** | pandas / openpyxl | Sheet → Markdown table | Header lặp lại mỗi chunk |
@@ -195,7 +200,10 @@ bv-ai-agent/
 │   └── static/               # Admin UI (optional)
 │
 ├── scripts/
-│   ├── setup_models.sh       # ollama pull + HF download
+│   ├── setup_native.sh       # Setup KHÔNG cần Docker (venvs + models) — một lần
+│   ├── run_native.sh         # Start stack native (ollama + api + webui)
+│   ├── stop_native.sh        # Stop stack native
+│   ├── setup_models.sh       # ollama pull + HF download (tự nhận diện native/docker)
 │   ├── healthcheck.sh        # Smoke test 4 services
 │   ├── ingest.sh             # Batch POST /ingest một folder
 │   ├── make_synthetic_data.py
@@ -367,13 +375,54 @@ Các quy tắc **không thương lượng**:
 
 ### 9.0 Prerequisites
 
-- Docker Desktop (hoặc Docker Engine + Compose)
+Có **2 cách chạy** — chọn một:
+
+- **Cách A — Native, KHÔNG cần Docker** (giống hệt máy công ty, nơi Docker bị
+  cấm): chỉ cần **Python 3.11/3.12** (python.org) và **Ollama** (ollama.com).
+  Qdrant chạy **nhúng ngay trong API** — không cài gì thêm.
+- **Cách B — Docker** (dev machine đã có Docker Desktop / Engine + Compose).
+
+Chung cho cả hai:
+
 - ~20–40 GB trống cho models (tuỳ CHAT_MODEL)
 - Git clone repo này
-- (Optional) GPU NVIDIA trên Linux — xem bước GPU bên dưới  
-- (Optional) Apple Silicon: xem mục "macOS Metal" — Docker **không** pass GPU Mac
+- (Optional, Cách B) GPU NVIDIA trên Linux — xem bước GPU bên dưới  
+- (Optional, Cách B) Apple Silicon: xem mục "macOS Metal" — Docker **không** pass GPU Mac
 
 ### 9.1 Lần đầu — setup đầy đủ
+
+#### Cách A — Native, không cần Docker (khuyến nghị / bắt buộc trên máy công ty)
+
+```bash
+# 0) Vào thư mục project
+cd /path/to/bv-ai-agent
+
+# 1) Tạo cấu hình máy local (mặc định .env.example đã đúng cho chế độ native)
+cp .env.example .env
+# Máy yếu: mở .env sửa  CHAT_MODEL=qwen3:4b  (Mac dev: qwen3:1.7b)
+
+# 2) Setup một lần (CẦN mạng): tạo .venv (app) + .venv-webui (Open WebUI),
+#    rồi tự gọi setup_models.sh tải toàn bộ models
+bash scripts/setup_native.sh
+
+# 3) Khởi động cả stack: Ollama (nếu chưa chạy) + FastAPI + Open WebUI
+#    Lần ĐẦU hãy chạy khi còn mạng (Open WebUI tải 1 thành phần nhỏ);
+#    các lần sau hoàn toàn offline. Logs → ./logs/, PID → ./run/
+bash scripts/run_native.sh
+
+# 4) Smoke test
+bash scripts/healthcheck.sh
+# Kỳ vọng: Ollama / FastAPI / Open WebUI [ OK ]; Qdrant hiện [ -- ]
+# (nhúng trong API — được check qua /health của FastAPI)
+
+# Dừng:  bash scripts/stop_native.sh
+```
+
+> Chế độ native lưu vector vào `qdrant_storage/local/` **trong process API**
+> (`QDRANT_LOCAL_PATH` trong `.env`). Một process một lúc — muốn chạy
+> `eval/run_ragas.py` thì dừng API trước.
+
+#### Cách B — Docker (dev)
 
 ```bash
 # 0) Vào thư mục project
@@ -383,6 +432,9 @@ cd /path/to/bv-ai-agent
 cp .env.example .env
 # Máy yếu: mở .env sửa  CHAT_MODEL=qwen3:4b
 # (hoặc qwen3:1.7b trên Mac khi dùng Ollama native — xem 9.5)
+# Docker mode: XOÁ dòng OLLAMA_BASE_URL trong .env để dùng ollama trong compose,
+# hoặc set http://host.docker.internal:11434 nếu chạy Ollama native trên Mac (9.5).
+# (QDRANT_LOCAL_PATH trong .env bị compose bỏ qua — container luôn dùng Qdrant server.)
 
 # 2) Build & start stack (CPU)
 docker compose up -d --build
@@ -394,7 +446,7 @@ docker compose up -d --build
 docker compose ps
 docker compose logs -f api   # Ctrl+C khi thấy warmup xong / sẵn sàng
 
-# 4) Tải models (CẦN mạng — chỉ bước này)
+# 4) Tải models (CẦN mạng — chỉ bước này; script tự nhận diện docker/native)
 bash scripts/setup_models.sh
 #    - ollama pull chat + vision
 #    - download bge-m3 + reranker vào ./models
@@ -409,7 +461,9 @@ bash scripts/healthcheck.sh
 
 ```bash
 # Tạo / refresh tài liệu synthetic (fake policies, formulas, …)
-# Chạy trên host nếu đã có Python deps; hoặc trong container:
+# Native (Cách A):
+.venv/bin/python scripts/make_synthetic_data.py
+# Docker (Cách B):
 docker compose exec api python scripts/make_synthetic_data.py
 
 # Nạp glossary (thuật ngữ) — nhanh
@@ -508,6 +562,18 @@ dùng `docker-compose.gpu.yml`.
 
 ### 9.6 Dừng / reset
 
+**Native (Cách A):**
+
+```bash
+# Dừng đúng những gì run_native.sh đã khởi động (đọc PID từ ./run/)
+bash scripts/stop_native.sh
+
+# Xoá index Qdrant nhúng (phải ingest lại)
+# rm -rf qdrant_storage/local   # cẩn thận — mất toàn bộ vector đã nạp
+```
+
+**Docker (Cách B):**
+
 ```bash
 # Dừng containers (giữ volumes + qdrant_storage trên disk)
 docker compose down
@@ -520,10 +586,10 @@ docker compose down -v
 # rm -rf qdrant_storage   # cẩn thận — mất toàn bộ vector đã nạp
 ```
 
-### 9.7 Checklist demo 15 phút (sau khi đã setup_models một lần)
+### 9.7 Checklist demo 15 phút (sau khi đã setup một lần)
 
 ```bash
-docker compose up -d
+bash scripts/run_native.sh                    # Cách A — hoặc: docker compose up -d
 bash scripts/healthcheck.sh
 bash scripts/ingest.sh data/glossary          # nếu collection trống
 # mở http://localhost:3000 → hỏi "Phí thuần là gì?"
@@ -539,11 +605,11 @@ bash scripts/ingest.sh data/glossary          # nếu collection trống
 Chạy trên host khi đã cài deps Python (hoặc trong container cũng được):
 
 ```bash
-# Trong container (đơn giản nhất nếu chưa setup venv)
-docker compose exec api pytest tests/ -x -q
+# Native (Cách A — .venv do setup_native.sh tạo đã có đủ deps)
+.venv/bin/pytest tests/ -x -q
 
-# Hoặc trên host (sau khi pip install -r requirements.txt …)
-pytest tests/ -x -q
+# Docker (Cách B)
+docker compose exec api pytest tests/ -x -q
 ```
 
 Các file test chính:
@@ -562,12 +628,21 @@ Các file test chính:
 Lint:
 
 ```bash
-docker compose exec api ruff check app/
-# hoặc trên host:
-ruff check app/ && ruff format app/
+.venv/bin/ruff check app/ && .venv/bin/ruff format app/   # native
+docker compose exec api ruff check app/                   # docker
 ```
 
-### 10.2 Golden-set evaluation (cần stack + đã ingest)
+### 10.2 Golden-set evaluation (cần Ollama + đã ingest)
+
+**Native (Cách A):** vector DB nhúng là single-process — **dừng API trước**
+(`bash scripts/stop_native.sh`; Ollama đang chạy sẵn thì cứ để):
+
+```bash
+.venv/bin/python eval/run_ragas.py --retrieval-only
+.venv/bin/python eval/run_ragas.py                 # full, lâu trên CPU
+```
+
+**Docker (Cách B):** chạy trong container, không cần dừng gì:
 
 ```bash
 # Full eval (retrieval + generation + LLM-as-judge) — lâu trên CPU
@@ -611,7 +686,8 @@ Toàn bộ qua `.env` → `app/config/settings.py`. Một số biến hay đụn
 |------|---------|-------|
 | `CHAT_MODEL` | Model trả lời | `qwen3:8b` / `4b` / `1.7b` |
 | `LLM_THINKING` | Bật `<think>` của Qwen3 | **Giữ `false`** trừ khi debug |
-| `OLLAMA_BASE_URL` | Địa chỉ Ollama | Compose: `http://ollama:11434`; Mac Metal: `http://host.docker.internal:11434` |
+| `OLLAMA_BASE_URL` | Địa chỉ Ollama | Native: `http://localhost:11434`; compose: xoá dòng này; Mac Metal + Docker: `http://host.docker.internal:11434` |
+| `QDRANT_LOCAL_PATH` | Bật Qdrant nhúng (native, không Docker) | Set (default `./qdrant_storage/local`) = nhúng; để trống = dùng server ở `QDRANT_URL` |
 | `RETRIEVE_TOP_K` | Top-k mỗi nhánh dense/sparse | Default 20 |
 | `RERANK_TOP_K` | Số chunk đưa vào LLM | Default 5 |
 | `RERANK_MIN_SCORE` | Sàn relevance | Default `0.05` — cao quá → false refusal |
@@ -636,12 +712,15 @@ Toàn bộ qua `.env` → `app/config/settings.py`. Một số biến hay đụn
 | Open WebUI không thấy model | API chưa lên / `GET /v1/models` lỗi | `curl localhost:8000/v1/models`; check `OPENAI_API_BASE_URL` |
 | Upload trong WebUI không vào Qdrant của ta | Dùng paperclip mặc định của WebUI (RAG nội bộ của nó) | Dùng Pipe **📥 Nạp tài liệu** (`scripts/open_webui/README.md`) |
 | Equation bị mất khi parse DOCX | Ai đó dùng python-docx thay pandoc | Giữ path pandoc trong `docx_parser.py` |
-| Test fail vì thiếu model | Unit test không cần Ollama; nếu test hit network | Chạy `pytest` không cần stack; integration cần compose |
+| Test fail vì thiếu model | Unit test không cần Ollama; nếu test hit network | Chạy `pytest` không cần stack; integration cần stack đang chạy |
+| (Native) `/health` báo qdrant `down (RuntimeError)` | Process khác đang giữ `qdrant_storage/local` (vd. eval đang chạy, hoặc 2 API) | Storage nhúng là single-process — dừng process kia rồi thử lại |
+| (Native) `run_native.sh` báo thiếu `.venv` | Chưa chạy setup | `bash scripts/setup_native.sh` |
 
 Xem latency từng stage trong log API:
 
 ```bash
-docker compose logs -f api | grep -i timing
+tail -f logs/api.log | grep -i timing        # native
+docker compose logs -f api | grep -i timing  # docker
 ```
 
 ---
@@ -692,6 +771,36 @@ docker compose logs -f api | grep -i timing
 ---
 
 ## Phụ lục C — Lệnh "cheat sheet" copy-paste
+
+### Cách A — Native, KHÔNG cần Docker
+
+```bash
+# Setup (một lần, cần mạng; yêu cầu Python 3.11/3.12 + Ollama đã cài)
+cp .env.example .env
+bash scripts/setup_native.sh
+
+# Start / check
+bash scripts/run_native.sh
+bash scripts/healthcheck.sh
+
+# Data
+.venv/bin/python scripts/make_synthetic_data.py
+bash scripts/ingest.sh data/glossary
+bash scripts/ingest.sh data/synthetic
+
+# Test / eval (eval: dừng API trước — storage nhúng single-process)
+.venv/bin/pytest tests/ -x -q
+bash scripts/stop_native.sh && .venv/bin/python eval/run_ragas.py --retrieval-only
+
+# Chat UI
+open http://localhost:3000            # macOS
+# hoặc trình duyệt → http://localhost:3000
+
+# Stop
+bash scripts/stop_native.sh
+```
+
+### Cách B — Docker (dev)
 
 ```bash
 # Start

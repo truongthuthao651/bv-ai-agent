@@ -3,14 +3,18 @@
 ## What this project is
 
 An internal, fully-local AI assistant (ChatGPT-like) that answers employees'
-questions about company documents. Everything runs offline on one machine via
-Docker Compose. Zero budget: only free/open-source tools.
+questions about company documents. Everything runs offline on one machine.
+Zero budget: only free/open-source tools. **Deployment is Docker-free**
+(company machines don't allow Docker): native venvs + Ollama, with Qdrant
+running EMBEDDED in-process (qdrant-client local mode, `QDRANT_LOCAL_PATH`).
+Docker Compose remains as an optional dev-machine stack.
 
 - **Inputs:** text questions, PDF / DOCX / XLSX documents, images (scans, screenshots).
   Documents are math-heavy: actuarial terminology, equations, charts.
 - **Output:** grounded answers in Vietnamese with source citations; formulas rendered as LaTeX
 - **Serving:** Ollama (chat: `qwen3:8b`, vision: `qwen2.5vl:7b`, embeddings: `bge-m3`)
-- **Vector DB:** Qdrant (hybrid dense + sparse retrieval), reranker `bge-reranker-v2-m3`
+- **Vector DB:** Qdrant (hybrid dense + sparse retrieval), reranker `bge-reranker-v2-m3`;
+  embedded in-process on deployment (`QDRANT_LOCAL_PATH`), server mode in Docker dev
 - **Parsing:** Docling with formula enrichment (PDF), pandoc (DOCX → Markdown+LaTeX),
   pandas/openpyxl (XLSX → Markdown tables), PaddleOCR + PP-FormulaNet or Qwen2.5-VL
   (scans & formula OCR, Vietnamese)
@@ -87,7 +91,10 @@ bv-ai-agent/
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
 ├── scripts/
-│   ├── setup_models.sh        # ollama pull + HF downloads
+│   ├── setup_native.sh        # One-time no-Docker setup: venvs + models (deployment path)
+│   ├── run_native.sh          # Start ollama/API/Open WebUI natively (embedded Qdrant)
+│   ├── stop_native.sh         # Stop what run_native.sh started (pid files in run/)
+│   ├── setup_models.sh        # ollama pull + HF downloads (native/docker autodetect)
 │   ├── ingest.sh              # Batch-ingest a folder
 │   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
 │   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
@@ -139,23 +146,33 @@ bv-ai-agent/
 ## Commands
 
 ```bash
-docker compose up -d                                        # start stack (CPU)
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GPU
-bash scripts/setup_models.sh                                # pull all models
+bash scripts/setup_native.sh                                # one-time native setup (venvs + models)
+bash scripts/run_native.sh                                  # start stack natively (no Docker)
+bash scripts/stop_native.sh                                 # stop the native stack
+bash scripts/setup_models.sh                                # pull all models (native/docker autodetect)
 bash scripts/healthcheck.sh                                 # smoke test
 python scripts/make_synthetic_data.py                       # regenerate fake docs
 bash scripts/ingest.sh data/synthetic                       # index synthetic corpus
 bash scripts/ingest.sh data/glossary                        # index the glossary
-pytest tests/ -x -q                                         # unit tests (no Docker needed)
-python eval/run_ragas.py                                    # RAG quality metrics
+pytest tests/ -x -q                                         # unit tests (no services needed)
+python eval/run_ragas.py                                    # RAG quality metrics (native: stop the API first — embedded Qdrant is single-process)
 ruff check app/ && ruff format app/                         # lint + format
+docker compose up -d                                        # optional Docker dev stack (CPU)
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GPU
 ```
 
 ## Environment notes
 
-- Dev happens on a personal laptop; deployment is `git clone` + `.env` + compose
-  on a company laptop by the manager. Anything machine-specific belongs in `.env`,
-  never in code. Keep README deployment steps up to date whenever setup changes.
+- Dev happens on a personal laptop; deployment is `git clone` + `.env` +
+  `scripts/setup_native.sh` / `run_native.sh` on a company laptop by the manager
+  — **no Docker there** (company policy). Anything machine-specific belongs in
+  `.env`, never in code. Keep README deployment steps up to date whenever setup
+  changes.
+- Deployment needs only Python 3.11/3.12 and Ollama installed. Everything else
+  is pip-installed into `.venv` (app; pandoc bundled via `pypandoc-binary`) and
+  `.venv-webui` (Open WebUI), and Qdrant runs embedded in the API process
+  (`QDRANT_LOCAL_PATH` — single-process storage: stop the API before running
+  `eval/run_ragas.py` natively).
 - Hardware varies: default model is set by `CHAT_MODEL` in `.env` so weak machines
   can drop to `qwen3:4b` without code changes.
 - Enrichment (formula verbalization, figure description) makes ingestion slow —
