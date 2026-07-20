@@ -75,6 +75,9 @@ if listening "http://localhost:${OPEN_WEBUI_PORT}/"; then
   echo "==> Open WebUI already running on port ${OPEN_WEBUI_PORT}"
 else
   echo "==> Starting Open WebUI on port ${OPEN_WEBUI_PORT} (logs/webui.log)"
+  # Re-apply Bảo Việt branding (idempotent; also swaps in the Vietnamese
+  # prompt suggestions once webui.db exists — i.e. from the second start on).
+  .venv/bin/python scripts/open_webui/apply_branding.py >> logs/webui.log 2>&1 || true
   # DATA_DIR here is Open WebUI's OWN storage (chats, settings) — deliberately
   # separate from the app's DATA_DIR in .env, which must not leak into it.
   DATA_DIR="$ROOT_DIR/open_webui_data" \

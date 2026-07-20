@@ -1,3 +1,29 @@
+# Tuỳ chỉnh Open WebUI (port 3000)
+
+## Thương hiệu Bảo Việt — `apply_branding.py`
+
+Open WebUI bản pip không có cơ chế chính thức để thay logo, màu sắc hay câu
+hỏi gợi ý (gợi ý mặc định bị ghi cứng và lưu vào `webui.db` ở lần khởi động
+đầu). `apply_branding.py` vá trực tiếp gói đã cài trong `.venv-webui`
+(hoạt động hoàn toàn offline):
+
+- **Logo/favicon/splash:** thay bằng biểu tượng "BV" xanh `#0072BC` + vạch
+  vàng `#F7B928` (bảng màu nhận diện Bảo Việt).
+- **CSS:** chèn khối `<style id="bv-brand">` vào `frontend/index.html` — nút
+  chính chuyển sang xanh thương hiệu.
+- **Gợi ý câu hỏi:** thay 6 gợi ý tiếng Anh mặc định bằng các câu hỏi
+  định phí / tài liệu nội bộ trong `prompt_suggestions.json`, và đặt ngôn ngữ
+  mặc định `vi-VN`. Chỉ chạy khi Open WebUI **đang tắt** (sao lưu `webui.db`
+  trước khi sửa); gợi ý đã được admin tự chỉnh trong giao diện sẽ **không**
+  bị ghi đè (`--force` để ghi đè).
+
+Chạy tự động trong `setup_native.sh` và mỗi lần `run_native.sh` khởi động
+Open WebUI — không cần chạy tay. Sau khi `pip install --upgrade open-webui`
+(tài nguyên gốc được khôi phục), chỉ cần khởi động lại bằng `run_native.sh`.
+Muốn sửa gợi ý câu hỏi: sửa `prompt_suggestions.json` rồi chạy
+`.venv/bin/python scripts/open_webui/apply_branding.py --force` khi hệ thống
+đang tắt (hoặc sửa trực tiếp trong Admin Panel → Settings → Interface).
+
 # Nạp tài liệu từ Open WebUI (port 3000)
 
 `ingest_pipe.py` is an Open WebUI **Pipe function** that adds a "📥 Nạp tài
@@ -32,7 +58,12 @@ its own selectable "model" whose code we control.
    them to the in-container addresses instead: `http://api:8000` and
    `http://localhost:8080`.
 
-## Using it (everyone)
+## Using it (admin)
+
+> Với RBAC bật (`WEBUI_AUTH=true`, xem README gốc): giữ model "📥 Nạp tài
+> liệu" ở chế độ Private (mặc định của Open WebUI 0.5.x) — nhân viên sẽ không
+> thấy nó trong danh sách model; chỉ admin nạp tài liệu. Kiểm tra trong
+> Admin Panel → Settings → Models nếu cần.
 
 1. In a chat, open the model dropdown at the top and select **📥 Nạp tài liệu**.
 2. Attach a file (paperclip icon) — currently supported: `.md`, `.docx`,

@@ -1,0 +1,26 @@
+[
+  {
+    "title": ["Giải thích thuật ngữ", "Phí thuần là gì?"],
+    "content": "Phí thuần (net premium) là gì và được tính như thế nào theo tài liệu định phí? Nêu công thức và giải thích các ký hiệu."
+  },
+  {
+    "title": ["Tra cứu công thức", "Dự phòng toán học"],
+    "content": "Trình bày công thức tính dự phòng toán học và giải thích ý nghĩa từng thành phần trong công thức. Trích dẫn tài liệu nguồn."
+  },
+  {
+    "title": ["Giải thích ký hiệu", "Ký hiệu định phí actuarial"],
+    "content": "Ký hiệu $\\ddot{a}_x$ và $A_x$ trong tài liệu định phí nghĩa là gì? Chúng liên hệ với nhau qua công thức nào?"
+  },
+  {
+    "title": ["Quy trình nội bộ", "Giải quyết quyền lợi bảo hiểm"],
+    "content": "Quy trình giải quyết quyền lợi bảo hiểm gồm những bước nào? Liệt kê theo đúng tài liệu quy trình nội bộ và ghi rõ mục tham chiếu."
+  },
+  {
+    "title": ["Điều khoản hợp đồng", "Thời gian cân nhắc"],
+    "content": "Thời gian cân nhắc được quy định như thế nào trong quy tắc, điều khoản sản phẩm? Trích dẫn điều khoản cụ thể."
+  },
+  {
+    "title": ["Đọc biểu đồ", "Số liệu trong hình vẽ đã nạp"],
+    "content": "Tóm tắt các số liệu chính trong biểu đồ ở tài liệu đã nạp gần đây và cho biết nguồn (tên tài liệu, mục)."
+  }
+]

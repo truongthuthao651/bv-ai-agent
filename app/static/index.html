@@ -5,13 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Trợ lý AI Bảo Việt Life — Quản trị</title>
 <style>
+  /* Bảo Việt brand palette: signature blue + gold-tone yellow accent */
   :root {
-    --navy: #0f3d5c;
-    --navy-dark: #0a2c43;
-    --teal: #1a8f8f;
-    --bg: #f4f7f9;
+    --navy: #00559b;       /* BV blue, dark */
+    --navy-dark: #003a63;  /* BV navy (header depth) */
+    --blue: #0072bc;       /* BV primary blue (buttons, accents) */
+    --blue-dark: #005a96;
+    --gold: #f7b928;       /* BV gold accent */
+    --gold-dark: #d99e0b;
+    --bg: #f3f7fb;
     --card: #ffffff;
-    --border: #e1e8ed;
+    --border: #dbe6ef;
     --text: #1e2b33;
     --muted: #6b7c85;
     --ok: #1a8f5a;
@@ -26,6 +30,7 @@
   }
   header {
     background: linear-gradient(135deg, var(--navy), var(--navy-dark));
+    border-bottom: 4px solid var(--gold);
     color: #fff;
     padding: 20px 32px;
     display: flex;
@@ -44,7 +49,8 @@
     width: 44px;
     height: 44px;
     border-radius: 10px;
-    background: var(--teal);
+    background: var(--blue);
+    border-bottom: 3px solid var(--gold);
     color: #fff;
     font-weight: 800;
     font-size: 18px;
@@ -73,15 +79,15 @@
   .badge.ok::before { background: #38d68a; }
   .badge.bad::before { background: #ff6b6b; }
   .btn-link {
-    color: #fff;
-    background: var(--teal);
+    color: var(--navy-dark);
+    background: var(--gold);
     text-decoration: none;
     padding: 7px 14px;
     border-radius: 6px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
   }
-  .btn-link:hover { background: #157878; }
+  .btn-link:hover { background: var(--gold-dark); }
 
   main {
     max-width: 980px;
@@ -115,7 +121,7 @@
     cursor: pointer;
     transition: border-color .15s, background .15s;
   }
-  .dropzone:hover, .dropzone.drag { border-color: var(--teal); background: #f0fbfb; }
+  .dropzone:hover, .dropzone.drag { border-color: var(--blue); background: #eef6fc; }
   .dropzone p { margin: 6px 0; color: var(--muted); font-size: 13.5px; }
   .dropzone .filename { color: var(--navy-dark); font-weight: 600; }
   input[type="file"] { display: none; }
@@ -127,6 +133,7 @@
     margin-top: 14px;
     flex-wrap: wrap;
   }
+  #docTitleInput { flex: 1; min-width: 280px; }
   select, button, input[type="text"] {
     font: inherit;
     padding: 9px 12px;
@@ -136,14 +143,14 @@
     color: var(--text);
   }
   button {
-    background: var(--teal);
+    background: var(--blue);
     color: #fff;
     border: none;
     cursor: pointer;
     font-weight: 600;
     padding: 9px 18px;
   }
-  button:hover:not(:disabled) { background: #157878; }
+  button:hover:not(:disabled) { background: var(--blue-dark); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   #uploadStatus, #askStatus { font-size: 13px; margin-top: 10px; color: var(--muted); white-space: pre-wrap; }
   #uploadStatus.ok, #askStatus.ok { color: var(--ok); }
@@ -165,7 +172,7 @@
     display: inline-block;
     padding: 2px 8px;
     border-radius: 4px;
-    background: #eaf3f6;
+    background: #e8f2fa;
     color: var(--navy);
     font-size: 12px;
     font-weight: 600;
@@ -232,6 +239,13 @@
     </div>
     <input type="file" id="fileInput" accept=".md,.docx,.yaml,.yml,.pdf,.xlsx,.xls,.png,.jpg,.jpeg" />
 
+    <div class="upload-row">
+      <input
+        type="text"
+        id="docTitleInput"
+        placeholder="Tên tài liệu (tuỳ chọn — ghi đè tên tự trích từ file, nên ghi kèm tên sản phẩm)"
+      />
+    </div>
     <div class="upload-row">
       <select id="docTypeSelect">
         <option value="">Loại tài liệu: tự động theo phần mở rộng</option>
@@ -396,6 +410,8 @@
     const fd = new FormData();
     fd.append("file", file);
     if (docTypeSelect.value) fd.append("doc_type", docTypeSelect.value);
+    const docTitle = $("docTitleInput").value.trim();
+    if (docTitle) fd.append("doc_title", docTitle);
 
     uploadBtn.disabled = true;
     uploadStatus.className = "";
@@ -413,6 +429,7 @@
           `Đã nạp "${data.doc_title}" (${data.doc_type}) — ${data.n_chunks} đoạn` +
           (data.n_figures ? `, ${data.n_figures} hình` : "") + ".";
         fileInput.value = "";
+        $("docTitleInput").value = "";
         updateFilenameLabel();
         loadDocuments();
       }

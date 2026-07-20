@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     # ---- Ingestion / parsing ----
     ocr_language: str = "vi"
     pdf_min_chars_per_page: int = 20
+    # PDF text-extraction backend for Docling: "pypdfium2" or "docling-parse".
+    # docling-parse mis-decodes the subsetted fonts of some professionally
+    # typeset Vietnamese PDFs (e.g. InDesign policy booklets), producing wrong
+    # diacritics throughout; pdfium decodes the same files correctly, so it is
+    # the default.
+    pdf_backend: str = "pypdfium2"
     do_formula_enrichment: bool = True
     enable_enrichment: bool = True
     # Docling layout/tableformer weights pre-fetched by setup_models.sh; when

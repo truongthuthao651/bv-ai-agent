@@ -56,19 +56,46 @@ bash scripts/healthcheck.sh
 # 6) Cài đặt tính năng "Nạp tài liệu" ngay trong Open WebUI (một lần, xem
 #    scripts/open_webui/README.md để biết chi tiết từng bước)
 
-# 7) Mở giao diện
-#    Trình duyệt: http://localhost:3000  (Open WebUI — trò chuyện + nạp tài liệu)
-#    Trang quản trị (tuỳ chọn, để xem trạng thái hệ thống): http://localhost:8000
+# 7) Tạo tài khoản & phân quyền (một lần)
+#    - Mở http://localhost:3000 và ĐĂNG KÝ tài khoản ĐẦU TIÊN — tài khoản này
+#      tự động trở thành admin (đặt mật khẩu mạnh, đây là tài khoản quản trị).
+#    - Cho phép nhân viên thấy trợ lý: Admin Panel → Settings → Models →
+#      "bao-viet-life" → Visibility: Public → Save. (Mặc định Open WebUI ẩn
+#      mọi model với người dùng thường; các model gốc qwen3/qwen2.5vl cứ để
+#      riêng tư — nhân viên chỉ cần thấy "Trợ lý AI Bảo Việt Life".)
+#    - Tạo tài khoản cho từng nhân viên: Admin Panel → Users → "+" (vai trò
+#      "user"). Đăng ký công khai đã tắt — chỉ admin tạo được tài khoản.
+
+# 8) Mở giao diện
+#    Trình duyệt: http://localhost:3000  (Open WebUI — đăng nhập rồi trò chuyện)
+#    Trang quản trị (chỉ mở được TRÊN máy chủ này): http://localhost:8000
 #    API sức khỏe: http://localhost:8000/health
 ```
 
 Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm trong `logs/`.
 
-> **Nạp tài liệu:** người dùng nạp tài liệu ngay trong Open WebUI (chọn model
-> "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem `scripts/open_webui/README.md`
-> cho bước cài đặt một lần (admin). Trang `http://localhost:8000` là một tiện
-> ích quản trị tuỳ chọn (trạng thái hệ thống, danh sách tài liệu, nạp/hỏi thử
-> nhanh) — không bắt buộc dùng hằng ngày.
+> **Phân quyền (RBAC):** nhân viên đăng nhập và chỉ chat; mọi chức năng quản
+> trị (nạp/xoá tài liệu, cấu hình, tạo tài khoản) chỉ admin thấy. Cụ thể:
+> Open WebUI yêu cầu đăng nhập (`WEBUI_AUTH=true`), API cổng 8000 chỉ nghe
+> trên `127.0.0.1` (`API_HOST` trong `.env`) nên nhân viên trong mạng LAN
+> không truy cập được trang quản trị hay gọi thẳng API nạp/xoá tài liệu.
+> KHÔNG đổi `WEBUI_AUTH` về `false` sau khi đã có tài khoản — Open WebUI sẽ
+> từ chối khởi động.
+
+> **Nạp tài liệu (chỉ admin):** admin nạp tài liệu ngay trong Open WebUI
+> (chọn model "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem
+> `scripts/open_webui/README.md` cho bước cài đặt một lần. Giữ model này ở
+> chế độ Private (mặc định) để nhân viên không thấy nó. Trang
+> `http://localhost:8000` là tiện ích quản trị trên máy chủ (trạng thái hệ
+> thống, danh sách tài liệu, nạp/hỏi thử nhanh) — không bắt buộc dùng hằng ngày.
+
+> **Giao diện thương hiệu Bảo Việt:** logo, màu xanh/vàng thương hiệu và các
+> câu hỏi gợi ý (thuật ngữ định phí, quy trình nội bộ…) được tự động áp dụng
+> bởi `scripts/open_webui/apply_branding.py` — chạy sẵn trong `setup_native.sh`
+> và mỗi lần `run_native.sh` khởi động Open WebUI. Lưu ý: gợi ý câu hỏi tiếng
+> Việt xuất hiện từ **lần khởi động thứ hai** trở đi (lần đầu Open WebUI mới
+> tạo cơ sở dữ liệu cấu hình). Nếu nâng cấp `open-webui` bằng pip, chỉ cần
+> khởi động lại bằng `run_native.sh` là thương hiệu được áp dụng lại.
 
 > Mọi giá trị đặc thù theo máy nằm trong `.env`, **không** nằm trong mã nguồn.
 
@@ -96,6 +123,16 @@ only; `data/real/` is confidential and never touched.
 
 > Embedded-mode caveat: the storage directory is single-process. Stop the API
 > (`bash scripts/stop_native.sh`) before running `eval/run_ragas.py` natively.
+
+**Bảo Việt branding:** `scripts/open_webui/apply_branding.py` patches the
+pip-installed Open WebUI in place (offline): BV logo/favicon/splash, brand
+blue/gold accents, Vietnamese default locale, and actuarial/internal-document
+prompt suggestions (from `scripts/open_webui/prompt_suggestions.json`). It
+runs automatically in `setup_native.sh` and before each Open WebUI start in
+`run_native.sh`; the suggestion swap takes effect from the second start
+(Open WebUI creates its config DB on first boot). Suggestions customized
+later in the Admin UI are never overwritten (use `--force` to reset them).
+The Docker dev stack uses the stock Open WebUI image and is not branded.
 
 ### Optional: Docker dev stack
 
@@ -175,6 +212,11 @@ correctness/faithfulness, with per-run JSON under `eval/results/`;
 document upload wired into the user-facing Open WebUI chat itself via a Pipe
 function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
 (`http://localhost:8000`) for system status / manual upload / quick testing;
+role-based access (`WEBUI_AUTH=true`): the first registered account is the
+admin, who creates employee accounts (public signup off) and publishes only
+the `bao-viet-life` model to them — employees log in and chat, while the
+Admin Panel, raw Ollama models, the ingest pipe, and the port-8000 admin
+page/API (bound to `127.0.0.1` via `API_HOST`) stay admin/machine-only;
 Docker-free native deployment (`scripts/setup_native.sh` / `run_native.sh` /
 `stop_native.sh`, embedded in-process Qdrant via `QDRANT_LOCAL_PATH`, pandoc
 bundled via `pypandoc-binary`) for company machines where Docker isn't allowed.

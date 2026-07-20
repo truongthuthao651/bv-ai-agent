@@ -9,6 +9,7 @@ unit tests that inject a fake ``score_fn`` never pay for the model load.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
@@ -17,6 +18,12 @@ from app.config.settings import settings
 from app.models.schemas import Hit
 
 logger = logging.getLogger(__name__)
+
+# Concurrent chat requests rerank in separate threadpool threads, but the fast
+# (Rust) tokenizer inside FlagReranker is not thread-safe: parallel calls raise
+# "RuntimeError: Already borrowed" or, worse, silently mis-tokenize and score
+# every hit near 0 (observed dropping all hits below the rerank floor).
+_score_lock = threading.Lock()
 
 # (query, documents) -> relevance scores, aligned with documents, higher is better.
 ScoreFn = Callable[[str, list[str]], list[float]]
@@ -35,9 +42,23 @@ def _flag_rerank_scores(query: str, documents: list[str]) -> list[float]:
     if not documents:
         return []
     pairs = [[query, doc] for doc in documents]
-    scores = get_reranker().compute_score(pairs, normalize=True)
+    with _score_lock:
+        scores = get_reranker().compute_score(pairs, normalize=True)
     # compute_score returns a bare float for a single pair instead of a list.
     return [scores] if isinstance(scores, float) else list(scores)
+
+
+def _rerank_text(hit: Hit) -> str:
+    """Chunk text as the cross-encoder sees it: doc/section prefix + display text.
+
+    The prefix (same convention as ``embed_text`` in chunking.py) matters when
+    the query names a document or product whose name never appears in the chunk
+    body — e.g. benefit clauses of a brochure: without it the reranker prefers
+    cover-page chunks that merely mention the product name over the actual
+    benefit sections.
+    """
+    p = hit.payload
+    return f"Tài liệu: {p.doc_title} > {p.section_path}\n\n{p.display_text}"
 
 
 def rerank(
@@ -48,13 +69,14 @@ def rerank(
     min_score: float | None = None,
     score_fn: ScoreFn | None = None,
 ) -> list[Hit]:
-    """Cross-encoder rerank of fused hits against ``display_text``, cut to top_k.
+    """Cross-encoder rerank of fused hits, cut to top_k.
 
-    Hits scoring below ``min_score`` (normalized 0-1) are dropped so generation
-    never sees context the reranker considers irrelevant; an empty result lets
-    the chat endpoint refuse deterministically instead of trusting the LLM to.
-    Mutates and reuses each ``Hit``'s ``score`` in place (RRF score is no longer
-    needed once reranked). Returns ``[]`` for empty input.
+    Each hit is scored against its title/section-prefixed display text (see
+    ``_rerank_text``). Hits scoring below ``min_score`` (normalized 0-1) are
+    dropped so generation never sees context the reranker considers irrelevant;
+    an empty result lets the chat endpoint refuse deterministically instead of
+    trusting the LLM to. Mutates and reuses each ``Hit``'s ``score`` in place
+    (RRF score is no longer needed once reranked). Returns ``[]`` for empty input.
     """
     if not hits:
         return []
@@ -63,7 +85,7 @@ def rerank(
         min_score = settings.rerank_min_score
     score_fn = score_fn or _flag_rerank_scores
 
-    scores = score_fn(query, [hit.payload.display_text for hit in hits])
+    scores = score_fn(query, [_rerank_text(hit) for hit in hits])
     for hit, score in zip(hits, scores):
         hit.score = float(score)
 

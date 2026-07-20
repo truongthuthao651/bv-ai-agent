@@ -13,6 +13,7 @@ and unit tests that don't index never pay for it.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from functools import lru_cache
 from typing import Any
@@ -29,6 +30,11 @@ _ID_NAMESPACE = uuid.UUID("6f4a1d9e-0b2c-4e77-9a1b-000000000001")
 
 _DENSE = "dense"
 _SPARSE = "sparse"
+
+# The fast (Rust) tokenizer inside BGEM3FlagModel is not thread-safe; an ingest
+# running in the threadpool while a chat request embeds its query would corrupt
+# tokenization (same failure mode as the reranker — see retrieval/reranker.py).
+_embed_lock = threading.Lock()
 
 
 @lru_cache
@@ -60,7 +66,8 @@ def count_tokens(text: str) -> int:
     """Token count via the bge-m3 tokenizer (for chunking); falls back safely."""
     try:
         tok = get_embedder().tokenizer
-        return len(tok(text, add_special_tokens=True)["input_ids"])
+        with _embed_lock:
+            return len(tok(text, add_special_tokens=True)["input_ids"])
     except Exception:  # pragma: no cover - offline/model-less fallback
         from app.ingestion.chunking import default_token_counter
 
@@ -78,12 +85,13 @@ def embed_texts(
     texts: list[str],
 ) -> tuple[list[list[float]], list[models.SparseVector]]:
     """Embed texts, returning aligned dense vectors and sparse vectors."""
-    out = get_embedder().encode(
-        texts,
-        return_dense=True,
-        return_sparse=True,
-        return_colbert_vecs=False,
-    )
+    with _embed_lock:
+        out = get_embedder().encode(
+            texts,
+            return_dense=True,
+            return_sparse=True,
+            return_colbert_vecs=False,
+        )
     dense = [vec.tolist() for vec in out["dense_vecs"]]
     sparse = [_to_sparse(w) for w in out["lexical_weights"]]
     return dense, sparse

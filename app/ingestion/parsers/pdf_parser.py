@@ -41,6 +41,17 @@ def _get_converter() -> Any:
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
+    backend_kwargs: dict[str, Any] = {}
+    if settings.pdf_backend == "pypdfium2":
+        from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
+
+        backend_kwargs["backend"] = PyPdfiumDocumentBackend
+    elif settings.pdf_backend != "docling-parse":
+        raise ValueError(
+            f"Unknown PDF_BACKEND '{settings.pdf_backend}' "
+            "(expected 'pypdfium2' or 'docling-parse')"
+        )
+
     opts = PdfPipelineOptions()
     opts.do_formula_enrichment = settings.do_formula_enrichment
     models_dir = settings.docling_models_path
@@ -50,11 +61,14 @@ def _get_converter() -> Any:
         # first use instead (cached under HF_HOME -> host-mounted ./models).
         opts.artifacts_path = models_dir
     logger.info(
-        "Loading Docling PDF pipeline (formula_enrichment=%s)",
+        "Loading Docling PDF pipeline (backend=%s, formula_enrichment=%s)",
+        settings.pdf_backend,
         settings.do_formula_enrichment,
     )
     return DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=opts, **backend_kwargs)
+        }
     )
 
 

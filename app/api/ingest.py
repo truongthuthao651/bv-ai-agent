@@ -56,9 +56,17 @@ def _safe_filename(name: str | None) -> str:
     return base
 
 
-def _run_pipeline(path: Path, doc_type: DocType | None) -> IngestResponse:
+def _run_pipeline(
+    path: Path, doc_type: DocType | None, doc_title: str | None = None
+) -> IngestResponse:
     """Synchronous parse -> clean -> chunk -> enrich -> index for one file."""
     doc = route_to_parser(path, doc_type=doc_type)
+    if doc_title:
+        # Manual override: real-world PDFs often carry a generic first heading
+        # ("SẢN PHẨM BẢO HIỂM LIÊN KẾT CHUNG") while the product name lives in
+        # cover artwork. The title feeds embed_text prefixes, reranking, and
+        # citations, so a precise one measurably improves retrieval.
+        doc.doc_title = unicodedata.normalize("NFC", doc_title.strip())
     # NFC-normalize section text (idempotent; parsers already normalize).
     for section in doc.sections:
         section.text = unicodedata.normalize("NFC", section.text)
@@ -86,6 +94,7 @@ def _run_pipeline(path: Path, doc_type: DocType | None) -> IngestResponse:
 async def ingest_file(
     file: UploadFile = File(...),
     doc_type: DocType | None = Form(default=None),
+    doc_title: str | None = Form(default=None),
 ) -> IngestResponse:
     """Ingest a single document (Markdown/DOCX/XLSX/glossary YAML)."""
     filename = _safe_filename(file.filename)
@@ -95,7 +104,7 @@ async def ingest_file(
     dest.write_bytes(await file.read())
 
     try:
-        return await run_in_threadpool(_run_pipeline, dest, doc_type)
+        return await run_in_threadpool(_run_pipeline, dest, doc_type, doc_title)
     except (NotImplementedError, ValueError) as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 

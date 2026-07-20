@@ -61,6 +61,11 @@ echo "==> Creating Open WebUI venv (.venv-webui)"
 .venv-webui/bin/pip install --upgrade pip
 .venv-webui/bin/pip install open-webui==0.5.4
 
+# ---- Bảo Việt branding (logo, colors, VI prompt suggestions) ----
+# Patches the installed Open WebUI package in place; also re-run automatically
+# by run_native.sh before each start (pip upgrades restore stock assets).
+.venv/bin/python scripts/open_webui/apply_branding.py || true
+
 # ---- Model weights (Ollama models + HF embedding/reranker/docling) ----
 bash scripts/setup_models.sh
 

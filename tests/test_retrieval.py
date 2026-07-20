@@ -168,11 +168,26 @@ def test_rerank_reorders_by_score_and_cuts_to_top_k() -> None:
     fake_scores = {"doc-low": 0.0, "doc-high": 1.0, "doc-mid": 0.5}
 
     def score_fn(_query: str, docs: list[str]) -> list[float]:
-        return [fake_scores[d] for d in docs]
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
 
     ranked = rerank("query", hits, top_k=2, score_fn=score_fn)
     assert [h.point_id for h in ranked] == ["2", "3"]
     assert ranked[0].score == 1.0
+
+
+def test_rerank_scores_against_title_and_section_prefixed_text() -> None:
+    # The cross-encoder must see which document/section a chunk belongs to, so
+    # queries naming a product still rank its benefit clauses (whose body never
+    # repeats the product name) above chunks that merely mention the name.
+    hits = [_hit("1", "body text")]
+    seen: list[str] = []
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        seen.extend(docs)
+        return [1.0] * len(docs)
+
+    rerank("query", hits, top_k=1, score_fn=score_fn)
+    assert seen == ["Tài liệu: Tài liệu > Điều 1\n\nbody text"]
 
 
 def test_rerank_empty_hits() -> None:
@@ -180,11 +195,15 @@ def test_rerank_empty_hits() -> None:
 
 
 def test_rerank_drops_hits_below_min_score() -> None:
-    hits = [_hit("1", "irrelevant"), _hit("2", "relevant"), _hit("3", "borderline")]
-    fake_scores = {"irrelevant": 0.05, "relevant": 0.9, "borderline": 0.3}
+    hits = [
+        _hit("1", "chunk-irrelevant"),
+        _hit("2", "chunk-rel"),
+        _hit("3", "chunk-mid"),
+    ]
+    fake_scores = {"chunk-irrelevant": 0.05, "chunk-rel": 0.9, "chunk-mid": 0.3}
 
     def score_fn(_query: str, docs: list[str]) -> list[float]:
-        return [fake_scores[d] for d in docs]
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
 
     ranked = rerank("query", hits, top_k=5, min_score=0.2, score_fn=score_fn)
     assert [h.point_id for h in ranked] == ["2", "3"]
