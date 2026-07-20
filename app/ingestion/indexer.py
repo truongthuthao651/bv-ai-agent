@@ -134,6 +134,70 @@ def count_document_points(doc_id: str) -> int:
     return result.count
 
 
+def get_document_source_filename(doc_id: str) -> str | None:
+    """Basename of the originally uploaded file for ``doc_id``, or None.
+
+    None when the document has no points, or was ingested before
+    ``source_filename`` was tracked, or has no backing upload (e.g. glossary
+    entries built in-memory).
+    """
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return None
+    records, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="doc_id", match=models.MatchValue(value=doc_id)
+                )
+            ]
+        ),
+        limit=1,
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not records:
+        return None
+    return (records[0].payload or {}).get("source_filename")
+
+
+def get_document_chunks(doc_id: str) -> list[dict[str, Any]]:
+    """All stored chunks of a document, ordered by ``chunk_index``.
+
+    Returns the payload fields the viewer needs to rebuild a readable rendering
+    of the source (``display_text`` is the clean Markdown+LaTeX). Empty list
+    when the document has no points. Used by the document-viewer endpoint, which
+    reconstructs the source from chunks so citations stay clickable even for
+    documents that have no backing upload file (e.g. batch-ingested corpora).
+    """
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return []
+    out: list[dict[str, Any]] = []
+    offset = None
+    while True:
+        records, offset = client.scroll(
+            collection_name=settings.qdrant_collection,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="doc_id", match=models.MatchValue(value=doc_id)
+                    )
+                ]
+            ),
+            limit=256,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        out.extend(rec.payload or {} for rec in records)
+        if offset is None:
+            break
+    out.sort(key=lambda p: p.get("chunk_index", 0))
+    return out
+
+
 def delete_document(doc_id: str) -> None:
     """Remove all points for a document (idempotent re-ingest / deletion)."""
     client = get_client()

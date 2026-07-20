@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Đăng nhập — Trợ lý AI Bảo Việt Life</title>
+<style>
+  :root {
+    --navy: #00559b;
+    --navy-dark: #003a63;
+    --blue: #0072bc;
+    --blue-dark: #005a96;
+    --gold: #f7b928;
+    --gold-dark: #d99e0b;
+    --bg: #f3f7fb;
+    --card: #ffffff;
+    --border: #dbe6ef;
+    --text: #1e2b33;
+    --muted: #6b7c85;
+    --bad: #c23b3b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-dark) 55%, #001f36 100%);
+    padding: 20px;
+  }
+  .panel {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 36px 32px 30px;
+    box-shadow: 0 20px 50px rgba(0, 20, 40, 0.35);
+    border-top: 4px solid var(--gold);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 26px;
+  }
+  .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 10px;
+    background: var(--blue);
+    border-bottom: 3px solid var(--gold);
+    color: #fff;
+    font-weight: 800;
+    font-size: 19px;
+    flex-shrink: 0;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 15px;
+    color: var(--navy-dark);
+    line-height: 1.35;
+  }
+  .brand p {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--navy-dark);
+    margin-bottom: 6px;
+  }
+  input[type="password"] {
+    width: 100%;
+    font: inherit;
+    padding: 11px 13px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+  }
+  input[type="password"]:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(0, 114, 188, 0.15);
+  }
+  button {
+    width: 100%;
+    margin-top: 18px;
+    font: inherit;
+    font-weight: 700;
+    padding: 11px 12px;
+    border-radius: 7px;
+    border: none;
+    background: var(--blue);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--blue-dark); }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  #err {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--bad);
+    min-height: 18px;
+  }
+  .note {
+    margin-top: 22px;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <div class="brand">
+    <span class="brand-mark">BV</span>
+    <div>
+      <h1>Trợ lý AI Bảo Việt Life</h1>
+      <p>Trang quản trị tài liệu — chỉ dành cho quản trị viên</p>
+    </div>
+  </div>
+
+  <form id="loginForm">
+    <label for="password">Mật khẩu quản trị</label>
+    <input type="password" id="password" name="password" autofocus autocomplete="current-password" required />
+    <button id="submitBtn" type="submit">Đăng nhập</button>
+    <div id="err"></div>
+  </form>
+
+  <p class="note">Hệ thống chạy hoàn toàn nội bộ, không gọi dịch vụ bên ngoài.</p>
+</div>
+
+<script>
+  const form = document.getElementById("loginForm");
+  const err = document.getElementById("err");
+  const btn = document.getElementById("submitBtn");
+  const params = new URLSearchParams(location.search);
+  const next = params.get("next") || "/";
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    err.textContent = "";
+    try {
+      const resp = await fetch("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "password=" + encodeURIComponent(document.getElementById("password").value),
+      });
+      if (resp.ok) {
+        location.href = next;
+        return;
+      }
+      const data = await resp.json().catch(() => ({}));
+      err.textContent = data.detail || "Sai mật khẩu. Vui lòng thử lại.";
+    } catch (e2) {
+      err.textContent = "Lỗi mạng: " + e2.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>

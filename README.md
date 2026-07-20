@@ -42,6 +42,8 @@ cd bv-ai-agent
 cp .env.example .env
 #    - Máy yếu: sửa CHAT_MODEL=qwen3:4b trong .env
 #    - Đổi cổng nếu bị trùng: API_PORT, OPEN_WEBUI_PORT
+#    - Đặt ADMIN_PASSWORD trong .env nếu máy này có người khác dùng chung
+#      (bảo vệ trang quản trị http://localhost:8000 bằng mật khẩu)
 
 # 3) Cài đặt một lần (tạo môi trường Python + tải toàn bộ mô hình — cần mạng)
 bash scripts/setup_native.sh
@@ -80,7 +82,10 @@ Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm tron
 > trên `127.0.0.1` (`API_HOST` trong `.env`) nên nhân viên trong mạng LAN
 > không truy cập được trang quản trị hay gọi thẳng API nạp/xoá tài liệu.
 > KHÔNG đổi `WEBUI_AUTH` về `false` sau khi đã có tài khoản — Open WebUI sẽ
-> từ chối khởi động.
+> từ chối khởi động. Nếu máy chủ này có người khác dùng chung (không chỉ
+> admin), đặt thêm `ADMIN_PASSWORD` trong `.env` — trang quản trị sẽ yêu cầu
+> đăng nhập riêng tại `http://localhost:8000/login` trước khi cho nạp/xoá tài
+> liệu hay xem trang quản trị (để trống = không yêu cầu, như trước đây).
 
 > **Nạp tài liệu (chỉ admin):** admin nạp tài liệu ngay trong Open WebUI
 > (chọn model "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem
@@ -191,15 +196,21 @@ chunking, spreadsheet-to-Markdown-table conversion, Docling PDF parsing with
 formula enrichment + header/footer cleaning, formula verbalization, bge-m3
 dense+sparse indexing into Qdrant) via `POST /ingest` and batch via
 `scripts/ingest.sh`;
-retrieval (glossary query expansion, LLM standalone-question rewrite, hybrid
-RRF-fused search, bge-reranker-v2-m3 reranking with a relevance floor —
-`RERANK_MIN_SCORE` — that refuses deterministically when nothing relevant is
+retrieval (glossary query expansion, a pre-retrieval typo-confirmation gate —
+`app/retrieval/spellcheck.py`, `SPELLCHECK_ENABLED` — that asks the user to
+confirm before answering when the query likely garbles a known glossary term
+or document title, LLM standalone-question rewrite, hybrid RRF-fused search,
+bge-reranker-v2-m3 reranking with a relevance floor — `RERANK_MIN_SCORE` —
+that falls back to a clearly-labeled general-knowledge answer or refuses
+deterministically, per `HYBRID_FALLBACK_ENABLED`, when nothing relevant is
 found) and generation (Vietnamese system prompt with
-citations/refusal/math-disclaimer rules, SSE streaming, an appended
-"Nguồn tham khảo" sources block, a deterministic calculation guardrail that
-appends the "Kết quả cần được kiểm tra lại..." disclaimer whenever an answer
-contains computed numbers even if the model forgot it, and Ollama `keep_alive`
-so the model stays warm between questions) via `POST /v1/chat/completions`;
+citations/refusal/math-disclaimer/Mermaid-chart rules, SSE streaming, an
+appended "Nguồn tham khảo" sources block whose document titles are hyperlinks
+back to `GET /documents/{doc_id}/file`, a deterministic calculation guardrail
+that appends the "Kết quả cần được kiểm tra lại..." disclaimer whenever an
+answer contains computed numbers even if the model forgot it, and Ollama
+`keep_alive` so the model stays warm between questions) via
+`POST /v1/chat/completions`;
 document deletion via
 `DELETE /documents/{doc_id}` (with a delete button on the admin page);
 per-stage latency logging (rewrite/search/rerank/first-token) in the api logs;
@@ -216,7 +227,9 @@ role-based access (`WEBUI_AUTH=true`): the first registered account is the
 admin, who creates employee accounts (public signup off) and publishes only
 the `bao-viet-life` model to them — employees log in and chat, while the
 Admin Panel, raw Ollama models, the ingest pipe, and the port-8000 admin
-page/API (bound to `127.0.0.1` via `API_HOST`) stay admin/machine-only;
+page/API (bound to `127.0.0.1` via `API_HOST`, and additionally gated by a
+single shared password — `ADMIN_PASSWORD`, `app/auth.py`, login page at
+`/login` — when set) stay admin/machine-only;
 Docker-free native deployment (`scripts/setup_native.sh` / `run_native.sh` /
 `stop_native.sh`, embedded in-process Qdrant via `QDRANT_LOCAL_PATH`, pandoc
 bundled via `pypandoc-binary`) for company machines where Docker isn't allowed.

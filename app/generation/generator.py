@@ -14,13 +14,15 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 
 from app.config.settings import settings
 from app.generation.prompts import (
     CALC_DISCLAIMER,
+    HYBRID_DISCLAIMER,
+    HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -117,6 +119,21 @@ def build_messages(
     return messages
 
 
+def build_hybrid_messages(
+    query: str, history: list[ChatMessage] | None = None
+) -> list[dict[str, str]]:
+    """Messages for the no-context, general-knowledge fallback (empty retrieval).
+
+    Unlike ``build_messages``, the user turn is the raw query — there's no
+    retrieved context to number and prepend.
+    """
+    messages = [{"role": "system", "content": HYBRID_SYSTEM_PROMPT}]
+    for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
+        messages.append({"role": turn.role, "content": turn.content})
+    messages.append({"role": "user", "content": query})
+    return messages
+
+
 def _ollama_payload(
     messages: list[dict[str, str]], *, stream: bool
 ) -> dict[str, object]:
@@ -206,6 +223,20 @@ def _disclaimer_suffix(answer: str) -> str:
     return f"\n\n{CALC_DISCLAIMER}"
 
 
+def _hybrid_disclaimer_suffix(answer: str) -> str:
+    """The "general knowledge, not company documents" label for hybrid answers.
+
+    Same guardrail pattern as ``_disclaimer_suffix``: enforced here rather than
+    trusted to the prompt, since a small local model forgets instructions.
+    No-op for refusals/empty answers (nothing to label) or if already present.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if HYBRID_DISCLAIMER in answer:
+        return ""
+    return f"\n\n_{HYBRID_DISCLAIMER}_"
+
+
 def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     """The sources block to append after ``answer``, or "" when inapplicable.
 
@@ -227,13 +258,18 @@ async def stream_static_answer(text: str) -> AsyncIterator[str]:
     yield "data: [DONE]\n\n"
 
 
-async def stream_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+async def _stream_chat(
+    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
 ) -> AsyncIterator[str]:
-    """Stream the assistant's answer as SSE lines (OpenAI ``chat.completion.chunk``)."""
+    """Shared Ollama-streaming core: SSE chunks + a deterministic suffix.
+
+    ``suffix_fn`` computes whatever must be appended after the model's own
+    text (calc disclaimer + sources for grounded answers, the "general
+    knowledge" label for hybrid ones) — kept a parameter so both answer paths
+    share the exact same streaming/think-stripping/error-handling logic.
+    """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
-    messages = build_messages(query, hits, history)
 
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
 
@@ -269,7 +305,7 @@ async def stream_answer(
             answer_parts.append(tail)
             yield _sse_chunk(completion_id, model, {"content": tail}, None)
         body = "".join(answer_parts)
-        suffix = _disclaimer_suffix(body) + _sources_suffix(body, hits)
+        suffix = suffix_fn(body)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
         total_ms = (time.perf_counter() - started) * 1000
@@ -287,6 +323,35 @@ async def stream_answer(
 
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
+
+
+async def stream_answer(
+    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+) -> AsyncIterator[str]:
+    """Stream the assistant's grounded answer as SSE lines."""
+    messages = build_messages(query, hits, history)
+
+    def suffix_fn(body: str) -> str:
+        return _disclaimer_suffix(body) + _sources_suffix(body, hits)
+
+    async for chunk in _stream_chat(messages, suffix_fn):
+        yield chunk
+
+
+async def stream_hybrid_answer(
+    query: str, history: list[ChatMessage] | None = None
+) -> AsyncIterator[str]:
+    """Stream a labeled, no-context answer when retrieval found nothing (skill note).
+
+    Uses ``HYBRID_SYSTEM_PROMPT`` instead of the grounded ``SYSTEM_PROMPT``: the
+    model may draw on general insurance/actuarial knowledge, but is instructed
+    to still refuse for anything company-specific, and every non-refusal
+    answer gets ``HYBRID_DISCLAIMER`` appended deterministically so it's never
+    mistaken for an answer sourced from company documents.
+    """
+    messages = build_hybrid_messages(query, history)
+    async for chunk in _stream_chat(messages, _hybrid_disclaimer_suffix):
+        yield chunk
 
 
 def preload_model() -> None:
@@ -332,11 +397,10 @@ def generate_plain(prompt: str) -> str:
         return ""
 
 
-def generate_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+def _generate_chat(
+    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
 ) -> str:
-    """Non-streaming variant: block for the full answer (``stream: false`` requests)."""
-    messages = build_messages(query, hits, history)
+    """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``)."""
     try:
         resp = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
@@ -346,7 +410,23 @@ def generate_answer(
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
         answer = strip_think(content)
-        return answer + _disclaimer_suffix(answer) + _sources_suffix(answer, hits)
+        return answer + suffix_fn(answer)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
         return _CONNECTION_ERROR_MESSAGE
+
+
+def generate_answer(
+    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+) -> str:
+    """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
+    messages = build_messages(query, hits, history)
+    return _generate_chat(
+        messages, lambda body: _disclaimer_suffix(body) + _sources_suffix(body, hits)
+    )
+
+
+def generate_hybrid_answer(query: str, history: list[ChatMessage] | None = None) -> str:
+    """Non-streaming variant of ``stream_hybrid_answer`` (``stream: false``)."""
+    messages = build_hybrid_messages(query, history)
+    return _generate_chat(messages, _hybrid_disclaimer_suffix)

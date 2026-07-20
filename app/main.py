@@ -17,12 +17,14 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from app.api import chat, health, ingest
+from app import auth
+from app.api import chat, health, ingest, login
 from app.config.settings import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -64,6 +66,11 @@ async def _warmup() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: optional warmup on startup (see ``_warmup``)."""
     logger.info("Starting bv-ai-agent API (chat_model=%s)", settings.chat_model)
+    if not auth.auth_enabled():
+        logger.warning(
+            "ADMIN_PASSWORD is not set: the admin dashboard (upload/delete/quick-ask) "
+            "is reachable without login. Set ADMIN_PASSWORD in .env to enable the gate."
+        )
     if settings.warmup_on_startup:
         await _warmup()
     yield
@@ -84,9 +91,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def admin_session_gate(request: Request, call_next):
+    """Require a valid admin session for everything except the public surface.
+
+    Public surface (app/auth.py PUBLIC_PREFIXES): /health, /v1 (Open WebUI's
+    server-to-server calls, gated by its own WEBUI_AUTH instead), and the
+    /login,/logout flow itself. A no-op when ADMIN_PASSWORD is unset.
+    """
+    path = request.url.path
+    if not auth.auth_enabled() or auth.is_public_path(path):
+        return await call_next(request)
+    if auth.is_valid_session(request.cookies.get(auth.COOKIE_NAME)):
+        return await call_next(request)
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse(url=f"/login?next={path}", status_code=303)
+    return JSONResponse(status_code=401, content={"detail": "Yêu cầu đăng nhập."})
+
+
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(ingest.router)
+app.include_router(login.router)
 
 # Mounted last so it only catches paths not matched by an API route above
 # (e.g. "/", "/index.html") and doesn't shadow /health, /ingest, etc.

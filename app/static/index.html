@@ -220,6 +220,7 @@
     <span id="ollamaBadge" class="badge">Ollama</span>
     <span id="qdrantBadge" class="badge">Qdrant</span>
     <a class="btn-link" href="http://localhost:3000" target="_blank" rel="noopener">Mở giao diện trò chuyện ↗</a>
+    <button id="logoutBtn" class="btn-link" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.4);">Đăng xuất</button>
   </div>
 </header>
 
@@ -444,6 +445,7 @@
 
   // ---- Quick ask (SSE) ----
   async function ask() {
+    if (askBtn.disabled) return; // guards against double-submit (e.g. Enter key-repeat)
     const query = askInput.value.trim();
     if (!query) return;
     askBtn.disabled = true;
@@ -488,8 +490,17 @@
     }
   }
   askBtn.addEventListener("click", ask);
-  askInput.addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+  askInput.addEventListener("keydown", (e) => {
+    // isComposing / keyCode 229 excludes the Enter that just confirms an IME
+    // candidate (Vietnamese input methods) from also submitting the question.
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) ask();
+  });
   $("refreshBtn").addEventListener("click", loadDocuments);
+
+  $("logoutBtn").addEventListener("click", async () => {
+    await fetch("/logout", { method: "POST" }).catch(() => {});
+    location.href = "/login";
+  });
 
   loadHealth();
   loadDocuments();

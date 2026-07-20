@@ -252,10 +252,15 @@ def evaluate_item(
         return row
 
     t1 = time.perf_counter()
-    # Mirror the chat endpoint: zero surviving hits refuse deterministically.
-    answer = (
-        REFUSAL_MESSAGE if not hits else generator.generate_answer(item.question, hits)
-    )
+    # Mirror the chat endpoint: zero surviving hits either fall back to a
+    # labeled general-knowledge answer or refuse deterministically, matching
+    # settings.hybrid_fallback_enabled (app/api/chat.py).
+    if hits:
+        answer = generator.generate_answer(item.question, hits)
+    elif settings.hybrid_fallback_enabled:
+        answer = generator.generate_hybrid_answer(item.question)
+    else:
+        answer = REFUSAL_MESSAGE
     row.generation_ms = (time.perf_counter() - t1) * 1000
     row.answer = answer
     row.checks = check_answer(item, answer)

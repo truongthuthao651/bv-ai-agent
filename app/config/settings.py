@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     log_level: str = "INFO"
+    # Base URL the API is actually reachable at, used to build citation links
+    # (format_sources) back to the original source file. Defaults to loopback,
+    # matching the admin API's default 127.0.0.1-only binding (README); change
+    # only if API_HOST is opened up beyond this machine.
+    api_public_base_url: str = "http://localhost:8000"
+    # Single shared password gating the admin dashboard (app/auth.py) — upload,
+    # delete, and the quick-ask test page. Empty disables the gate entirely
+    # (today's default: open on loopback). Not the employee-facing login —
+    # that's Open WebUI's own WEBUI_AUTH.
+    admin_password: str = ""
     # Warm the heavy, lazily-loaded pieces at startup (bge-m3 + reranker weights,
     # the Qdrant collection, and the Ollama chat model) so the first user request
     # doesn't pay their cold-load latency — significant on CPU-only hosts. Each
@@ -111,6 +121,27 @@ class Settings(BaseSettings):
     rerank_min_score: float = 0.05
     enable_query_expansion: bool = True
     enable_query_rewrite: bool = True
+    # Pre-retrieval typo gate (app/retrieval/spellcheck.py): ask the user to
+    # confirm before running retrieval when the query likely garbles a known
+    # glossary term or document title. Ratio band tuned so habitual
+    # no-diacritics typing (folded away before comparison) never triggers it —
+    # only genuine letter-level slips do.
+    spellcheck_enabled: bool = True
+    spellcheck_min_ratio: float = 0.82
+    spellcheck_max_ratio: float = 0.985
+    # A phrase is only flagged if its matched span actually contains a *misspelled*
+    # word: a token absent from the known vocabulary yet this close (char ratio) to
+    # a token of the phrase it resembles. This distinguishes a real slip
+    # ("lieen"~"liên") from a correctly-spelled partial title match (every word is
+    # a known word), which must go straight to retrieval instead of being queried.
+    spellcheck_typo_token_ratio: float = 0.8
+    # When retrieval finds no matching company document at all, let the model
+    # answer from general knowledge instead of refusing outright — always
+    # labeled (HYBRID_DISCLAIMER) so it's never mistaken for a company-document
+    # answer, and the model is still told to refuse for anything
+    # company-specific it can't actually know (see HYBRID_SYSTEM_PROMPT).
+    # False restores the old behavior: refuse deterministically on zero hits.
+    hybrid_fallback_enabled: bool = True
 
     # ---- Chunking ----
     chunk_min_tokens: int = 500

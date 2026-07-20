@@ -22,6 +22,7 @@ import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.models.schemas import Chunk, ParsedDocument
 
@@ -195,6 +196,7 @@ def chunk_document(
     document/section prefix + display text; enrichment appends verbalizations.
     """
     overlap_tokens = int(max_tokens * overlap_pct)
+    source_filename = Path(doc.source_path).name if doc.source_path else None
     chunks: list[Chunk] = []
     idx = 0
     for section in doc.sections:
@@ -212,6 +214,7 @@ def chunk_document(
                     chunk_index=idx,
                     page=section.page,
                     department=doc.department,
+                    source_filename=source_filename,
                 )
             )
             idx += 1

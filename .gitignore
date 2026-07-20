@@ -2,6 +2,7 @@
 .env
 *.env
 !.env.example
+/TEAM_GUIDE.md
 
 # ---- Data (confidential) ----
 # The whole data/ tree is ignored EXCEPT the public glossary.

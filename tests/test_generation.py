@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import quote
 
 from app.config.settings import settings
 from app.generation.generator import (
     ThinkStripper,
     _disclaimer_suffix,
+    _hybrid_disclaimer_suffix,
     _is_refusal,
     _ollama_payload,
     _sources_suffix,
+    build_hybrid_messages,
     build_messages,
     parse_ollama_line,
     stream_static_answer,
@@ -21,6 +24,8 @@ from app.generation.generator import (
 )
 from app.generation.prompts import (
     CALC_DISCLAIMER,
+    HYBRID_DISCLAIMER,
+    HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
     SYSTEM_PROMPT,
     build_user_prompt,
@@ -142,6 +147,40 @@ def test_refusal_message_constant_matches_system_prompt() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Hybrid (no-context, general-knowledge) fallback
+# --------------------------------------------------------------------------- #
+
+
+def test_hybrid_system_prompt_still_requires_refusal_for_company_specifics() -> None:
+    # A SEPARATE, weaker prompt from SYSTEM_PROMPT — but it must still keep the
+    # refusal rule for anything company-specific it can't actually know.
+    assert REFUSAL_MESSAGE.rstrip(".") in HYBRID_SYSTEM_PROMPT
+    assert HYBRID_SYSTEM_PROMPT != SYSTEM_PROMPT
+
+
+def test_build_hybrid_messages_has_no_retrieved_context() -> None:
+    history = [ChatMessage(role="user", content="Phí thuần là gì?")]
+    messages = build_hybrid_messages("còn phí gộp?", history)
+    assert messages[0] == {"role": "system", "content": HYBRID_SYSTEM_PROMPT}
+    assert messages[-1] == {"role": "user", "content": "còn phí gộp?"}
+
+
+def test_hybrid_disclaimer_appended_to_general_knowledge_answers() -> None:
+    suffix = _hybrid_disclaimer_suffix("Phí thuần là phần phí ...")
+    assert HYBRID_DISCLAIMER in suffix
+
+
+def test_hybrid_disclaimer_skipped_for_refusals_and_empty() -> None:
+    assert _hybrid_disclaimer_suffix(REFUSAL_MESSAGE) == ""
+    assert _hybrid_disclaimer_suffix("") == ""
+
+
+def test_hybrid_disclaimer_not_duplicated() -> None:
+    answer = f"Phí thuần là ... {HYBRID_DISCLAIMER}"
+    assert _hybrid_disclaimer_suffix(answer) == ""
+
+
+# --------------------------------------------------------------------------- #
 # Sources block ("Nguồn tham khảo")
 # --------------------------------------------------------------------------- #
 
@@ -154,9 +193,16 @@ def test_format_sources_numbers_match_context_and_dedupes() -> None:
     ]
     block = format_sources(hits)
     assert "**Nguồn tham khảo:**" in block
-    assert "- [1] Quy tắc An Tâm — Điều 5 (trang 3)" in block
+    base = settings.api_public_base_url
+    # Citation links now target the scrollable viewer, deep-linked to the cited
+    # section via a URL-encoded ?section= query.
+    sec5 = quote("Điều 5", safe="")
+    link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5})"
+    assert f"- [1] {link} — Điều 5 (trang 3)" in block
     assert "[2]" not in block  # deduped, and numbering keeps context indices
-    assert "- [3] Hướng dẫn dự phòng — Điều 2" in block
+    sec2 = quote("Điều 2", safe="")
+    link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2})"
+    assert f"- [3] {link2} — Điều 2" in block
 
 
 def test_format_sources_empty_hits() -> None:

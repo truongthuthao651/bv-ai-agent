@@ -13,8 +13,10 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
+from app.api import docview
 from app.config.settings import settings
 from app.ingestion import indexer
 from app.ingestion.chunking import chunk_document
@@ -113,6 +115,80 @@ async def ingest_file(
 async def list_documents() -> list[DocumentInfo]:
     """List documents currently indexed in Qdrant."""
     return await run_in_threadpool(indexer.list_documents)
+
+
+# Source formats a browser renders inline (scroll/view without downloading).
+# For these the viewer serves the original file; other types (and documents
+# with no backing upload) are rebuilt from indexed chunks by docview.
+_INLINE_VIEW_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def _source_path_for(doc_id: str) -> Path | None:
+    """Existing uploads-dir path of a document's source file, or None."""
+    filename = indexer.get_document_source_filename(doc_id)
+    if not filename:
+        return None
+    # filename is a stored basename (already sanitized by _safe_filename at
+    # upload time); re-sanitize defensively so a corrupted payload can't escape
+    # the uploads dir.
+    path = settings.data_dir / "uploads" / _safe_filename(filename)
+    return path if path.is_file() else None
+
+
+@router.get("/documents/{doc_id}/file")
+async def get_document_file(doc_id: str) -> FileResponse:
+    """Serve the originally uploaded file for a document, rendered inline.
+
+    ``content_disposition_type="inline"`` lets the browser display the file
+    (PDFs scroll natively) instead of downloading it. 404 covers both "no such
+    doc_id" and "doc has no backing upload" (e.g. a glossary entry) identically.
+    """
+    path = await run_in_threadpool(_source_path_for, doc_id)
+    if path is None:
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy tệp nguồn cho tài liệu này."
+        )
+    return FileResponse(path, filename=path.name, content_disposition_type="inline")
+
+
+def _render_view(doc_id: str, highlight_section: str | None) -> str | None:
+    """Build the HTML viewer page for a document, or None if it isn't indexed.
+
+    PDFs/images are left to ``/file`` (the caller redirects); everything else is
+    reconstructed from the document's chunks so the citation link always
+    resolves to a scrollable, readable page — even without a backing upload.
+    """
+    chunks = indexer.get_document_chunks(doc_id)
+    if not chunks:
+        return None
+    doc_title, sections = docview.reconstruct_sections(chunks)
+    return docview.render_page(
+        doc_title,
+        sections,
+        doc_id=doc_id,
+        highlight_section=highlight_section,
+        has_source_file=_source_path_for(doc_id) is not None,
+    )
+
+
+@router.get("/documents/{doc_id}/view", response_class=HTMLResponse)
+async def view_document(doc_id: str, section: str | None = None):
+    """Scrollable rendered view of a source document (citation link target).
+
+    For PDFs/images with a backing upload, redirect to ``/file`` so the browser
+    renders the real document natively; otherwise rebuild a readable HTML page
+    from the indexed chunks. ``section`` deep-links to a cited section.
+    """
+    path = await run_in_threadpool(_source_path_for, doc_id)
+    if path is not None and path.suffix.lower() in _INLINE_VIEW_EXTS:
+        return RedirectResponse(url=f"/documents/{doc_id}/file", status_code=307)
+
+    page = await run_in_threadpool(_render_view, doc_id, section)
+    if page is None:
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
+        )
+    return HTMLResponse(page)
 
 
 @router.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)

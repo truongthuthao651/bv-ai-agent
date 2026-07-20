@@ -95,6 +95,10 @@ class Chunk:
     page: int | None = None
     department: str | None = None
     figure_image_path: str | None = None
+    # Basename of the originally uploaded file (under data/uploads), so
+    # citations can link back to the source document. None for sources that
+    # were never an uploaded file (e.g. glossary entries built in-memory).
+    source_filename: str | None = None
     # Set when OCR/formula extraction confidence is low (skill, section 1).
     needs_review: bool = False
 
@@ -109,6 +113,7 @@ class Chunk:
             doc_type=self.doc_type,
             display_text=self.display_text,
             figure_image_path=self.figure_image_path,
+            source_filename=self.source_filename,
             needs_review=self.needs_review,
             chunk_index=self.chunk_index,
             ingested_at=(ingested_at or datetime.now(timezone.utc)).isoformat(),
@@ -135,6 +140,7 @@ class QdrantPayload(BaseModel):
     doc_type: DocType
     display_text: str
     figure_image_path: str | None = None
+    source_filename: str | None = None
     needs_review: bool = False
     chunk_index: int
     ingested_at: str  # ISO-8601 UTC
