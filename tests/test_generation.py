@@ -71,6 +71,37 @@ def test_system_prompt_keeps_the_four_mandatory_properties() -> None:
     )
 
 
+def test_system_prompt_forbids_inverting_exclusions() -> None:
+    # Small local models often flip "loại trừ" into "được bảo hiểm"; the prompt
+    # must explicitly ban that polarity error (observed on skiing/diving Qs).
+    assert "LOẠI TRỪ" in SYSTEM_PROMPT
+    assert "đảo chiều polar" in SYSTEM_PROMPT or "TUYỆT ĐỐI không" in SYSTEM_PROMPT
+    assert "trượt tuyết" in SYSTEM_PROMPT  # concrete exclusion example anchored
+
+
+def test_system_prompt_forbids_overapplying_exclusions() -> None:
+    # The reverse failure of the polarity rule (observed on a traffic-accident
+    # question): the model concluded "không được bồi thường" from exclusions
+    # whose conditions ("lỗi cố ý", "hành vi phạm tội") did not match the
+    # scenario, and invented a new exclusion ("tai nạn xe không thuộc phạm vi
+    # bảo hiểm"). The prompt must ban applying an exclusion to a non-matching
+    # event and ban inventing exclusions absent from the context.
+    assert "CHỈ VÌ ngữ cảnh có mục loại trừ" in SYSTEM_PROMPT
+    assert "KHÔNG nằm trong danh sách loại trừ" in SYSTEM_PROMPT
+    assert "bịa thêm loại trừ" in SYSTEM_PROMPT
+    # When no exclusion matches and the payout amount is absent, the model must
+    # say the document doesn't state it — not assert covered/not-covered.
+    assert "tài liệu không nêu mức chi trả cụ thể" in SYSTEM_PROMPT
+
+
+def test_system_prompt_forbids_remapping_interest_to_claim_percent() -> None:
+    assert "Lãi suất cam kết" in SYSTEM_PROMPT
+    assert "tỷ lệ bồi thường" in SYSTEM_PROMPT
+    assert (
+        "Không ĐỔI LOẠI CHỈ SỐ" in SYSTEM_PROMPT or "ĐỔI LOẠI CHỈ SỐ" in SYSTEM_PROMPT
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Context assembly
 # --------------------------------------------------------------------------- #

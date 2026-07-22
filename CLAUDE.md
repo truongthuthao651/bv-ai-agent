@@ -136,7 +136,12 @@ bv-ai-agent/
   `[Tên tài liệu, mục X]`; reply "Tôi không tìm thấy thông tin trong tài liệu"
   when context is insufficient; for numeric calculations, show the formula and
   substitution steps but state results must be verified with official tools
-  ("Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức").
+  ("Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức"); never
+  invert exclusion clauses (loại trừ / không chi trả → must conclude NOT covered)
+  nor over-apply them (an exclusion applies only when the event matches its
+  stated conditions — never conclude NOT covered just because an exclusion
+  section was retrieved, never invent exclusions);
+  never remap table metrics (lãi suất cam kết / phí ≠ tỷ lệ bồi thường).
   Never weaken these in prompts.py.
 - **Versions:** pin everything (requirements.txt exact versions, Docker image tags).
   Never use `:latest`.

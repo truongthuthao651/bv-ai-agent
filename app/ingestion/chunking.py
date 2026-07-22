@@ -9,6 +9,9 @@ hard equation/table constraints (skill, section 3):
   "trong đó: ..." definition list after it (one "equation unit").
 * Never split a Markdown table mid-row; oversized tables split by row groups with
   the header repeated.
+* A Markdown table stays with the paragraph immediately before it (caption /
+  intro) so "%"-by-year schedules keep their metric label (e.g. lãi suất cam
+  kết) instead of becoming an orphaned number grid.
 * If a single unit exceeds the budget it becomes its own oversized chunk —
   correctness beats budget.
 
@@ -42,7 +45,7 @@ def default_token_counter(text: str) -> int:
 
 @dataclass
 class _Block:
-    kind: str  # "para" | "list" | "table" | "equation" | "equation_unit"
+    kind: str  # "para" | "list" | "table" | "table_unit" | "equation" | "equation_unit"
     text: str
 
 
@@ -100,9 +103,48 @@ def _bind_equation_units(blocks: list[_Block]) -> list[_Block]:
     return out
 
 
+def _bind_table_units(blocks: list[_Block]) -> list[_Block]:
+    """Merge each Markdown table with the paragraph immediately before it.
+
+    Captions like "Lãi suất cam kết tối thiểu theo năm hợp đồng:" must travel
+    with the grid — otherwise retrieval sees a bare `%`-by-year table that a
+    claim-% question can misread as bồi thường.
+    """
+    out: list[_Block] = []
+    for b in blocks:
+        if b.kind != "table":
+            out.append(b)
+            continue
+        parts: list[str] = []
+        if out and out[-1].kind == "para":
+            parts.append(out.pop().text)
+        parts.append(b.text)
+        out.append(_Block("table_unit", "\n\n".join(parts)))
+    return out
+
+
+def _split_caption_and_table(text: str) -> tuple[str, str]:
+    """Split ``caption\\n\\n| table…`` into (caption, table); caption may be empty."""
+    lines = text.split("\n")
+    table_start = next(
+        (i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")),
+        None,
+    )
+    if table_start is None:
+        return "", text
+    caption = "\n".join(lines[:table_start]).strip()
+    table = "\n".join(lines[table_start:]).strip()
+    return caption, table
+
+
 def _split_table(text: str, count_tokens: TokenCounter, max_tokens: int) -> list[str]:
-    """Split an oversized Markdown table into row groups, repeating the header."""
-    lines = [ln for ln in text.split("\n") if ln.strip()]
+    """Split an oversized Markdown table into row groups, repeating the header.
+
+    When ``text`` is a caption+table unit, the caption is prepended to every
+    group so the metric label survives the split.
+    """
+    caption, table = _split_caption_and_table(text)
+    lines = [ln for ln in table.split("\n") if ln.strip()]
     if len(lines) < 2:
         return [text]
     header, sep, body = lines[0], lines[1], lines[2:]
@@ -118,7 +160,11 @@ def _split_table(text: str, count_tokens: TokenCounter, max_tokens: int) -> list
             cur.append(row)
     if cur:
         groups.append("\n".join([header_block, *cur]))
-    return groups or [text]
+    if not groups:
+        return [text]
+    if caption:
+        return [f"{caption}\n\n{g}" for g in groups]
+    return groups
 
 
 def _overlap_suffix(
@@ -158,10 +204,12 @@ def _pack_units(
             chunks.append("\n\n".join(u.text for u in cur))
 
     for unit in units:
-        # Oversized table -> split by row groups; other oversized units stand alone.
+        # Oversized table / caption+table -> split by row groups; other
+        # oversized units stand alone.
         pieces = (
             _split_table(unit.text, count_tokens, max_tokens)
-            if unit.kind == "table" and count_tokens(unit.text) > max_tokens
+            if unit.kind in ("table", "table_unit")
+            and count_tokens(unit.text) > max_tokens
             else [unit.text]
         )
         for piece in pieces:
@@ -200,7 +248,7 @@ def chunk_document(
     chunks: list[Chunk] = []
     idx = 0
     for section in doc.sections:
-        units = _bind_equation_units(_raw_blocks(section.text))
+        units = _bind_table_units(_bind_equation_units(_raw_blocks(section.text)))
         for piece in _pack_units(units, count_tokens, max_tokens, overlap_tokens):
             prefix = f"Tài liệu: {doc.doc_title} > {section.section_path}\n\n"
             chunks.append(

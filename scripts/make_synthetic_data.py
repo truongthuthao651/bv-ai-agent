@@ -177,12 +177,58 @@ Công ty giải quyết trong vòng 30 ngày kể từ ngày nhận đủ hồ s
 | Tạm ứng giá trị hoàn lại | 10 ngày | Ban Dịch vụ khách hàng |
 """
 
+# Universal-life trap doc: interest-by-year table sits next to a death-benefit
+# clause so retrieval/generation cannot confuse lãi suất cam kết with claim %.
+POLICY_UL_AN_PHU = """\
+# Quy tắc, Điều khoản Sản phẩm Bảo hiểm liên kết chung "An Phú Liên Kết"
+
+Mã sản phẩm: APLK-2025 (sản phẩm giả định phục vụ kiểm thử).
+
+## Chương I: Quyền lợi bảo hiểm
+
+### Điều 1: Quyền lợi tử vong do tai nạn
+
+Nếu Người được bảo hiểm tử vong do tai nạn giao thông trong Thời hạn hợp đồng
+và Hợp đồng đang có hiệu lực, Công ty chi trả **100% Số tiền bảo hiểm** cộng
+Giá trị tài khoản hợp đồng tại thời điểm xảy ra sự kiện bảo hiểm. Đây là số tiền
+chi trả quyền lợi, không phải tỷ lệ lãi suất.
+
+### Điều 2: Loại trừ trách nhiệm bảo hiểm
+
+Công ty không chi trả quyền lợi tử vong do tai nạn nếu sự kiện phát sinh từ
+hoạt động thể thao nguy hiểm (trượt tuyết, lặn biển có bình khí) hoặc từ hành vi
+vi phạm pháp luật của Người được bảo hiểm.
+
+## Chương II: Phí và lãi suất quỹ liên kết chung
+
+### Điều 3: Phí ban đầu
+
+Phí ban đầu được khấu trừ theo tỷ lệ trên phí bảo hiểm định kỳ đóng trong từng
+năm hợp đồng, theo biểu phí đính kèm.
+
+### Điều 4: Lãi suất cam kết tối thiểu
+
+Lãi suất cam kết tối thiểu áp dụng cho Giá trị tài khoản hợp đồng theo năm hợp
+đồng như sau (đây là lãi suất đầu tư cam kết, **không phải** tỷ lệ bồi thường
+khi tử vong):
+
+| Năm hợp đồng | Lãi suất cam kết tối thiểu (%) |
+| --- | --- |
+| Năm 1 | 2.5 |
+| Năm 2 | 2.0 |
+| Năm 3 | 1.5 |
+| Năm 4 đến năm 10 | 1.0 |
+| Năm 11 đến năm 15 | 0.5 |
+| Từ năm 16 trở đi | 0.25 |
+"""
+
 
 DOCUMENTS: dict[str, str] = {
     "quy_tac_tu_ky_an_tam.md": POLICY_TERM_LIFE,
     "huong_dan_du_phong_toan_hoc.md": DOC_RESERVES,
     "cong_thuc_nien_kim_bang_ty_le_tu_vong.md": ANNUITY_MORTALITY,
     "quy_trinh_giai_quyet_quyen_loi.md": PROCEDURE_CLAIMS,
+    "quy_tac_lien_ket_chung_an_phu.md": POLICY_UL_AN_PHU,
 }
 
 # --------------------------------------------------------------------------- #

@@ -128,11 +128,19 @@ class Settings(BaseSettings):
     rerank_min_ratio: float = 0.0
     enable_query_expansion: bool = True
     enable_query_rewrite: bool = True
+    # Sticky product/document scope across turns (app/retrieval/conversation_scope.py):
+    # when a follow-up drops the product name, reinject the last-cited doc title
+    # (or prior user-named product) into the retrieval query. Also refuses the
+    # hybrid general-knowledge fallback for scoped follow-ups that retrieve
+    # nothing — those are company-document questions, not textbook ones.
+    conversation_scope_enabled: bool = True
     # Pre-retrieval typo gate (app/retrieval/spellcheck.py): ask the user to
     # confirm before running retrieval when the query likely garbles a known
-    # glossary term or document title. Ratio band tuned so habitual
-    # no-diacritics typing (folded away before comparison) never triggers it —
-    # only genuine letter-level slips do.
+    # glossary term or document title. ``spellcheck_min_ratio`` is the similarity
+    # floor; ``spellcheck_max_ratio`` is retained for backwards-compatible .env
+    # files but is no longer an upper gate — habitual no-diacritics typing is
+    # filtered by the typo-token check instead (folded tokens that already exist
+    # in the known vocabulary are never treated as slips).
     spellcheck_enabled: bool = True
     spellcheck_min_ratio: float = 0.82
     spellcheck_max_ratio: float = 0.985
@@ -154,6 +162,10 @@ class Settings(BaseSettings):
     # product (near-identical benefit clauses fool the reranker), refuse instead
     # of answering from the wrong product. False disables the guard.
     product_scope_guard_enabled: bool = True
+    # Drop fee / guaranteed-interest chunks from benefit-payout queries
+    # (app/retrieval/metric_guard.py) so a "claim bao nhiêu%?" question cannot
+    # be answered from a lãi suất cam kết table. False disables the filter.
+    metric_guard_enabled: bool = True
 
     # ---- Chunking ----
     chunk_min_tokens: int = 500

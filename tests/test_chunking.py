@@ -60,6 +60,35 @@ def test_oversized_table_repeats_header() -> None:
                 assert line.lstrip().startswith("|")
 
 
+def test_table_keeps_preceding_caption() -> None:
+    text = (
+        "Lãi suất cam kết tối thiểu theo năm hợp đồng "
+        "(không phải tỷ lệ bồi thường):\n\n"
+        "| Năm hợp đồng | Lãi suất cam kết tối thiểu (%) |\n"
+        "| --- | --- |\n"
+        "| Năm 1 | 2.5 |\n"
+        "| Năm 2 | 2.0 |"
+    )
+    chunks = chunk_document(_doc(text), "d5", max_tokens=800)
+    assert len(chunks) == 1
+    body = chunks[0].display_text
+    assert "Lãi suất cam kết tối thiểu" in body
+    assert "| Năm 1 | 2.5 |" in body
+
+
+def test_oversized_captioned_table_repeats_caption() -> None:
+    rows = "\n".join(f"| Năm {i} | {i * 0.1:.1f} |" for i in range(1, 20))
+    text = (
+        "Lãi suất cam kết tối thiểu (%):\n\n"
+        "| Năm hợp đồng | Lãi suất (%) |\n| --- | --- |\n" + rows
+    )
+    chunks = chunk_document(_doc(text), "d6", max_tokens=30, overlap_pct=0.1)
+    table_chunks = [c for c in chunks if "| Lãi suất (%) |" in c.display_text]
+    assert len(table_chunks) > 1
+    for c in table_chunks:
+        assert "Lãi suất cam kết tối thiểu" in c.display_text
+
+
 def test_token_counter_used_for_budget() -> None:
     # A single short section under budget yields exactly one chunk.
     chunks = chunk_document(_doc("Một đoạn ngắn."), "d4", max_tokens=800)

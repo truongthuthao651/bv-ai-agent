@@ -52,6 +52,7 @@ from app.config.settings import settings  # noqa: E402
 from app.generation import generator  # noqa: E402
 from app.generation.prompts import REFUSAL_MESSAGE  # noqa: E402
 from app.models.schemas import Hit  # noqa: E402
+from app.retrieval.metric_guard import filter_metric_mismatch  # noqa: E402
 from app.retrieval.query_expansion import expand_query  # noqa: E402
 from app.retrieval.reranker import rerank  # noqa: E402
 from app.retrieval.retriever import hybrid_search  # noqa: E402
@@ -231,6 +232,8 @@ def evaluate_item(
     # and deliberately skipped (mirrors app.api.chat._retrieve gating).
     fused = hybrid_search(expand_query(item.question))
     hits: list[Hit] = rerank(item.question, fused)
+    if settings.metric_guard_enabled:
+        hits = filter_metric_mismatch(item.question, hits)
     row.retrieval_ms = (time.perf_counter() - t0) * 1000
     row.n_hits = len(hits)
 

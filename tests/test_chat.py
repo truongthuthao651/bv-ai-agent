@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from app.api.chat import _resolve_confirmation
 from app.models.schemas import ChatMessage
-from app.retrieval.spellcheck import build_confirmation_message
-from app.retrieval.spellcheck import Suggestion
+from app.retrieval.conversation_scope import active_scope
+from app.retrieval.spellcheck import Suggestion, build_confirmation_message
 
 _CLARIFICATION = build_confirmation_message(
     [
@@ -22,6 +22,11 @@ _CLARIFICATION = build_confirmation_message(
     ]
 )
 _ORIGINAL = "Liệt kê chi tiết các quyền lợi của Sản phẩm Bảo hiểm tử vong ..."
+_AKNY = "Bảo hiểm liên kết chung An Khang Như Ý"
+_ANSWER_WITH_SOURCES = (
+    f"Quyền lợi gồm...\n\n**Nguồn tham khảo:**\n"
+    f"- [1] [{_AKNY}](http://localhost/documents/d1/view) — Điều 5"
+)
 
 
 def test_confirmation_replays_original_question_and_skips_gate() -> None:
@@ -56,3 +61,13 @@ def test_affirmation_without_prior_clarification_is_untouched() -> None:
     assert query == "đúng"
     assert skip is False
     assert new_history == history
+
+
+def test_scoped_follow_up_detects_prior_cited_document() -> None:
+    # Chat endpoint uses active_scope(history) to skip hybrid fallback on
+    # company-document follow-ups that retrieve nothing.
+    history = [
+        ChatMessage(role="user", content="Quyền lợi An Khang Như Ý?"),
+        ChatMessage(role="assistant", content=_ANSWER_WITH_SOURCES),
+    ]
+    assert active_scope(history) == _AKNY

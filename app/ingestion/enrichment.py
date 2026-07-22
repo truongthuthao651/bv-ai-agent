@@ -6,6 +6,10 @@ short Vietnamese description of what the formula computes, appended to
 local LLM via Ollama. Offline batch work — NEVER moved to query time
 (skill, section 2).
 
+Table chunks also get a deterministic metric-type hint (``metric_hints``) so
+``%``-by-year lãi suất schedules are not retrieved as bồi thường tables —
+no LLM call, always applied even when formula enrichment is disabled.
+
 Figure description (Qwen2.5-VL) arrives with the figure/hard-parser increment.
 
 The verbalizer is injectable so tests run without Ollama.
@@ -20,6 +24,7 @@ from collections.abc import Callable, Iterable
 import httpx
 
 from app.config.settings import settings
+from app.ingestion.metric_hints import metric_type_hint
 from app.models.schemas import Chunk
 
 logger = logging.getLogger(__name__)
@@ -68,10 +73,11 @@ def enrich_chunks(
     enabled: bool | None = None,
     verbalize: Verbalizer | None = None,
 ) -> list[Chunk]:
-    """Append Vietnamese formula verbalizations to each math chunk's embed_text.
+    """Append formula verbalizations and table metric hints to ``embed_text``.
 
-    ``enabled`` defaults to ``settings.enable_enrichment``. Mutates and returns
-    the chunks. Non-math chunks are left untouched.
+    ``enabled`` defaults to ``settings.enable_enrichment`` and gates only the
+    LLM formula verbalizer. Metric-type hints are deterministic and always
+    applied. Mutates and returns the chunks.
     """
     if enabled is None:
         enabled = settings.enable_enrichment
@@ -83,5 +89,8 @@ def enrich_chunks(
             description = verbalize(chunk.display_text)
             if description:
                 chunk.embed_text = f"{chunk.embed_text}\n\nDiễn giải: {description}"
+        hint = metric_type_hint(chunk.display_text)
+        if hint and f"Loại chỉ số: {hint}" not in chunk.embed_text:
+            chunk.embed_text = f"{chunk.embed_text}\n\nLoại chỉ số: {hint}"
         result.append(chunk)
     return result

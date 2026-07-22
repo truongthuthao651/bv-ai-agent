@@ -44,3 +44,18 @@ def test_disabled_skips_verbalization() -> None:
     embed_before = c.embed_text
     out = enrich_chunks([c], enabled=False, verbalize=lambda _: "X")
     assert out[0].embed_text == embed_before
+
+
+def test_metric_hint_appended_for_interest_table_even_when_enrichment_off() -> None:
+    display = (
+        "Lãi suất cam kết tối thiểu theo năm hợp đồng:\n\n"
+        "| Năm hợp đồng | Lãi suất cam kết tối thiểu (%) |\n"
+        "| --- | --- |\n"
+        "| Năm 1 | 2.5 |"
+    )
+    c = _chunk(display)
+    out = enrich_chunks([c], enabled=False, verbalize=lambda _: "NO")
+    assert out[0].display_text == display  # display untouched
+    assert "Loại chỉ số:" in out[0].embed_text
+    assert "lãi suất cam kết" in out[0].embed_text
+    assert "không phải tỷ lệ bồi thường" in out[0].embed_text

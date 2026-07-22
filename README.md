@@ -199,10 +199,13 @@ dense+sparse indexing into Qdrant) via `POST /ingest` and batch via
 retrieval (glossary query expansion, a pre-retrieval typo-confirmation gate —
 `app/retrieval/spellcheck.py`, `SPELLCHECK_ENABLED` — that asks the user to
 confirm before answering when the query likely garbles a known glossary term
-or document title, LLM standalone-question rewrite, hybrid RRF-fused search,
+or document title, LLM standalone-question rewrite with sticky conversation
+scope — `CONVERSATION_SCOPE_ENABLED` — that reinjects the last-cited document
+title into follow-ups that drop the product name, hybrid RRF-fused search,
 bge-reranker-v2-m3 reranking with a relevance floor — `RERANK_MIN_SCORE` —
 that falls back to a clearly-labeled general-knowledge answer or refuses
-deterministically, per `HYBRID_FALLBACK_ENABLED`, when nothing relevant is
+deterministically, per `HYBRID_FALLBACK_ENABLED` (scoped company-document
+follow-ups always refuse rather than hybrid-fallback), when nothing relevant is
 found) and generation (Vietnamese system prompt with
 citations/refusal/math-disclaimer/Mermaid-chart rules, SSE streaming, an
 appended "Nguồn tham khảo" sources block whose document titles are hyperlinks

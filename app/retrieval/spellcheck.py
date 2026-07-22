@@ -34,15 +34,14 @@ logger = logging.getLogger(__name__)
 
 _DIACRITIC_MAP = str.maketrans({"đ": "d", "Đ": "D"})
 
-# How many leading/trailing words of a known phrase a user may plausibly drop
-# (e.g. "sản phẩm bảo hiểm liên kết chung" -> "bảo hiểm liên kết chung").
-_MAX_DROPPED_WORDS = 2
-
 # A reduced (dropped-word) window must retain at least this many words. Word
-# dropping is meant for long document titles shedding a generic prefix; a short
+# dropping is meant for long document titles shedding a generic prefix/suffix
+# (e.g. "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền" -> "Lộc Vững Bền"); a short
 # glossary term reduced to a 2-word residue ("phí toàn phần" -> "toàn phần")
 # carries too little identity and collides with ordinary correctly-spelled prose
 # ("thành phần"), so short phrases are only ever matched at their full length.
+# How far a title may shrink is gated by ``_covers_distinctive``, not a fixed
+# drop count — real ingested titles often carry 4–6 generic leading words.
 _MIN_REDUCED_WINDOW = 3
 
 # A phrase token appearing in at least this many distinct known phrases is a
@@ -126,6 +125,36 @@ def _known_phrases(titles: list[str] | None) -> list[str]:
     return sorted({p.strip() for p in phrases if p.strip()}, key=len, reverse=True)
 
 
+def _is_token_subsequence(short: list[str], long: list[str]) -> bool:
+    """True if ``short`` appears as a contiguous run inside ``long``."""
+    if not short or len(short) > len(long):
+        return False
+    n = len(short)
+    return any(long[i : i + n] == short for i in range(len(long) - n + 1))
+
+
+def _phrases_for_df(phrases: list[str]) -> list[str]:
+    """Folded phrases with nested title variants removed (keep the longest).
+
+    Ingested docs often yield both a short product name and a longer title that
+    contains it ("An Lộc Vững Bền" ⊂ "Bảo hiểm … An Lộc Vững Bền"). Counting
+    both would inflate document frequency of the product-name tokens and mark
+    them generic, blinding the typo gate to that product.
+    """
+    norms = sorted(
+        {_normalize(p) for p in phrases if p.strip()},
+        key=len,
+        reverse=True,
+    )
+    kept: list[str] = []
+    for norm in norms:
+        tokens = norm.split()
+        if any(_is_token_subsequence(tokens, k.split()) for k in kept):
+            continue
+        kept.append(norm)
+    return kept
+
+
 def _generic_tokens(phrases: list[str]) -> frozenset[str]:
     """Folded tokens that must never, on their own, anchor a typo match.
 
@@ -133,10 +162,12 @@ def _generic_tokens(phrases: list[str]) -> frozenset[str]:
     frequency >= ``_GENERIC_DF`` — e.g. "phí", "bảo", "hiểm") or is a known
     function word / product modifier. Everything else is *distinctive*: the
     part of a phrase that actually identifies which term the user meant.
+    Nested title variants are deduped before the DF pass so a product name
+    repeated inside longer titles is not mistaken for a generic domain word.
     """
     df: dict[str, int] = {}
-    for phrase in phrases:
-        for tok in set(_normalize(phrase).split()):
+    for phrase in _phrases_for_df(phrases):
+        for tok in set(phrase.split()):
             df[tok] = df.get(tok, 0) + 1
     return frozenset({t for t, c in df.items() if c >= _GENERIC_DF} | _FUNCTION_WORDS)
 
@@ -174,15 +205,21 @@ def _window_ratio(
     """Best match ratio between a query word-window and a prefix/suffix of ``phrase_words``.
 
     Tries the full phrase length first, then progressively shorter
-    prefixes/suffixes (tolerating dropped leading words like "sản phẩm ...").
-    A prefix/suffix is only considered if it still covers most of the phrase's
-    distinctive tokens (``_covers_distinctive``) — this is what stops a generic
-    tail ("nhân thọ") from matching while the identifying words are dropped.
-    Stops at the *first* (largest) surviving window size that reaches
-    ``stop_ratio`` and returns that window's own ratio.
+    prefixes/suffixes (tolerating dropped generic title words like
+    "sản phẩm bảo hiểm hỗn hợp ..."). Shrinks as far as
+    ``_MIN_REDUCED_WINDOW``; a prefix/suffix is only considered if it still
+    covers most of the phrase's distinctive tokens (``_covers_distinctive``) —
+    this is what stops a generic tail ("nhân thọ") from matching while the
+    identifying words are dropped.
+
+    Returns the *highest*-ratio surviving window (not the longest). Long
+    ingested titles otherwise let a mediocre mid-length prefix/suffix clear
+    ``stop_ratio`` and shadow a near-exact product-name suffix — which would
+    both miss real Telex slips and false-flag habitual no-diacritics typing.
     """
     n = len(phrase_words)
-    min_w = max(2, n - _MAX_DROPPED_WORDS)
+    min_w = _MIN_REDUCED_WINDOW if n >= _MIN_REDUCED_WINDOW else 2
+    best_ratio, best_span = 0.0, ""
     for w in range(n, min_w - 1, -1):
         if len(query_words) < w:
             continue
@@ -199,7 +236,6 @@ def _window_ratio(
         }
         if not candidates:
             continue
-        best_ratio, best_span = 0.0, ""
         for i in range(len(query_words) - w + 1):
             window = query_words[i : i + w]
             # A garbled term yields tokens that are neither generic domain words
@@ -211,10 +247,12 @@ def _window_ratio(
             window_norm = _normalize(" ".join(window))
             for cand in candidates:
                 ratio = SequenceMatcher(None, window_norm, _normalize(cand)).ratio()
+                # Prefer higher ratio; on a tie keep the longer span (encountered
+                # first because ``w`` descends).
                 if ratio > best_ratio:
                     best_ratio, best_span = ratio, " ".join(window)
-        if best_ratio >= stop_ratio:
-            return best_ratio, best_span
+    if best_ratio >= stop_ratio:
+        return best_ratio, best_span
     return 0.0, ""
 
 
@@ -271,15 +309,20 @@ def find_suggestions(
 ) -> list[Suggestion]:
     """Find known phrases the query likely garbled (close, but not exact/correct).
 
-    A ratio near 1.0 means the query already spells the phrase correctly
-    (diacritics aside) — not flagged. A ratio below ``min_ratio`` isn't
-    similar enough to be worth interrupting the user about. Only the band in
-    between is a *candidate*; it is flagged only if the matched span actually
-    contains a misspelled word (``_span_has_typo``), so a correctly-spelled
-    partial title match proceeds straight to retrieval instead of prompting.
+    A ratio below ``min_ratio`` isn't similar enough to be worth interrupting
+    the user about. Above that floor, a candidate is flagged only if the
+    matched span actually contains a misspelled word (``_span_has_typo``):
+    habitual no-diacritics typing folds to an exact known-vocab match and is
+    never flagged, while a real slip (``thươg``~``thương``, ``vuwng``~``vững``)
+    is — even when the rest of a long title keeps the window ratio near 1.0.
+
+    ``max_ratio`` is accepted for call-site compatibility but no longer gates
+    suggestions; the typo-token check is the authoritative "already correct"
+    filter.
     """
     min_ratio = settings.spellcheck_min_ratio if min_ratio is None else min_ratio
-    max_ratio = settings.spellcheck_max_ratio if max_ratio is None else max_ratio
+    # Signature / .env compat only — the typo-token check replaced this upper gate.
+    _max_ratio = settings.spellcheck_max_ratio if max_ratio is None else max_ratio
     typo_ratio = (
         settings.spellcheck_typo_token_ratio if typo_ratio is None else typo_ratio
     )
@@ -301,7 +344,7 @@ def find_suggestions(
         )
         key = phrase.lower()
         if (
-            min_ratio <= ratio < max_ratio
+            ratio >= min_ratio
             and key not in seen
             and _span_has_typo(span, phrase, generic, vocab, typo_ratio)
         ):

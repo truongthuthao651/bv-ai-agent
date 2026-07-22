@@ -155,3 +155,51 @@ def test_does_not_flag_correct_words_resembling_dropped_generic_residue() -> Non
         "thành phần trong công thức. Trích dẫn tài liệu nguồn."
     )
     assert find_suggestions(query, titles=[]) == []
+
+
+def test_flags_telex_typo_against_long_product_title() -> None:
+    # Real ingested titles bury the product name under a long generic prefix
+    # ("SẢN PHẨM BẢO HIỂM HỖN HỢP …"). Unfinished Telex ("vuwng bênf" for
+    # "vững bền") must still trigger confirmation against that suffix — not
+    # fall through to a silent refusal.
+    title = "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"
+    query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vuwng bênf"
+    suggestions = find_suggestions(query, titles=[title])
+    assert suggestions
+    assert suggestions[0].canonical == title
+    assert "vuwng" in suggestions[0].matched_span.lower()
+    message = maybe_suggest_correction(query, titles=[title])
+    assert message is not None
+    assert title in message
+
+
+def test_flags_telex_typo_against_linked_product_title() -> None:
+    # Same slip against a "bảo hiểm liên kết chung …" style title where the
+    # product name is the trailing distinctive span.
+    title = "Bảo hiểm liên kết chung An Lộc Vững Bền"
+    query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vuwng bênf"
+    suggestions = find_suggestions(query, titles=[title])
+    assert suggestions
+    assert suggestions[0].canonical == title
+
+
+def test_flags_telex_typo_with_nested_title_variants() -> None:
+    # Short product name + longer titles that contain it must not inflate DF
+    # enough to mark the product tokens generic and blind the gate.
+    titles = [
+        "An Lộc Vững Bền",
+        "Bảo hiểm liên kết chung An Lộc Vững Bền",
+        "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền",
+    ]
+    query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vuwng bênf"
+    suggestions = find_suggestions(query, titles=titles)
+    assert suggestions
+    assert any("Vững Bền" in s.canonical for s in suggestions)
+
+
+def test_no_diacritics_product_name_still_not_flagged_on_long_title() -> None:
+    # Habitual no-diacritics typing of the product name against a long title
+    # must proceed to retrieval, not a confirmation prompt.
+    title = "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"
+    query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vung ben"
+    assert find_suggestions(query, titles=[title]) == []

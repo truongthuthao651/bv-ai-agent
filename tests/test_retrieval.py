@@ -7,6 +7,13 @@ needed (skill sections 4-5).
 from __future__ import annotations
 
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
+from app.retrieval.conversation_scope import (
+    active_scope,
+    cited_doc_titles,
+    ensure_prior_topic,
+    ensure_scope,
+    query_covers_scope,
+)
 from app.retrieval.product_scope import query_names_absent_product
 from app.retrieval.query_expansion import GlossaryEntry, expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
@@ -26,6 +33,13 @@ _GLOSSARY = (
         symbol="_tV_x",
         definition="...",
     ),
+)
+
+_AKNY = "Bảo hiểm liên kết chung An Khang Như Ý"
+_SOURCES = (
+    f"Quyền lợi tử vong gồm...\n\n**Nguồn tham khảo:**\n"
+    f"- [1] [{_AKNY}](http://localhost/documents/d1/view) — QUYỀN LỢI TỬ VONG\n"
+    f"- [2] [{_AKNY}](http://localhost/documents/d1/view) — LOẠI TRỪ TRÁCH NHIỆM"
 )
 
 
@@ -92,7 +106,10 @@ def test_rewrite_skipped_when_disabled() -> None:
         enabled=False,
         rewrite=lambda _: "SHOULD NOT BE CALLED",
     )
-    assert out == "còn phí gộp thì sao?"
+    # LLM rewriter is off, but the deterministic prior-topic safety net still
+    # reattaches scenario details the short follow-up dropped.
+    assert out.startswith("còn phí gộp thì sao?")
+    assert "An Tâm Bảo Vệ" in out or "Phí thuần" in out
 
 
 def test_rewrite_uses_llm_when_enabled_with_history() -> None:
@@ -115,6 +132,162 @@ def test_rewrite_falls_back_to_original_on_empty_llm_output() -> None:
         history, "còn phí gộp?", enabled=True, rewrite=lambda _: ""
     )
     assert out == "còn phí gộp?"
+
+
+def test_rewrite_prompt_includes_scope_and_condenses_assistant() -> None:
+    history = [
+        ChatMessage(role="user", content="Quyền lợi An Khang Như Ý?"),
+        ChatMessage(role="assistant", content=_SOURCES),
+    ]
+    captured: list[str] = []
+
+    def fake(prompt: str) -> str:
+        captured.append(prompt)
+        return "KH mua An Khang Như Ý đi trượt tuyết có claim được không?"
+
+    out = rewrite_standalone(
+        history,
+        "thế đi trượt tuyết thì sao?",
+        scope=_AKNY,
+        enabled=True,
+        rewrite=fake,
+    )
+    assert captured and _AKNY in captured[0]
+    assert "Tài liệu/sản phẩm đang được thảo luận" in captured[0]
+    assert "Tài liệu đã trích dẫn" in captured[0]
+    # Full sources block must not flood the rewrite prompt.
+    assert "**Nguồn tham khảo:**" not in captured[0]
+    assert "An Khang Như Ý" in out
+
+
+def test_rewrite_ensure_scope_when_llm_drops_product_name() -> None:
+    history = [
+        ChatMessage(role="user", content="Quyền lợi An Khang Như Ý?"),
+        ChatMessage(role="assistant", content=_SOURCES),
+    ]
+    out = rewrite_standalone(
+        history,
+        "thế đi trượt tuyết thì sao?",
+        scope=_AKNY,
+        enabled=True,
+        # Model returns a standalone question but forgets the product.
+        rewrite=lambda _: "Đi trượt tuyết thì có được claim không?",
+    )
+    assert _AKNY in out
+    assert "trượt tuyết" in out
+
+
+def test_rewrite_ensure_scope_even_when_rewrite_disabled() -> None:
+    # Deterministic safety net independent of the LLM rewriter.
+    out = rewrite_standalone(
+        [ChatMessage(role="user", content="x")],
+        "thế bị tử vong thì sao?",
+        scope=_AKNY,
+        enabled=False,
+        rewrite=lambda _: "SHOULD NOT BE CALLED",
+    )
+    assert out.endswith(f"(tài liệu: {_AKNY})")
+
+
+def test_rewrite_reattaches_prior_topic_when_llm_drops_scenario() -> None:
+    # Exact failure mode from the UI: doc scope stuck, but skiing/diving dropped.
+    prior = "KH đi trượt tuyết và lặn biển về claim QL thương tật có được không?"
+    history = [
+        ChatMessage(role="user", content=prior),
+        ChatMessage(role="assistant", content=_SOURCES),
+    ]
+    out = rewrite_standalone(
+        history,
+        "thế tử vong thì sao",
+        scope=_AKNY,
+        enabled=True,
+        rewrite=lambda _: "Thế tử vong thì sao",  # model forgot the scenario
+    )
+    assert "trượt tuyết" in out
+    assert "lặn biển" in out
+    assert "tử vong" in out.lower() or "Thế tử vong" in out
+    assert _AKNY in out
+
+
+def test_rewrite_skips_prior_topic_when_llm_already_kept_scenario() -> None:
+    prior = "KH đi trượt tuyết và lặn biển về claim QL thương tật có được không?"
+    history = [ChatMessage(role="user", content=prior)]
+    good = "KH đi trượt tuyết và lặn biển về claim quyền lợi tử vong có được không?"
+    out = rewrite_standalone(
+        history, "thế tử vong thì sao", enabled=True, rewrite=lambda _: good
+    )
+    assert out == good
+    assert "ngữ cảnh câu trước" not in out
+
+
+# --------------------------------------------------------------------------- #
+# Conversation scope (sticky product/doc across turns)
+# --------------------------------------------------------------------------- #
+
+
+def test_cited_doc_titles_from_sources_footer() -> None:
+    assert cited_doc_titles(_SOURCES) == [_AKNY, _AKNY]
+
+
+def test_active_scope_prefers_last_assistant_citations() -> None:
+    history = [
+        ChatMessage(role="user", content="Quyền lợi bảo hiểm An Khang Như Ý?"),
+        ChatMessage(role="assistant", content=_SOURCES),
+        ChatMessage(role="user", content="thế đi trượt tuyết thì sao?"),
+    ]
+    assert active_scope(history) == _AKNY
+
+
+def test_active_scope_falls_back_to_user_product_phrase() -> None:
+    history = [
+        ChatMessage(
+            role="user",
+            content="Liệt kê quyền lợi của bảo hiểm an khang như ý",
+        )
+    ]
+    scope = active_scope(history)
+    assert scope is not None
+    # product_span skips the generic leading "an"; distinctive tokens remain.
+    assert query_covers_scope("An Khang Như Ý", scope)
+
+
+def test_ensure_scope_injects_when_follow_up_drops_name() -> None:
+    out = ensure_scope("thế đi trượt tuyết bị tử vong thì sao?", _AKNY)
+    assert out.endswith(f"(tài liệu: {_AKNY})")
+
+
+def test_ensure_scope_noop_when_query_already_names_product() -> None:
+    q = "KH mua An Khang Như Ý đi trượt tuyết có claim được không?"
+    assert ensure_scope(q, _AKNY) == q
+
+
+def test_ensure_scope_noop_when_user_switches_product() -> None:
+    q = "còn bảo hiểm An Thịnh Phúc Niên thì sao?"
+    assert ensure_scope(q, _AKNY) == q
+
+
+def test_query_covers_scope_diacritic_insensitive() -> None:
+    assert query_covers_scope("quyen loi an khang nhu y", _AKNY)
+
+
+def test_ensure_prior_topic_injects_skiing_diving_scenario() -> None:
+    prior = "KH đi trượt tuyết và lặn biển về claim QL thương tật có được không?"
+    history = [ChatMessage(role="user", content=prior)]
+    out = ensure_prior_topic("thế tử vong thì sao", history)
+    assert "trượt tuyết" in out
+    assert "lặn biển" in out
+    assert out.startswith("thế tử vong thì sao")
+
+
+def test_ensure_prior_topic_noop_for_full_new_question() -> None:
+    history = [
+        ChatMessage(
+            role="user",
+            content="KH đi trượt tuyết và lặn biển về claim QL thương tật?",
+        )
+    ]
+    q = "Thời hạn giải quyết quyền lợi bảo hiểm là bao lâu?"
+    assert ensure_prior_topic(q, history) == q
 
 
 # --------------------------------------------------------------------------- #
@@ -296,3 +469,74 @@ def test_product_guard_matches_without_diacritics() -> None:
     )
     # A different, absent product -> refuse.
     assert query_names_absent_product("bao hiem an thinh phuc nien", titles)
+
+
+# --------------------------------------------------------------------------- #
+# Metric guard (drop fee/interest tables from benefit-payout queries)
+# --------------------------------------------------------------------------- #
+
+
+def _metric_hit(section: str, text: str) -> Hit:
+    return Hit(
+        point_id="p",
+        score=1.0,
+        payload=QdrantPayload(
+            doc_id="d",
+            doc_title="An Phú Liên Kết",
+            section_path=section,
+            doc_type=DocType.POLICY,
+            display_text=text,
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+
+def test_metric_guard_detects_claim_percent_query() -> None:
+    from app.retrieval.metric_guard import is_benefit_payout_query
+
+    assert is_benefit_payout_query(
+        "nếu tôi gặp tai nạn xe cộ và chết thì được claim bao nhiêu%?"
+    )
+    assert not is_benefit_payout_query(
+        "Lãi suất cam kết tối thiểu năm 1 của An Phú Liên Kết là bao nhiêu?"
+    )
+
+
+def test_metric_guard_drops_interest_table_from_claim_query() -> None:
+    from app.retrieval.metric_guard import filter_metric_mismatch
+
+    interest = _metric_hit(
+        "Chương II > Điều 4",
+        "Lãi suất cam kết tối thiểu:\n\n| Năm | % |\n| --- | --- |\n| 1 | 2.5 |",
+    )
+    benefit = _metric_hit(
+        "Chương I > Điều 1",
+        "Chi trả 100% Số tiền bảo hiểm nếu tử vong do tai nạn.",
+    )
+    q = "gặp tai nạn xe cộ và chết thì được claim bao nhiêu%?"
+    out = filter_metric_mismatch(q, [interest, benefit])
+    assert len(out) == 1
+    assert out[0].payload.section_path == "Chương I > Điều 1"
+
+
+def test_metric_guard_empties_when_only_interest_hits_remain() -> None:
+    from app.retrieval.metric_guard import filter_metric_mismatch
+
+    interest = _metric_hit(
+        "Điều 4: Lãi suất cam kết tối thiểu",
+        "| Năm hợp đồng | Lãi suất cam kết tối thiểu (%) |\n| --- | --- |\n| 1 | 2.5 |",
+    )
+    q = "chết vì tai nạn thì claim bao nhiêu%?"
+    assert filter_metric_mismatch(q, [interest]) == []
+
+
+def test_metric_guard_noop_for_interest_rate_question() -> None:
+    from app.retrieval.metric_guard import filter_metric_mismatch
+
+    interest = _metric_hit(
+        "Điều 4",
+        "Lãi suất cam kết tối thiểu năm 1 là 2.5%.",
+    )
+    q = "Lãi suất cam kết tối thiểu năm 1 là bao nhiêu?"
+    assert filter_metric_mismatch(q, [interest]) == [interest]

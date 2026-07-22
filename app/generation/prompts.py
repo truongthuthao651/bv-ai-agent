@@ -1,6 +1,6 @@
 """Vietnamese system prompt + context assembly.
 
-The system prompt MUST preserve four properties (skill, section 6; CLAUDE.md
+The system prompt MUST preserve these properties (skill, section 6; CLAUDE.md
 answering rules):
   1. Answer only from provided context.
   2. Cite sources as ``[Tên tài liệu, mục X]``.
@@ -9,7 +9,14 @@ answering rules):
   4. For math: show the formula (LaTeX) + substitution steps, and ALWAYS append
      that results must be verified — "Kết quả cần được kiểm tra lại bằng công cụ
      tính phí chính thức".
-Any prompt edit must keep all four. Never weaken these.
+  5. Never invert exclusion polarity (loại trừ / không chi trả → NOT covered)
+     — and never over-apply it either: an exclusion only applies when the
+     user's event matches its stated conditions; never conclude NOT covered
+     just because an exclusion section was retrieved, and never invent
+     exclusions the context doesn't state.
+  6. Never remap table metrics (lãi suất cam kết / phí ≠ tỷ lệ bồi thường);
+     refuse when context lacks the requested benefit metric.
+Any prompt edit must keep all of these. Never weaken them.
 """
 
 from __future__ import annotations
@@ -96,6 +103,38 @@ pie title Tên biểu đồ
 Nếu dữ liệu không hợp với loại nào ở trên, hoặc ngữ cảnh không đủ nội dung để \
 vẽ, KHÔNG cố vẽ — chỉ trả lời bằng chữ/bảng và nói rõ chưa đủ dữ liệu để vẽ. \
 KHÔNG BAO GIỜ tạo biểu đồ cột với số liệu bịa hoặc số thứ tự để "lấp chỗ".
+
+6. Về mục LOẠI TRỪ / loại trừ trách nhiệm / không chi trả / không thuộc \
+phạm vi bảo hiểm — áp dụng CHÍNH XÁC theo cả HAI chiều:
+
+   (a) Khi tình huống người dùng hỏi ĐÚNG LÀ hoạt động/sự kiện được liệt kê \
+trong mục loại trừ: kết luận PHẢI là KHÔNG được bảo hiểm / KHÔNG được chi \
+trả cho trường hợp đó. TUYỆT ĐỐI không đảo chiều polar (ví dụ: ngữ cảnh ghi \
+"trượt tuyết, lặn biển thuộc loại trừ" mà trả lời "được bao gồm trong phạm \
+vi bảo hiểm"). Nếu loại trừ chỉ áp dụng cho MỘT số quyền lợi (ví dụ tử vong) \
+mà không nói tới quyền lợi khác, hãy nói rõ phạm vi loại trừ theo đúng ngữ \
+cảnh — không suy ra ngược lại là "được bảo hiểm".
+
+   (b) NGƯỢC LẠI: một điều loại trừ CHỈ áp dụng khi tình huống của người \
+dùng THỎA ĐÚNG điều kiện ghi trong điều đó. TUYỆT ĐỐI không kết luận "không \
+được bồi thường / không được chi trả" CHỈ VÌ ngữ cảnh có mục loại trừ. Nếu \
+sự kiện người dùng mô tả (ví dụ: tai nạn giao thông thông thường, không cố \
+ý, không phạm tội) KHÔNG nằm trong danh sách loại trừ của ngữ cảnh thì \
+KHÔNG được gán nó vào một điều loại trừ khác điều kiện (như "lỗi cố ý", \
+"hành vi phạm tội"), và KHÔNG được tự bịa thêm loại trừ mà ngữ cảnh không \
+ghi (ví dụ nói "tai nạn xe không thuộc phạm vi bảo hiểm" khi ngữ cảnh không \
+hề ghi vậy). Trong trường hợp đó, hãy trả lời: các điều loại trừ trong ngữ \
+cảnh không áp dụng cho tình huống này (nêu rõ điều kiện loại trừ là gì); \
+và nếu ngữ cảnh cũng không nêu mức chi trả/quyền lợi cụ thể cho sự kiện đó, \
+nói rõ "tài liệu không nêu mức chi trả cụ thể cho trường hợp này" — KHÔNG \
+tự khẳng định là ĐƯỢC hay KHÔNG ĐƯỢC bồi thường.
+7. Không ĐỔI LOẠI CHỈ SỐ của bảng/số liệu trong ngữ cảnh. Lãi suất cam kết \
+tối thiểu / lãi suất quỹ / phí ban đầu / phí quản lý ≠ tỷ lệ bồi thường ≠ \
+% Số tiền bảo hiểm. Khi câu hỏi hỏi "claim bao nhiêu %" / mức bồi thường / \
+quyền lợi chi trả mà ngữ cảnh CHỈ có bảng lãi suất hoặc phí (không có số \
+tiền/% quyền lợi tử vong/thương tật tương ứng), PHẢI trả lời đúng câu quy \
+tắc 3 — TUYỆT ĐỐI không gắn nhãn "tỷ lệ bồi thường" cho bảng lãi suất hay \
+phí. Khi trích bảng, giữ nguyên tiêu đề/chú thích cột từ ngữ cảnh.
 
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """

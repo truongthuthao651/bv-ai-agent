@@ -332,7 +332,7 @@ Mỗi point roughly có: `doc_id`, `doc_title`, `section_path`, `page`,
 
 ## 7. Query chi tiết
 
-### 7.1 Bốn quy tắc trả lời (không được làm yếu trong `prompts.py`)
+### 7.1 Quy tắc trả lời (không được làm yếu trong `prompts.py`)
 
 1. **Chỉ trả lời từ ngữ cảnh** đã retrieve — không bịa.  
 2. **Trích dẫn** dạng `[Tên tài liệu, mục X]`.  
@@ -341,11 +341,18 @@ Mỗi point roughly có: `doc_id`, `doc_title`, `section_path`, `page`,
 4. Có tính toán số → hiện công thức LaTeX + bước thay số + disclaimer:  
    `Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức.`  
    (Model local 7–8B **không** đáng tin cho số liệu bảo hiểm.)
+5. **Loại trừ:** nếu ngữ cảnh ghi hoạt động thuộc loại trừ / không chi trả →
+   kết luận **không** được bảo hiểm. Không được đảo chiều polar
+   (lỗi hay gặp của model nhỏ: đọc "loại trừ" rồi kết luận "được bao gồm").
+6. **Loại chỉ số:** lãi suất cam kết / phí ≠ tỷ lệ bồi thường. Không đổi nhãn
+   bảng; thiếu số liệu quyền lợi → refuse.
 
 Ngoài prompt, code còn có **guardrail xác định**:
 
 - Không còn hit sau `RERANK_MIN_SCORE` → refusal ngay (không gọi LLM).  
 - Answer có số liệu tính toán mà quên disclaimer → generator tự append.
+- Câu hỏi claim/% quyền lợi → `METRIC_GUARD_ENABLED` loại hit phí / lãi suất
+  cam kết trước khi generate (tránh trả lời claim bằng bảng lãi suất).
 
 ### 7.2 Open WebUI meta-tasks
 

@@ -28,6 +28,8 @@ from app.models.schemas import (
     ModelCard,
     ModelList,
 )
+from app.retrieval.conversation_scope import active_scope
+from app.retrieval.metric_guard import filter_metric_mismatch
 from app.retrieval.product_scope import query_names_absent_product
 from app.retrieval.query_expansion import expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
@@ -141,8 +143,9 @@ def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
     instead of guessed at. eval/run_ragas.py mirrors this flow stage-by-stage —
     keep the two in sync when the query flow changes.
     """
+    scope = active_scope(history) if settings.conversation_scope_enabled else None
     t0 = time.perf_counter()
-    standalone_query = rewrite_standalone(history, query)
+    standalone_query = rewrite_standalone(history, query, scope=scope)
     t1 = time.perf_counter()
     search_query = expand_query(standalone_query)
     t2 = time.perf_counter()
@@ -150,14 +153,25 @@ def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
     t3 = time.perf_counter()
     hits = rerank(standalone_query, hits)
     t4 = time.perf_counter()
+    if settings.metric_guard_enabled:
+        before = len(hits)
+        hits = filter_metric_mismatch(standalone_query, hits)
+        if len(hits) != before:
+            logger.info(
+                "metric guard: dropped %d fee/interest hit(s) for benefit-payout query",
+                before - len(hits),
+            )
+    t5 = time.perf_counter()
     logger.info(
         "retrieval timings: rewrite=%.0fms expand=%.0fms search=%.0fms "
-        "rerank=%.0fms hits=%d",
+        "rerank=%.0fms metric_guard=%.0fms hits=%d scope=%s",
         (t1 - t0) * 1000,
         (t2 - t1) * 1000,
         (t3 - t2) * 1000,
         (t4 - t3) * 1000,
+        (t5 - t4) * 1000,
         len(hits),
+        scope or "-",
     )
     return standalone_query, hits
 
@@ -211,9 +225,18 @@ async def chat_completions(request: ChatCompletionRequest):
     # No hit survived the reranker's relevance floor: either fall back to a
     # clearly-labeled general-knowledge answer (settings.hybrid_fallback_enabled)
     # or refuse deterministically — never hand the LLM irrelevant context and
-    # hope it refuses.
+    # hope it refuses. Scoped follow-ups (prior turn pinned a company product/
+    # document) always refuse: hybrid general knowledge is the wrong answer
+    # shape for "what about that product's skiing exclusion?" when retrieval
+    # missed.
     if not hits:
-        if not settings.hybrid_fallback_enabled:
+        scoped = bool(settings.conversation_scope_enabled and active_scope(history))
+        if not settings.hybrid_fallback_enabled or scoped:
+            if scoped:
+                logger.info(
+                    "hybrid fallback skipped: conversation scope is set "
+                    "(company-document follow-up)"
+                )
             return _static_response(request, REFUSAL_MESSAGE)
         if request.stream:
             return StreamingResponse(

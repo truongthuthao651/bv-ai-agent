@@ -80,6 +80,9 @@ Enrichment steps:
 - **Formulas:** for each chunk containing `$...$`/`$$...$$`, call the local LLM to
   produce a 1–2 sentence Vietnamese description of what each formula computes;
   append to `embed_text` only.
+- **Tables:** deterministic metric-type hint (`app/ingestion/metric_hints.py`)
+  appended to `embed_text` when a known phrase is present (e.g. lãi suất cam
+  kết tối thiểu ≠ tỷ lệ bồi thường). No LLM; always applied.
 - **Figures:** for each `ParsedFigure`, call Qwen2.5-VL with a structured prompt:
   chart type, axes + units, series, trend, labeled key values (as a Markdown table
   if readable), in Vietnamese; instruct it to mark unlabeled readings as
@@ -100,8 +103,10 @@ Enrichment steps:
     before it AND any "trong đó: ..." definition list after it.
   - If that unit exceeds the budget, the unit becomes its own oversized chunk —
     correctness beats budget here.
-- Never split a Markdown table mid-row; oversized tables split by row groups with
-  header repeated.
+- **Table rules:** never split mid-row; oversized tables split by row groups with
+  header repeated. Bind the paragraph immediately before a Markdown table
+  (caption) into the same unit — otherwise a bare `%`-by-year grid can be
+  retrieved as the wrong metric (lãi suất cam kết vs tỷ lệ bồi thường).
 
 ### 4. Glossary (data/glossary/thuat_ngu.yaml)
 
@@ -139,7 +144,7 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
 - Context assembly uses `display_text`, numbered (`[1] Tài liệu: ...`) so
   citations are checkable. LaTeX passes through untouched — Open WebUI renders it
   with KaTeX.
-- System prompt is Vietnamese and MUST keep four properties:
+- System prompt is Vietnamese and MUST keep these properties:
   1. Answer only from provided context.
   2. Cite sources as `[Tên tài liệu, mục X]`.
   3. Refuse gracefully with "Tôi không tìm thấy thông tin trong tài liệu" when
@@ -149,7 +154,20 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
      verified with official tools ("Kết quả cần được kiểm tra lại bằng công cụ
      tính phí chính thức") — a local 7B model's arithmetic is not trustworthy for
      insurance calculations.
-  Any prompt edit must preserve all four.
+  5. **Exclusions:** never invert polarity — if context lists an activity under
+     loại trừ / không chi trả, the answer must conclude it is NOT covered.
+     And never over-apply: an exclusion only applies when the user's event
+     matches its stated conditions (an ordinary accident is NOT excluded by a
+     "lỗi cố ý" / "hành vi phạm tội" clause); never conclude NOT covered just
+     because an exclusion section was retrieved, never invent exclusions the
+     context doesn't state.
+  6. **Metrics:** never remap table types (lãi suất cam kết / phí ≠ tỷ lệ bồi
+     thường); refuse when context lacks the requested benefit metric.
+  Any prompt edit must preserve all of the above.
+- Query-time metric guard (`app/retrieval/metric_guard.py`,
+  `METRIC_GUARD_ENABLED`): on benefit-payout queries, drop fee/interest hits
+  before generation so a claim-% question cannot be answered from a guaranteed-
+  interest schedule.
 - Stream via SSE in OpenAI format so Open WebUI works unmodified.
 
 ### 7. Synthetic data & evaluation
