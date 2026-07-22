@@ -7,6 +7,7 @@ needed (skill sections 4-5).
 from __future__ import annotations
 
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
+from app.retrieval.product_scope import query_names_absent_product
 from app.retrieval.query_expansion import GlossaryEntry, expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
 from app.retrieval.reranker import rerank
@@ -225,3 +226,73 @@ def test_rerank_min_score_zero_disables_the_floor() -> None:
         "query", hits, top_k=5, min_score=0.0, score_fn=lambda _q, d: [0.01, 0.02]
     )
     assert len(ranked) == 2
+
+
+def test_rerank_relative_floor_drops_weak_cross_doc_chunk() -> None:
+    # A strong top hit (0.9) with a weak tangential chunk (0.2): min_ratio=0.35
+    # sets a relative floor of 0.315, dropping the weak chunk even though it
+    # clears the absolute floor — the cross-document-leak guard.
+    hits = [_hit("1", "strong"), _hit("2", "weak"), _hit("3", "mid")]
+    fake_scores = {"strong": 0.9, "weak": 0.2, "mid": 0.5}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank(
+        "query", hits, top_k=5, min_score=0.05, min_ratio=0.35, score_fn=score_fn
+    )
+    assert [h.point_id for h in ranked] == ["1", "3"]  # "weak" (0.2 < 0.315) dropped
+
+
+def test_rerank_relative_floor_zero_is_noop() -> None:
+    # min_ratio=0 (the default) keeps the pure absolute-floor behavior.
+    hits = [_hit("1", "strong"), _hit("2", "weak")]
+    fake_scores = {"strong": 0.9, "weak": 0.2}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank(
+        "query", hits, top_k=5, min_score=0.05, min_ratio=0.0, score_fn=score_fn
+    )
+    assert [h.point_id for h in ranked] == ["1", "2"]
+
+
+# --------------------------------------------------------------------------- #
+# Product-scope guard (refuse when the named product isn't in the retrieved
+# docs, instead of answering from a different product's benefit clauses)
+# --------------------------------------------------------------------------- #
+
+
+def test_product_guard_refuses_when_named_product_absent() -> None:
+    # Asks about "An Thịnh Phúc Niên"; only a DIFFERENT product was retrieved.
+    titles = ["Bảo hiểm liên kết chung An Khang Như Ý", "Từ điển thuật ngữ"]
+    assert query_names_absent_product(
+        "Liệt kê chi tiết quyền lợi của bảo hiểm liên kết an thịnh phúc niên",
+        titles,
+    )
+
+
+def test_product_guard_allows_when_named_product_present() -> None:
+    titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    assert not query_names_absent_product(
+        "quyền lợi của bảo hiểm an khang như ý", titles
+    )
+
+
+def test_product_guard_ignores_generic_questions() -> None:
+    # No specific product is named -> never blocks the general/topical question.
+    titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    assert not query_names_absent_product("bảo hiểm nhân thọ là gì", titles)
+    assert not query_names_absent_product("bảo hiểm hỗn hợp gồm những gì", titles)
+    assert not query_names_absent_product("quyền lợi tử vong là gì", titles)
+
+
+def test_product_guard_matches_without_diacritics() -> None:
+    titles = ["SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"]
+    # No-diacritics typing still lines up with the diacritic title (present).
+    assert not query_names_absent_product(
+        "bao hiem loc vung ben co quyen loi gi", titles
+    )
+    # A different, absent product -> refuse.
+    assert query_names_absent_product("bao hiem an thinh phuc nien", titles)

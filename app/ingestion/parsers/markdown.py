@@ -13,11 +13,30 @@ chunking.py. Pure function; unit-testable without Docker.
 from __future__ import annotations
 
 import re
+import unicodedata
+from typing import NamedTuple
 
 from app.models.schemas import ParsedSection
 
+
+class TitleResult(NamedTuple):
+    """A derived document title plus how it was obtained.
+
+    ``source`` lets the ingestion layer warn when a title came purely from the
+    document's own heading with no product name added from the filename — the
+    case where a brochure whose product name lives only on the cover gets a
+    generic, hard-to-retrieve title (see ``ingest._title_warning``).
+    """
+
+    title: str
+    source: str  # "heading" | "heading+filename" | "filename"
+
 # ATX heading: "## Chương II: ..." -> (level=2, "Chương II: ...")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+# Word tokenizer for title comparison (keeps Vietnamese letters, drops
+# punctuation/whitespace consistently for both the display and normalized forms).
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 # Vietnamese legal markers that may appear as/within a heading.
 _HIER_RE = re.compile(
@@ -35,23 +54,69 @@ def _heading_label(text: str) -> str:
     return text.split(":", 1)[0].strip()
 
 
-def title_from_markdown(md: str, fallback: str) -> str:
-    """Doc title from the first H1 — else the first heading of any level, else
-    ``fallback`` (usually the filename, which loses Vietnamese diacritics).
+def _fold(word: str) -> str:
+    """Diacritic- and case-insensitive form of a word (đ/Đ -> d)."""
+    stripped = "".join(
+        c
+        for c in unicodedata.normalize("NFKD", word)
+        if not unicodedata.combining(c)
+    )
+    return stripped.replace("đ", "d").replace("Đ", "d").lower()
 
-    The any-level fallback matters for PDFs: Docling often classifies a cover
-    title as H2, and a proper diacritics title is what citations display.
+
+def _reconcile_with_filename(heading: str, filename_title: str) -> tuple[str, bool]:
+    """Merge a more complete filename into the heading. Returns (title, merged).
+
+    Real product PDFs often carry a generic first heading ("Bảo hiểm liên kết
+    chung") while the specific product name ("An Khang Như Ý") appears only on
+    the cover artwork and in the filename. When the filename contains the heading
+    as a contiguous run of words plus extra words, the heading alone drops the
+    product name users actually search by — so merge them: keep the heading's
+    text (diacritics intact) for the shared part and splice in the filename's
+    extra words around it. Unrelated or junk filenames (no such overlap) leave
+    the heading untouched (``merged=False``).
     """
-    first_heading: str | None = None
+    file_words = _WORD_RE.findall(filename_title)
+    file_folded = [_fold(w) for w in file_words]
+    head_folded = [_fold(w) for w in _WORD_RE.findall(heading)]
+    if not head_folded or len(file_folded) <= len(head_folded):
+        return heading, False
+    span = len(head_folded)
+    for i in range(len(file_folded) - span + 1):
+        if file_folded[i : i + span] == head_folded:
+            merged = [*file_words[:i], heading, *file_words[i + span :]]
+            return " ".join(merged).strip(), True
+    return heading, False
+
+
+def derive_title(md: str, fallback: str) -> TitleResult:
+    """Derive a document title and report how it was obtained.
+
+    First H1 — else the first heading of any level — is the base; the any-level
+    fallback matters for PDFs (Docling often classifies a cover title as H2).
+    When the filename (``fallback``) is a strictly more complete version of that
+    heading, it is merged in (``_reconcile_with_filename``) so the product name
+    survives. With no heading at all, the filename is used directly.
+    """
+    heading: str | None = None
     for line in md.split("\n"):
         m = _HEADING_RE.match(line)
         if not m:
             continue
         if len(m.group(1)) == 1:
-            return m.group(2).strip()
-        if first_heading is None:
-            first_heading = m.group(2).strip()
-    return first_heading or fallback
+            heading = m.group(2).strip()
+            break
+        if heading is None:
+            heading = m.group(2).strip()
+    if heading is None:
+        return TitleResult(fallback, "filename")
+    title, merged = _reconcile_with_filename(heading, fallback)
+    return TitleResult(title, "heading+filename" if merged else "heading")
+
+
+def title_from_markdown(md: str, fallback: str) -> str:
+    """Convenience wrapper returning just the derived title (see ``derive_title``)."""
+    return derive_title(md, fallback).title
 
 
 def sections_from_markdown(

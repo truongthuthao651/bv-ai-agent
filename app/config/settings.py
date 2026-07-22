@@ -119,6 +119,13 @@ class Settings(BaseSettings):
     # "tính net premium") land around 0.05-0.15 — a higher floor starves the
     # model of usable context and causes false refusals.
     rerank_min_score: float = 0.05
+    # Relative floor: also drop hits scoring below this FRACTION of the top hit's
+    # score. Guards against a tangential chunk from an unrelated document (e.g. a
+    # claims-payout spreadsheet row that happens to share a product name + a
+    # header word) padding the context when there is a strong, coherent top hit.
+    # 0.0 disables it (default — keeps the calibrated absolute-floor behavior and
+    # the RAGAS baseline unchanged; raise it only after re-running run_ragas.py).
+    rerank_min_ratio: float = 0.0
     enable_query_expansion: bool = True
     enable_query_rewrite: bool = True
     # Pre-retrieval typo gate (app/retrieval/spellcheck.py): ask the user to
@@ -142,6 +149,11 @@ class Settings(BaseSettings):
     # company-specific it can't actually know (see HYBRID_SYSTEM_PROMPT).
     # False restores the old behavior: refuse deterministically on zero hits.
     hybrid_fallback_enabled: bool = True
+    # Deterministic product-scope guard (app/retrieval/product_scope.py): when a
+    # query names a specific product but every retrieved document is a DIFFERENT
+    # product (near-identical benefit clauses fool the reranker), refuse instead
+    # of answering from the wrong product. False disables the guard.
+    product_scope_guard_enabled: bool = True
 
     # ---- Chunking ----
     chunk_min_tokens: int = 500
@@ -178,10 +190,18 @@ class Settings(BaseSettings):
     openai_api_key: str = "local-no-auth"
     webui_auth: bool = False
 
-    @field_validator("cors_origins", mode="before")
+    # ---- Departments (phòng ban) ----
+    # Selectable when uploading a document and editable per document. This is the
+    # source of truth for validation; the admin UI (static/index.html) mirrors
+    # the same list in its <select> options — keep the two in sync.
+    departments: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["PTSP", "DP", "DVA"]
+    )
+
+    @field_validator("cors_origins", "departments", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
-        """Allow CORS_ORIGINS to be a comma-separated string in `.env`."""
+        """Allow a comma-separated string in `.env` for list-valued settings."""
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

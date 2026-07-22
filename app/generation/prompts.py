@@ -14,10 +14,16 @@ Any prompt edit must keep all four. Never weaken these.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from urllib.parse import quote
 
 from app.config.settings import settings
 from app.models.schemas import Hit
+
+# Source formats a browser renders inline (scroll/view without downloading), so
+# a citation can link STRAIGHT to the originally uploaded file instead of the
+# reconstructed-from-chunks viewer. Keep in sync with ingest._INLINE_VIEW_EXTS.
+_INLINE_SOURCE_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 # The exact refusal sentence (answering rule 3). SYSTEM_PROMPT embeds it, and
 # the chat endpoint returns it directly when retrieval yields no relevant hits.
@@ -36,7 +42,10 @@ xuất và đánh số bên dưới mỗi câu hỏi.
 
 QUY TẮC BẮT BUỘC (không được vi phạm):
 1. CHỈ trả lời dựa trên nội dung trong phần "Ngữ cảnh". Không dùng kiến thức \
-bên ngoài ngữ cảnh, không suy đoán, không bịa đặt.
+bên ngoài ngữ cảnh, không suy đoán, không bịa đặt. Nếu câu hỏi nêu TÊN một sản \
+phẩm/tài liệu cụ thể mà trong "Ngữ cảnh" KHÔNG có tài liệu đúng tên sản phẩm đó \
+(chỉ có sản phẩm khác), hãy coi là không đủ thông tin và trả lời theo quy tắc 3 \
+— TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác.
 2. Khi dùng thông tin từ một đoạn ngữ cảnh, LUÔN trích dẫn nguồn theo định dạng \
 [Tên tài liệu, mục X], trong đó "Tên tài liệu" và "mục X" lấy từ dòng "Tài liệu: \
 ..." đứng đầu đoạn ngữ cảnh tương ứng.
@@ -150,14 +159,19 @@ def format_sources(hits: list[Hit]) -> str:
     Lists the chunks that were actually in the generation context, keeping the
     same numbering as ``format_context`` so the model's inline ``[n]``-style
     citations stay checkable even when its citation formatting drifts.
-    Duplicate (doc, section) pairs are listed once. The document title is a
-    Markdown link to ``GET /documents/{doc_id}/view`` (a scrollable, rendered
-    view of the source document, deep-linked to the cited section) when the API
-    is reachable from wherever the answer is rendered — Open WebUI (and any
-    Markdown renderer) turns it into a clickable citation.
+    Duplicate (doc, section) pairs are listed once.
+
+    The document title is a Markdown link that opens the source. When the chunk
+    came from an uploaded file the browser can render inline (PDF, image), the
+    link points STRAIGHT at that original file (``GET /documents/{doc_id}/file``),
+    deep-linked to the cited page for PDFs (``#page=N``) — so clicking a citation
+    opens the exact original document, scrollable, the way ChatGPT/Gemini do.
+    Only formats a browser can't render natively (DOCX/XLSX and chunks with no
+    backing upload) fall back to ``/view``, the reconstructed-from-chunks page.
     """
     if not hits:
         return ""
+    base = settings.api_public_base_url
     lines = ["**Nguồn tham khảo:**"]
     seen: set[tuple[str, str]] = set()
     for i, hit in enumerate(hits, start=1):
@@ -166,12 +180,24 @@ def format_sources(hits: list[Hit]) -> str:
         if key in seen:
             continue
         seen.add(key)
-        # Deep-link to the cited section so the viewer scrolls/highlights it.
-        section_q = quote(payload.section_path, safe="")
-        title_link = (
-            f"[{payload.doc_title}]({settings.api_public_base_url}"
-            f"/documents/{payload.doc_id}/view?section={section_q})"
+        src_ext = (
+            PurePosixPath(payload.source_filename).suffix.lower()
+            if payload.source_filename
+            else ""
         )
+        if src_ext in _INLINE_SOURCE_EXTS:
+            # Link directly to the uploaded original; PDFs scroll to the page.
+            source_url = f"{base}/documents/{payload.doc_id}/file"
+            if src_ext == ".pdf" and payload.page is not None:
+                source_url += f"#page={int(payload.page)}"
+        else:
+            # No inline-renderable original: reconstructed viewer, deep-linked
+            # to the cited section (and page, for a native-PDF fallback path).
+            section_q = quote(payload.section_path, safe="")
+            source_url = f"{base}/documents/{payload.doc_id}/view?section={section_q}"
+            if payload.page is not None:
+                source_url += f"&page={int(payload.page)}"
+        title_link = f"[{payload.doc_title}]({source_url})"
         line = f"- [{i}] {title_link} — {payload.section_path}"
         if payload.page is not None:
             line += f" (trang {payload.page})"

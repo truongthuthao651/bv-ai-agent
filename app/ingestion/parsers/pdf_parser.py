@@ -24,7 +24,7 @@ from typing import Any
 from app.config.settings import settings
 from app.ingestion.cleaning import normalize_text, strip_headers_footers
 from app.ingestion.parsers.docx_parser import title_from_path
-from app.ingestion.parsers.markdown import sections_from_markdown, title_from_markdown
+from app.ingestion.parsers.markdown import derive_title, sections_from_markdown
 from app.models.schemas import DocType, ParsedDocument
 
 logger = logging.getLogger(__name__)
@@ -98,11 +98,12 @@ def parse_pdf(
     md = _HTML_COMMENT_RE.sub("", md)
     md = unicodedata.normalize("NFC", md)
     md = strip_headers_footers(normalize_text(md))
-    title = title_from_markdown(md, title_from_path(p))
-    sections = sections_from_markdown(md, doc_title=title)
+    title = derive_title(md, title_from_path(p))
+    sections = sections_from_markdown(md, doc_title=title.title)
     return ParsedDocument(
-        doc_title=title,
+        doc_title=title.title,
         doc_type=doc_type,
         sections=sections,
         source_path=str(p),
+        title_source=title.source,
     )

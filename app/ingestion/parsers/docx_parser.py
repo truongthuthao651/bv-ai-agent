@@ -11,7 +11,7 @@ from __future__ import annotations
 import unicodedata
 from pathlib import Path
 
-from app.ingestion.parsers.markdown import sections_from_markdown, title_from_markdown
+from app.ingestion.parsers.markdown import derive_title, sections_from_markdown
 from app.models.schemas import DocType, ParsedDocument
 
 
@@ -26,13 +26,14 @@ def parse_markdown(
     """Parse a ``.md`` file (already canonical Markdown+LaTeX)."""
     p = Path(path)
     md = unicodedata.normalize("NFC", p.read_text(encoding="utf-8"))
-    title = title_from_markdown(md, title_from_path(p))
-    sections = sections_from_markdown(md, doc_title=title)
+    title = derive_title(md, title_from_path(p))
+    sections = sections_from_markdown(md, doc_title=title.title)
     return ParsedDocument(
-        doc_title=title,
+        doc_title=title.title,
         doc_type=doc_type,
         sections=sections,
         source_path=str(p),
+        title_source=title.source,
     )
 
 
@@ -49,11 +50,12 @@ def parse_docx(
         format="docx",
     )
     md = unicodedata.normalize("NFC", md)
-    title = title_from_markdown(md, title_from_path(p))
-    sections = sections_from_markdown(md, doc_title=title)
+    title = derive_title(md, title_from_path(p))
+    sections = sections_from_markdown(md, doc_title=title.title)
     return ParsedDocument(
-        doc_title=title,
+        doc_title=title.title,
         doc_type=doc_type,
         sections=sections,
         source_path=str(p),
+        title_source=title.source,
     )

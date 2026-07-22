@@ -26,6 +26,7 @@ from app.models.schemas import (
     DocType,
     DocumentDeleteResponse,
     DocumentInfo,
+    DocumentUpdateRequest,
     IngestResponse,
 )
 
@@ -44,6 +45,29 @@ def doc_id_for_filename(filename: str) -> str:
     return str(uuid.uuid5(_DOC_NAMESPACE, filename))
 
 
+def _validate_department(department: str | None) -> str | None:
+    """Normalize/validate a department against ``settings.departments``.
+
+    Empty/whitespace -> None (no department). A non-empty value not in the
+    allowed set is a 400 — the admin UI only offers the configured list, so this
+    only trips on hand-crafted requests.
+    """
+    if department is None:
+        return None
+    department = department.strip()
+    if not department:
+        return None
+    if department not in settings.departments:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Phòng ban không hợp lệ: «{department}». "
+                f"Chọn một trong: {', '.join(settings.departments)}."
+            ),
+        )
+    return department
+
+
 def _safe_filename(name: str | None) -> str:
     """Reduce an uploaded filename to a safe basename.
 
@@ -58,12 +82,45 @@ def _safe_filename(name: str | None) -> str:
     return base
 
 
+# Formats where the product name commonly lives only on cover artwork, so a
+# title auto-taken from the first heading may silently miss it (unlike XLSX /
+# glossary, whose titles come from the file/sheet name the user controls).
+_TITLE_WARN_EXTS = {".pdf", ".docx"}
+
+
+def _title_warning(doc, ext: str, override_given: bool) -> str | None:
+    """Advisory when the auto-title came purely from the document's own heading.
+
+    The title is prepended to every chunk's embed_text and rerank text, so a
+    title missing the product name buries that product's benefit sections for
+    product-scoped queries (see the doc-title/retrieval note). We can't tell
+    whether the heading already contains the product name, so this is a soft
+    nudge, not an error — and it's skipped entirely when the user supplied an
+    explicit title or the filename already contributed extra words.
+    """
+    if override_given or ext.lower() not in _TITLE_WARN_EXTS:
+        return None
+    if doc.title_source != "heading":  # merged-with-filename or non-heading title
+        return None
+    return (
+        f"Tên tài liệu được tự động trích từ tiêu đề trong file: "
+        f"«{doc.doc_title}». Nếu tên này THIẾU tên sản phẩm (ví dụ brochure chỉ "
+        f"ghi tên sản phẩm ở trang bìa), hãy nạp lại và điền đầy đủ tên vào ô "
+        f"«Tên tài liệu» để trợ lý tìm đúng tài liệu khi hỏi theo tên sản phẩm."
+    )
+
+
 def _run_pipeline(
-    path: Path, doc_type: DocType | None, doc_title: str | None = None
+    path: Path,
+    doc_type: DocType | None,
+    doc_title: str | None = None,
+    department: str | None = None,
 ) -> IngestResponse:
     """Synchronous parse -> clean -> chunk -> enrich -> index for one file."""
     doc = route_to_parser(path, doc_type=doc_type)
-    if doc_title:
+    doc.department = department  # None keeps it unset; carried into every chunk
+    override_given = bool(doc_title and doc_title.strip())
+    if override_given:
         # Manual override: real-world PDFs often carry a generic first heading
         # ("SẢN PHẨM BẢO HIỂM LIÊN KẾT CHUNG") while the product name lives in
         # cover artwork. The title feeds embed_text prefixes, reranking, and
@@ -89,6 +146,7 @@ def _run_pipeline(
         doc_type=doc.doc_type,
         n_chunks=n_points,
         n_figures=len(doc.figures),
+        title_warning=_title_warning(doc, path.suffix, override_given),
     )
 
 
@@ -97,8 +155,10 @@ async def ingest_file(
     file: UploadFile = File(...),
     doc_type: DocType | None = Form(default=None),
     doc_title: str | None = Form(default=None),
+    department: str | None = Form(default=None),
 ) -> IngestResponse:
     """Ingest a single document (Markdown/DOCX/XLSX/glossary YAML)."""
+    department = _validate_department(department)
     filename = _safe_filename(file.filename)
     uploads = settings.data_dir / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)
@@ -106,7 +166,9 @@ async def ingest_file(
     dest.write_bytes(await file.read())
 
     try:
-        return await run_in_threadpool(_run_pipeline, dest, doc_type, doc_title)
+        return await run_in_threadpool(
+            _run_pipeline, dest, doc_type, doc_title, department
+        )
     except (NotImplementedError, ValueError) as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 
@@ -124,15 +186,31 @@ _INLINE_VIEW_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
 def _source_path_for(doc_id: str) -> Path | None:
-    """Existing uploads-dir path of a document's source file, or None."""
+    """Existing uploads-dir path of a document's source file, or None.
+
+    Prefer the ``source_filename`` tracked in the Qdrant payload. Documents
+    ingested before that field was tracked have no such payload, so fall back to
+    a deterministic reverse-map: ``doc_id == uuid5(_DOC_NAMESPACE, filename)``,
+    so any upload whose recomputed doc_id matches is this document's original
+    file. This keeps citation links resolving to the real uploaded document
+    (not the chunk-reconstructed rendering) even for older ingests.
+    """
+    uploads = settings.data_dir / "uploads"
+
     filename = indexer.get_document_source_filename(doc_id)
-    if not filename:
-        return None
-    # filename is a stored basename (already sanitized by _safe_filename at
-    # upload time); re-sanitize defensively so a corrupted payload can't escape
-    # the uploads dir.
-    path = settings.data_dir / "uploads" / _safe_filename(filename)
-    return path if path.is_file() else None
+    if filename:
+        # filename is a stored basename (already sanitized by _safe_filename at
+        # upload time); re-sanitize defensively so a corrupted payload can't
+        # escape the uploads dir.
+        path = uploads / _safe_filename(filename)
+        if path.is_file():
+            return path
+
+    if uploads.is_dir():
+        for candidate in sorted(uploads.iterdir()):
+            if candidate.is_file() and doc_id_for_filename(candidate.name) == doc_id:
+                return candidate
+    return None
 
 
 @router.get("/documents/{doc_id}/file")
@@ -172,23 +250,30 @@ def _render_view(doc_id: str, highlight_section: str | None) -> str | None:
 
 
 @router.get("/documents/{doc_id}/view", response_class=HTMLResponse)
-async def view_document(doc_id: str, section: str | None = None):
+async def view_document(
+    doc_id: str, section: str | None = None, page: int | None = None
+):
     """Scrollable rendered view of a source document (citation link target).
 
     For PDFs/images with a backing upload, redirect to ``/file`` so the browser
     renders the real document natively; otherwise rebuild a readable HTML page
-    from the indexed chunks. ``section`` deep-links to a cited section.
+    from the indexed chunks. ``section`` deep-links to a cited section; ``page``
+    scrolls a native PDF straight to the cited page via the ``#page=N`` fragment
+    that browser PDF viewers honor (like ChatGPT/Gemini source previews).
     """
     path = await run_in_threadpool(_source_path_for, doc_id)
     if path is not None and path.suffix.lower() in _INLINE_VIEW_EXTS:
-        return RedirectResponse(url=f"/documents/{doc_id}/file", status_code=307)
+        url = f"/documents/{doc_id}/file"
+        if page is not None and page > 0 and path.suffix.lower() == ".pdf":
+            url += f"#page={int(page)}"
+        return RedirectResponse(url=url, status_code=307)
 
-    page = await run_in_threadpool(_render_view, doc_id, section)
-    if page is None:
+    rendered = await run_in_threadpool(_render_view, doc_id, section)
+    if rendered is None:
         raise HTTPException(
             status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
         )
-    return HTMLResponse(page)
+    return HTMLResponse(rendered)
 
 
 @router.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)
@@ -201,3 +286,80 @@ async def delete_document(doc_id: str) -> DocumentDeleteResponse:
         )
     await run_in_threadpool(indexer.delete_document, doc_id)
     return DocumentDeleteResponse(doc_id=doc_id, deleted_chunks=n_chunks)
+
+
+def _document_info(doc_id: str) -> DocumentInfo | None:
+    """Fresh ``DocumentInfo`` for one document after an edit, or None if gone."""
+    for info in indexer.list_documents():
+        if info.doc_id == doc_id:
+            return info
+    return None
+
+
+def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
+    """Apply a metadata update (renames re-ingest; type/dept are payload-only).
+
+    A ``doc_title`` change re-ingests the document from its source file so the
+    new title flows into embeddings + reranking (it's part of ``embed_text``);
+    when there is no source file to re-ingest from, it degrades to a
+    metadata-only title change (retrieval stays keyed to the old embedded title
+    until the file is re-uploaded). ``doc_type``/``department`` are always a
+    metadata-only ``set_payload`` — neither is embedded.
+    """
+    meta = indexer.get_document_meta(doc_id)
+    if meta is None:
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
+        )
+
+    fields = req.model_fields_set
+    new_type = req.doc_type if "doc_type" in fields and req.doc_type else None
+    set_department = "department" in fields
+    new_dept = _validate_department(req.department) if set_department else None
+
+    new_title = None
+    if "doc_title" in fields and req.doc_title and req.doc_title.strip():
+        new_title = unicodedata.normalize("NFC", req.doc_title.strip())
+    title_changed = new_title is not None and new_title != meta["doc_title"]
+
+    if title_changed:
+        source = _source_path_for(doc_id)
+        if source is not None:
+            # Full re-ingest with the new title (and any type/department change),
+            # preserving the current values for whatever the caller didn't touch.
+            eff_type = new_type or DocType(meta["doc_type"])
+            eff_dept = new_dept if set_department else meta["department"]
+            _run_pipeline(source, eff_type, new_title, eff_dept)
+        else:
+            indexer.set_document_metadata(
+                doc_id,
+                doc_title=new_title,
+                doc_type=(new_type.value if new_type else None),
+                department=new_dept,
+                set_department=set_department,
+            )
+    else:
+        indexer.set_document_metadata(
+            doc_id,
+            doc_type=(new_type.value if new_type else None),
+            department=new_dept,
+            set_department=set_department,
+        )
+
+    info = _document_info(doc_id)
+    if info is None:  # pragma: no cover - would mean the doc vanished mid-update
+        raise HTTPException(
+            status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
+        )
+    return info
+
+
+@router.patch("/documents/{doc_id}", response_model=DocumentInfo)
+async def update_document(doc_id: str, request: DocumentUpdateRequest) -> DocumentInfo:
+    """Edit a document's title, type, and/or department.
+
+    Renaming re-ingests from the source file (slow — it re-parses and re-embeds)
+    so retrieval follows the new name; changing only type/department is an
+    instant metadata update.
+    """
+    return await run_in_threadpool(_apply_update, doc_id, request)

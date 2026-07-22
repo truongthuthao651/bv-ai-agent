@@ -67,35 +67,49 @@ def rerank(
     *,
     top_k: int | None = None,
     min_score: float | None = None,
+    min_ratio: float | None = None,
     score_fn: ScoreFn | None = None,
 ) -> list[Hit]:
     """Cross-encoder rerank of fused hits, cut to top_k.
 
     Each hit is scored against its title/section-prefixed display text (see
-    ``_rerank_text``). Hits scoring below ``min_score`` (normalized 0-1) are
-    dropped so generation never sees context the reranker considers irrelevant;
-    an empty result lets the chat endpoint refuse deterministically instead of
-    trusting the LLM to. Mutates and reuses each ``Hit``'s ``score`` in place
-    (RRF score is no longer needed once reranked). Returns ``[]`` for empty input.
+    ``_rerank_text``). A hit is dropped when it scores below either floor:
+    ``min_score`` (an absolute normalized 0-1 threshold) or ``min_ratio`` times
+    the top hit's score (a relative floor that suppresses weak cross-document
+    chunks padding the context when a strong, coherent top hit exists;
+    ``min_ratio=0`` disables it). Dropping keeps generation from ever seeing
+    context the reranker considers irrelevant; an empty result lets the chat
+    endpoint refuse deterministically instead of trusting the LLM to. Mutates and
+    reuses each ``Hit``'s ``score`` in place (RRF score is no longer needed once
+    reranked). Returns ``[]`` for empty input.
     """
     if not hits:
         return []
     top_k = top_k or settings.rerank_top_k
     if min_score is None:
         min_score = settings.rerank_min_score
+    if min_ratio is None:
+        min_ratio = settings.rerank_min_ratio
     score_fn = score_fn or _flag_rerank_scores
 
     scores = score_fn(query, [_rerank_text(hit) for hit in hits])
     for hit, score in zip(hits, scores):
         hit.score = float(score)
 
-    kept = [hit for hit in hits if hit.score >= min_score]
+    # Effective floor = the stricter of the absolute and (top-relative) floors.
+    top_score = max(hit.score for hit in hits)
+    floor = max(min_score, top_score * min_ratio)
+    kept = [hit for hit in hits if hit.score >= floor]
     if len(kept) < len(hits):
         logger.info(
-            "rerank: dropped %d/%d hits below min_score=%.2f",
+            "rerank: dropped %d/%d hits below floor=%.3f "
+            "(min_score=%.2f, min_ratio=%.2f, top=%.3f)",
             len(hits) - len(kept),
             len(hits),
+            floor,
             min_score,
+            min_ratio,
+            top_score,
         )
     ranked = sorted(kept, key=lambda hit: hit.score, reverse=True)
     return ranked[:top_k]

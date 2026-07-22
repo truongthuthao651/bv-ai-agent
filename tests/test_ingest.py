@@ -6,7 +6,15 @@ Upload-name sanitizing, stable doc-id derivation, and the DELETE endpoint
 
 from __future__ import annotations
 
-from app.api.ingest import _safe_filename, doc_id_for_filename
+import pytest
+
+from app.api.ingest import (
+    _safe_filename,
+    _source_path_for,
+    _validate_department,
+    doc_id_for_filename,
+)
+from app.models.schemas import DocType, DocumentInfo
 
 
 def test_safe_filename_strips_posix_traversal() -> None:
@@ -52,6 +60,55 @@ def test_doc_id_for_filename_is_stable_and_distinct() -> None:
     b = doc_id_for_filename("thuat_ngu.yaml")
     assert a1 == a2
     assert a1 != b
+
+
+# --------------------------------------------------------------------------- #
+# Original-file resolution (citation links serve the uploaded file, not the
+# chunk-reconstructed rendering) — indexer.get_document_source_filename faked
+# --------------------------------------------------------------------------- #
+
+
+def test_source_path_prefers_tracked_filename(tmp_path, monkeypatch) -> None:
+    from app.api import ingest
+    from app.ingestion import indexer
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "quy_tac.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(ingest.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(
+        indexer, "get_document_source_filename", lambda doc_id: "quy_tac.pdf"
+    )
+
+    assert _source_path_for("any-doc-id") == uploads / "quy_tac.pdf"
+
+
+def test_source_path_falls_back_to_doc_id_reverse_map(tmp_path, monkeypatch) -> None:
+    """Docs ingested before source_filename tracking have no payload filename;
+    resolve them by recomputing doc_id from each upload's basename."""
+    from app.api import ingest
+    from app.ingestion import indexer
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "DK-R23_(trang-don).pdf").write_bytes(b"%PDF-1.4\n")
+    (uploads / "other.pdf").write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(ingest.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(indexer, "get_document_source_filename", lambda doc_id: None)
+
+    doc_id = doc_id_for_filename("DK-R23_(trang-don).pdf")
+    assert _source_path_for(doc_id) == uploads / "DK-R23_(trang-don).pdf"
+
+
+def test_source_path_none_when_no_matching_upload(tmp_path, monkeypatch) -> None:
+    from app.api import ingest
+    from app.ingestion import indexer
+
+    (tmp_path / "uploads").mkdir()
+    monkeypatch.setattr(ingest.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(indexer, "get_document_source_filename", lambda doc_id: None)
+
+    assert _source_path_for("no-such-doc") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -144,3 +201,138 @@ def test_get_client_embedded_local_mode(tmp_path, monkeypatch) -> None:
         assert not client.collection_exists("nonexistent")
     finally:
         client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Department validation
+# --------------------------------------------------------------------------- #
+
+
+def test_validate_department_accepts_known_and_normalizes_empty() -> None:
+    assert _validate_department("PTSP") == "PTSP"
+    assert _validate_department("  DVA  ") == "DVA"
+    assert _validate_department(None) is None
+    assert _validate_department("") is None
+    assert _validate_department("   ") is None
+
+
+def test_validate_department_rejects_unknown() -> None:
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        _validate_department("KHONG-CO")
+    assert exc.value.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# PATCH /documents/{doc_id} (metadata edit; rename re-ingests) — indexer faked
+# --------------------------------------------------------------------------- #
+
+
+def _meta(**overrides):
+    base = {
+        "doc_title": "Tên cũ",
+        "doc_type": "policy",
+        "department": None,
+        "source_filename": None,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_patch_metadata_only_updates_type_and_department(monkeypatch) -> None:
+    from app.ingestion import indexer
+
+    monkeypatch.setattr(indexer, "get_document_meta", lambda doc_id: _meta())
+    captured: dict = {}
+    monkeypatch.setattr(
+        indexer,
+        "set_document_metadata",
+        lambda doc_id, **kw: captured.update(kw, doc_id=doc_id),
+    )
+    monkeypatch.setattr(
+        indexer,
+        "list_documents",
+        lambda: [
+            DocumentInfo(
+                doc_id="abc",
+                doc_title="Tên cũ",
+                doc_type="procedure",
+                department="DP",
+                n_chunks=3,
+            )
+        ],
+    )
+
+    resp = _client().patch(
+        "/documents/abc", json={"doc_type": "procedure", "department": "DP"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["doc_type"] == "procedure"
+    assert body["department"] == "DP"
+    # Metadata path was taken (no title change) with department explicitly set.
+    assert captured["doc_id"] == "abc"
+    assert captured["doc_type"] == "procedure"
+    assert captured["department"] == "DP"
+    assert captured["set_department"] is True
+
+
+def test_patch_rename_reingests_from_source(monkeypatch, tmp_path) -> None:
+    from app.api import ingest
+    from app.ingestion import indexer
+
+    monkeypatch.setattr(
+        indexer,
+        "get_document_meta",
+        lambda doc_id: _meta(doc_type="policy", department="PTSP"),
+    )
+    src = tmp_path / "f.md"
+    src.write_text("x")
+    monkeypatch.setattr(ingest, "_source_path_for", lambda doc_id: src)
+
+    called: dict = {}
+
+    def fake_pipeline(path, doc_type, doc_title, department):
+        called.update(
+            path=path, doc_type=doc_type, doc_title=doc_title, department=department
+        )
+
+    monkeypatch.setattr(ingest, "_run_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        indexer,
+        "list_documents",
+        lambda: [
+            DocumentInfo(
+                doc_id="abc",
+                doc_title="Tên mới",
+                doc_type="policy",
+                department="PTSP",
+                n_chunks=5,
+            )
+        ],
+    )
+
+    resp = _client().patch("/documents/abc", json={"doc_title": "Tên mới"})
+    assert resp.status_code == 200
+    # Rename re-ingested from the source file, preserving type + department.
+    assert called["path"] == src
+    assert called["doc_title"] == "Tên mới"
+    assert called["doc_type"] == DocType.POLICY
+    assert called["department"] == "PTSP"
+
+
+def test_patch_unknown_document_is_404(monkeypatch) -> None:
+    from app.ingestion import indexer
+
+    monkeypatch.setattr(indexer, "get_document_meta", lambda doc_id: None)
+    resp = _client().patch("/documents/khong-ton-tai", json={"doc_type": "form"})
+    assert resp.status_code == 404
+
+
+def test_patch_invalid_department_is_400(monkeypatch) -> None:
+    from app.ingestion import indexer
+
+    monkeypatch.setattr(indexer, "get_document_meta", lambda doc_id: _meta())
+    resp = _client().patch("/documents/abc", json={"department": "KHONG-CO"})
+    assert resp.status_code == 400

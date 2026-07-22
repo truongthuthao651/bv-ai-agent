@@ -169,6 +169,62 @@ def test_title_falls_back_to_first_heading_of_any_level() -> None:
     assert title_from_markdown("chỉ có nội dung\n", "fallback") == "fallback"
 
 
+def test_derive_title_reports_source() -> None:
+    from app.ingestion.parsers.markdown import derive_title
+
+    md = "# Bảo hiểm liên kết chung\n\nNội dung.\n"
+    # Pure heading, filename adds nothing -> "heading" (warnable).
+    assert derive_title(md, "scan_001").source == "heading"
+    # Filename supersets the heading -> merged (not warnable).
+    r = derive_title(md, "Bảo hiểm liên kết chung An Khang Như Ý")
+    assert r.source == "heading+filename"
+    assert r.title == "Bảo hiểm liên kết chung An Khang Như Ý"
+    # No heading at all -> filename fallback.
+    assert derive_title("chỉ có nội dung\n", "tên file").source == "filename"
+
+
+def test_title_warning_only_for_heading_only_pdf_docx() -> None:
+    from app.api.ingest import _title_warning
+    from app.models.schemas import DocType, ParsedDocument
+
+    def doc(source: str) -> ParsedDocument:
+        return ParsedDocument(
+            doc_title="Bảo hiểm liên kết chung",
+            doc_type=DocType.POLICY,
+            title_source=source,
+        )
+
+    # PDF whose title is a bare heading, no override -> warn.
+    assert _title_warning(doc("heading"), ".pdf", override_given=False) is not None
+    # Manual override given -> never warn.
+    assert _title_warning(doc("heading"), ".pdf", override_given=True) is None
+    # Filename already contributed the product name -> no warn.
+    assert _title_warning(doc("heading+filename"), ".pdf", False) is None
+    # XLSX/other formats (title from filename/sheet) -> no warn.
+    assert _title_warning(doc("heading"), ".xlsx", False) is None
+
+
+def test_title_merges_product_name_from_filename() -> None:
+    from app.ingestion.parsers.markdown import title_from_markdown
+
+    # Generic cover heading; the product name lives only in the filename.
+    md = "# Bảo hiểm liên kết chung\n\nNội dung.\n"
+    fname = "Bảo hiểm liên kết chung An Khang Như Ý"
+    assert title_from_markdown(md, fname) == "Bảo hiểm liên kết chung An Khang Như Ý"
+
+    # Filename lost diacritics but still supersets the heading: keep the
+    # heading's diacritics for the shared part, append the extra product words.
+    assert (
+        title_from_markdown(md, "bao hiem lien ket chung an khang nhu y")
+        == "Bảo hiểm liên kết chung an khang nhu y"
+    )
+
+    # Unrelated / junk filenames leave the heading untouched.
+    assert title_from_markdown(md, "scan_001") == "Bảo hiểm liên kết chung"
+    # Filename equal to the heading (no extra words) is not a superset.
+    assert title_from_markdown(md, "Bảo hiểm liên kết chung") == "Bảo hiểm liên kết chung"
+
+
 def test_parse_pdf_scanned_raises_clear_error(monkeypatch) -> None:
     from app.ingestion.parsers import pdf_parser
 

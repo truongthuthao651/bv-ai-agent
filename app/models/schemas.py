@@ -73,6 +73,10 @@ class ParsedDocument:
     # Provenance / metadata carried into each chunk's payload.
     source_path: str | None = None
     department: str | None = None
+    # How doc_title was obtained ("heading" | "heading+filename" | "filename"),
+    # or None for parsers whose title isn't heading-derived (XLSX/glossary).
+    # Lets ingestion warn on a title taken purely from a generic heading.
+    title_source: str | None = None
 
 
 @dataclass
@@ -177,6 +181,10 @@ class IngestResponse(BaseModel):
     doc_type: DocType
     n_chunks: int = Field(..., ge=0)
     n_figures: int = Field(default=0, ge=0)
+    # Non-fatal advisory shown after upload — set when the title was auto-taken
+    # from the document's own heading with no product name added, so the user can
+    # re-upload with the "Tên tài liệu" override if the product name is missing.
+    title_warning: str | None = None
 
 
 class DocumentDeleteResponse(BaseModel):
@@ -184,6 +192,22 @@ class DocumentDeleteResponse(BaseModel):
 
     doc_id: str
     deleted_chunks: int = Field(..., ge=0)
+
+
+class DocumentUpdateRequest(BaseModel):
+    """Partial metadata update for ``PATCH /documents/{doc_id}``.
+
+    Every field is optional; only the fields actually present in the request
+    body are applied (the endpoint inspects ``model_fields_set``). Changing
+    ``doc_title`` re-ingests the document from its source file so the new title
+    flows into the embeddings/reranking (title is part of ``embed_text``);
+    ``doc_type``/``department`` are a metadata-only payload update. An empty
+    ``department`` string clears the department.
+    """
+
+    doc_title: str | None = None
+    doc_type: DocType | None = None
+    department: str | None = None
 
 
 class DocumentInfo(BaseModel):

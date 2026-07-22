@@ -162,6 +162,81 @@ def get_document_source_filename(doc_id: str) -> str | None:
     return (records[0].payload or {}).get("source_filename")
 
 
+def get_document_meta(doc_id: str) -> dict[str, Any] | None:
+    """Current title / type / department / source filename for ``doc_id``, or None.
+
+    Read from the document's first stored point (these fields are identical
+    across all of a document's chunks). Used by the metadata-edit endpoint to
+    fill in fields the caller didn't change. None when the document has no points.
+    """
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return None
+    records, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="doc_id", match=models.MatchValue(value=doc_id)
+                )
+            ]
+        ),
+        limit=1,
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not records:
+        return None
+    p = records[0].payload or {}
+    return {
+        "doc_title": p.get("doc_title", ""),
+        "doc_type": p.get("doc_type", "other"),
+        "department": p.get("department"),
+        "source_filename": p.get("source_filename"),
+    }
+
+
+def set_document_metadata(
+    doc_id: str,
+    *,
+    doc_title: str | None = None,
+    doc_type: str | None = None,
+    department: str | None = None,
+    set_department: bool = False,
+) -> None:
+    """Update selected payload fields across all of a document's points.
+
+    Metadata-only: does NOT re-embed. Use for ``doc_type``/``department`` edits
+    (neither is part of ``embed_text``) and for renaming documents that have no
+    source file to re-ingest from. ``department`` is only written when
+    ``set_department`` is True (so ``None`` can explicitly clear it, distinct
+    from "leave unchanged"). No-op when nothing is selected.
+    """
+    payload: dict[str, Any] = {}
+    if doc_title is not None:
+        payload["doc_title"] = doc_title
+    if doc_type is not None:
+        payload["doc_type"] = doc_type
+    if set_department:
+        payload["department"] = department
+    if not payload:
+        return
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return
+    client.set_payload(
+        collection_name=settings.qdrant_collection,
+        payload=payload,
+        points=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="doc_id", match=models.MatchValue(value=doc_id)
+                )
+            ]
+        ),
+    )
+
+
 def get_document_chunks(doc_id: str) -> list[dict[str, Any]]:
     """All stored chunks of a document, ordered by ``chunk_index``.
 

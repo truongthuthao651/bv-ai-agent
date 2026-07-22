@@ -28,6 +28,7 @@ from app.models.schemas import (
     ModelCard,
     ModelList,
 )
+from app.retrieval.product_scope import query_names_absent_product
 from app.retrieval.query_expansion import expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
 from app.retrieval.reranker import rerank
@@ -76,6 +77,27 @@ _META_TASK_PREFIXES = (
 def _is_meta_task(query: str) -> bool:
     """True for Open WebUI meta-requests (title/tags), not real user questions."""
     return query.lstrip().startswith(_META_TASK_PREFIXES)
+
+
+def _static_response(request: ChatCompletionRequest, text: str):
+    """Return a fixed answer as SSE (``stream``) or a plain completion.
+
+    Shared by every deterministic-answer path (meta-task, spellcheck
+    clarification, product-scope refusal) so they all frame the response the
+    same way.
+    """
+    if request.stream:
+        return StreamingResponse(
+            generator.stream_static_answer(text), media_type="text/event-stream"
+        )
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{uuid.uuid4().hex}",
+        created=int(time.time()),
+        model=settings.chat_model,
+        choices=[
+            ChatCompletionChoice(message=ChatMessage(role="assistant", content=text))
+        ],
+    )
 
 
 def _split_request(request: ChatCompletionRequest) -> tuple[str, list[ChatMessage]]:
@@ -152,21 +174,7 @@ async def chat_completions(request: ChatCompletionRequest):
     # Open WebUI meta-tasks (chat titles/tags) skip retrieval entirely.
     if _is_meta_task(query):
         answer = await run_in_threadpool(generator.generate_plain, query)
-        if request.stream:
-            return StreamingResponse(
-                generator.stream_static_answer(answer),
-                media_type="text/event-stream",
-            )
-        return ChatCompletionResponse(
-            id=f"chatcmpl-{uuid.uuid4().hex}",
-            created=int(time.time()),
-            model=settings.chat_model,
-            choices=[
-                ChatCompletionChoice(
-                    message=ChatMessage(role="assistant", content=answer)
-                )
-            ],
-        )
+        return _static_response(request, answer)
 
     # Ask before answering on a likely typo/garbled term (skill note) rather
     # than silently guessing which document the user meant. Skipped when the user
@@ -177,23 +185,28 @@ async def chat_completions(request: ChatCompletionRequest):
         else await run_in_threadpool(maybe_suggest_correction, query)
     )
     if clarification:
-        if request.stream:
-            return StreamingResponse(
-                generator.stream_static_answer(clarification),
-                media_type="text/event-stream",
-            )
-        return ChatCompletionResponse(
-            id=f"chatcmpl-{uuid.uuid4().hex}",
-            created=int(time.time()),
-            model=settings.chat_model,
-            choices=[
-                ChatCompletionChoice(
-                    message=ChatMessage(role="assistant", content=clarification)
-                )
-            ],
-        )
+        return _static_response(request, clarification)
 
     standalone_query, hits = await run_in_threadpool(_retrieve, query, history)
+
+    # Product-scope guard: the query names a specific product, but every
+    # retrieved document is a DIFFERENT product (cross-product benefit clauses
+    # look alike, so the reranker keeps them above its floor). Refuse rather
+    # than answer from — and cite — the wrong product. A hard refusal, not the
+    # hybrid fallback: we DO have documents, just not this product's.
+    if (
+        hits
+        and settings.product_scope_guard_enabled
+        and query_names_absent_product(
+            standalone_query, [hit.payload.doc_title for hit in hits]
+        )
+    ):
+        logger.info(
+            "product-scope guard: named product absent from %d retrieved doc(s); "
+            "refusing",
+            len(hits),
+        )
+        return _static_response(request, REFUSAL_MESSAGE)
 
     # No hit survived the reranker's relevance floor: either fall back to a
     # clearly-labeled general-knowledge answer (settings.hybrid_fallback_enabled)
@@ -201,21 +214,15 @@ async def chat_completions(request: ChatCompletionRequest):
     # hope it refuses.
     if not hits:
         if not settings.hybrid_fallback_enabled:
-            if request.stream:
-                return StreamingResponse(
-                    generator.stream_static_answer(REFUSAL_MESSAGE),
-                    media_type="text/event-stream",
-                )
-            answer = REFUSAL_MESSAGE
-        elif request.stream:
+            return _static_response(request, REFUSAL_MESSAGE)
+        if request.stream:
             return StreamingResponse(
                 generator.stream_hybrid_answer(standalone_query, history),
                 media_type="text/event-stream",
             )
-        else:
-            answer = await run_in_threadpool(
-                generator.generate_hybrid_answer, standalone_query, history
-            )
+        answer = await run_in_threadpool(
+            generator.generate_hybrid_answer, standalone_query, history
+        )
     elif request.stream:
         return StreamingResponse(
             generator.stream_answer(standalone_query, hits, history),

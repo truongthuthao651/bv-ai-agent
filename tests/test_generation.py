@@ -35,7 +35,13 @@ from app.generation.prompts import (
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
 
 
-def _hit(doc_title: str, section_path: str, text: str, page: int | None = None) -> Hit:
+def _hit(
+    doc_title: str,
+    section_path: str,
+    text: str,
+    page: int | None = None,
+    source_filename: str | None = None,
+) -> Hit:
     payload = QdrantPayload(
         doc_id="d1",
         doc_title=doc_title,
@@ -44,6 +50,7 @@ def _hit(doc_title: str, section_path: str, text: str, page: int | None = None) 
         doc_type=DocType.OTHER,
         display_text=text,
         chunk_index=0,
+        source_filename=source_filename,
         ingested_at="2026-01-01T00:00:00+00:00",
     )
     return Hit(point_id="p1", score=1.0, payload=payload)
@@ -197,12 +204,41 @@ def test_format_sources_numbers_match_context_and_dedupes() -> None:
     # Citation links now target the scrollable viewer, deep-linked to the cited
     # section via a URL-encoded ?section= query.
     sec5 = quote("Điều 5", safe="")
-    link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5})"
+    # Page is carried in the link too, so a native PDF opens at the cited page.
+    link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5}&page=3)"
     assert f"- [1] {link} — Điều 5 (trang 3)" in block
     assert "[2]" not in block  # deduped, and numbering keeps context indices
     sec2 = quote("Điều 2", safe="")
     link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2})"
     assert f"- [3] {link2} — Điều 2" in block
+
+
+def test_format_sources_links_pdf_straight_to_original_file_at_page() -> None:
+    # A PDF the browser renders inline: link to the original upload, not the
+    # reconstructed viewer, deep-linked to the cited page via #page=N.
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A", page=7, source_filename="an_tam.pdf")]
+    block = format_sources(hits)
+    base = settings.api_public_base_url
+    link = f"[Quy tắc An Tâm]({base}/documents/d1/file#page=7)"
+    assert f"- [1] {link} — Điều 5 (trang 7)" in block
+    assert "/view?" not in block  # never the rewritten viewer for a PDF original
+
+
+def test_format_sources_links_image_to_original_without_page_fragment() -> None:
+    hits = [_hit("Ảnh scan", "(toàn văn)", "A", page=1, source_filename="scan.png")]
+    block = format_sources(hits)
+    base = settings.api_public_base_url
+    assert f"[Ảnh scan]({base}/documents/d1/file)" in block
+    assert "#page=" not in block  # images have no pages
+
+
+def test_format_sources_falls_back_to_viewer_for_non_inline_original() -> None:
+    # DOCX can't render inline in a browser, so keep the reconstructed viewer.
+    sec = quote("Điều 2", safe="")
+    hits = [_hit("Quy trình", "Điều 2", "A", page=2, source_filename="quy_trinh.docx")]
+    block = format_sources(hits)
+    base = settings.api_public_base_url
+    assert f"{base}/documents/d1/view?section={sec}&page=2" in block
 
 
 def test_format_sources_empty_hits() -> None:
