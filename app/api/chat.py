@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass, field
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -178,18 +179,19 @@ def _advisory_followup_labels(query: str, history: list[ChatMessage]) -> list[st
 
 def _retrieve(
     query: str, history: list[ChatMessage]
-) -> tuple[str, list[Hit], list[str]]:
+) -> tuple[str, list[Hit], list[str], list[Hit]]:
     """Run rewrite -> expansion -> hybrid search -> rerank; each stage is self-gating.
 
     Multi-product (comparison) queries take a per-product search path so each
     named product keeps a fair share of the context budget. Logs per-stage wall
     time so slow answers can be attributed to a stage instead of guessed at.
-    eval/run_ragas.py mirrors this flow stage-by-stage — keep the two in sync
-    when the query flow changes.
+    eval/run_ragas.py drives the SAME pipeline through ``plan_response`` (it no
+    longer re-implements this flow), so retrieval metrics reflect production.
 
-    Returns ``(standalone_query, hits, followup_labels)``; the labels are the
-    carried-over comparison products (empty for ordinary turns) and are only
-    returned so the caller can log/route on them.
+    Returns ``(standalone_query, hits, followup_labels, fused)``: ``fused`` is the
+    pre-rerank hybrid pool (empty on the per-product path), returned so callers
+    can report search-vs-rerank quality; ``labels`` are the carried-over
+    comparison products (empty for ordinary turns).
     """
     # Sticky single-product scope biases rewrite toward one title; skip it when
     # the user already named ≥2 products (comparison / side-by-side questions)
@@ -235,15 +237,17 @@ def _retrieve(
             expand_fn=expand_query,
             labels=explicit_labels or None,
         )
+        # No single fused pool on the per-product path.
+        fused: list[Hit] = []
         # Per-product path folds expand+search+rerank into one timed block.
         t3 = t2
         t4 = time.perf_counter()
     else:
         search_query = expand_query(standalone_query)
         t2 = time.perf_counter()
-        hits = hybrid_search(search_query)
+        fused = hybrid_search(search_query)
         t3 = time.perf_counter()
-        hits = rerank(standalone_query, hits)
+        hits = rerank(standalone_query, fused)
         t4 = time.perf_counter()
 
     if settings.metric_guard_enabled:
@@ -268,47 +272,62 @@ def _retrieve(
         use_multi,
         explicit_labels or "-",
     )
-    return standalone_query, hits, explicit_labels
+    return standalone_query, hits, explicit_labels, fused
 
 
-@router.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
-    """Answer a chat request, grounded only in retrieved document chunks."""
-    # End-to-end timer: everything the user waits for (retrieval + generation)
-    # is measured from here, so the "⏱ Thời gian trả lời" footer and the timing
-    # log reflect the real answer latency, not just token generation.
-    started_at = time.perf_counter()
-    query, history = _split_request(request)
+@dataclass
+class ResponsePlan:
+    """What to answer for one turn, decided by the full pipeline (no I/O left).
 
-    # If this turn just confirms a spellcheck clarification we sent, replay the
-    # original question and skip the gate (so we don't re-ask in a loop).
+    ``kind`` selects how the caller renders it:
+    ``meta`` (a UI title/tag task — caller generates a plain answer),
+    ``clarification`` / ``refusal`` (static ``text``),
+    ``hybrid`` (no-context general-knowledge answer),
+    ``grounded`` (answer from ``hits``; ``advisory`` picks the synthesis prompt).
+
+    Extracting this from the HTTP handler lets ``eval/run_ragas.py`` exercise the
+    EXACT production decision tree — spellcheck gate, product-scope guard,
+    hybrid/refusal fallback, advisory routing — instead of a drifting copy, which
+    is what let false refusals slip past the old eval.
+    """
+
+    kind: str
+    query: str
+    history: list[ChatMessage]
+    standalone_query: str = ""
+    text: str | None = None
+    hits: list[Hit] = field(default_factory=list)
+    fused: list[Hit] = field(default_factory=list)
+    advisory: bool = False
+
+
+def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
+    """Run the full pre-generation decision tree and return what to answer.
+
+    Pure of HTTP/streaming concerns and synchronous, so it runs in one threadpool
+    hop for the endpoint and is called directly, in-process, by the eval harness.
+    """
+    # A bare confirmation of a prior spellcheck prompt replays the original
+    # question and skips the gate (so we don't re-ask in a loop).
     query, history, skip_spellcheck = _resolve_confirmation(query, history)
 
     # Open WebUI meta-tasks (chat titles/tags) skip retrieval entirely.
     if _is_meta_task(query):
-        answer = await run_in_threadpool(generator.generate_plain, query)
-        return _static_response(request, answer)
+        return ResponsePlan(kind="meta", query=query, history=history)
 
-    # Ask before answering on a likely typo/garbled term (skill note) rather
-    # than silently guessing which document the user meant. Skipped when the user
-    # has just confirmed a prior clarification (_resolve_confirmation).
-    clarification = (
-        None
-        if skip_spellcheck
-        else await run_in_threadpool(maybe_suggest_correction, query)
-    )
-    if clarification:
-        return _static_response(request, clarification)
+    # Ask before answering on a likely typo/garbled term rather than guessing.
+    if not skip_spellcheck:
+        clarification = maybe_suggest_correction(query)
+        if clarification:
+            return ResponsePlan(
+                kind="clarification", query=query, history=history, text=clarification
+            )
 
-    standalone_query, hits, carried_labels = await run_in_threadpool(
-        _retrieve, query, history
-    )
+    standalone_query, hits, carried_labels, fused = _retrieve(query, history)
 
-    # Product-scope guard: the query names a specific product, but every
-    # retrieved document is a DIFFERENT product (cross-product benefit clauses
-    # look alike, so the reranker keeps them above its floor). Refuse rather
-    # than answer from — and cite — the wrong product. A hard refusal, not the
-    # hybrid fallback: we DO have documents, just not this product's.
+    # Product-scope guard: the query names a specific product but every retrieved
+    # document is a DIFFERENT product. Refuse rather than answer from — and cite —
+    # the wrong product (a hard refusal: we DO have documents, just not this one).
     if (
         hits
         and settings.product_scope_guard_enabled
@@ -321,25 +340,19 @@ async def chat_completions(request: ChatCompletionRequest):
             "refusing",
             len(hits),
         )
-        return _static_response(
-            request,
-            REFUSAL_MESSAGE,
-            timing=TimingContext(
-                started_at,
-                "refusal",
-                n_hits=len(hits),
-                query_chars=len(standalone_query),
-                stream=request.stream,
-            ),
+        return ResponsePlan(
+            kind="refusal",
+            query=query,
+            history=history,
+            standalone_query=standalone_query,
+            text=REFUSAL_MESSAGE,
+            hits=hits,
+            fused=fused,
         )
 
-    # No hit survived the reranker's relevance floor: either fall back to a
-    # clearly-labeled general-knowledge answer (settings.hybrid_fallback_enabled)
-    # or refuse deterministically — never hand the LLM irrelevant context and
-    # hope it refuses. Scoped follow-ups (prior turn pinned a company product/
-    # document) always refuse: hybrid general knowledge is the wrong answer
-    # shape for "what about that product's skiing exclusion?" when retrieval
-    # missed.
+    # No hit survived the reranker's floor: fall back to a clearly-labeled
+    # general-knowledge answer or refuse deterministically. Scoped follow-ups
+    # (prior turn pinned a company product/document) always refuse.
     if not hits:
         scoped = bool(settings.conversation_scope_enabled and active_scope(history))
         if not settings.hybrid_fallback_enabled or scoped:
@@ -348,74 +361,118 @@ async def chat_completions(request: ChatCompletionRequest):
                     "hybrid fallback skipped: conversation scope is set "
                     "(company-document follow-up)"
                 )
-            return _static_response(
-                request,
-                REFUSAL_MESSAGE,
-                timing=TimingContext(
-                    started_at,
-                    "refusal",
-                    n_hits=0,
-                    query_chars=len(standalone_query),
-                    stream=request.stream,
-                ),
+            return ResponsePlan(
+                kind="refusal",
+                query=query,
+                history=history,
+                standalone_query=standalone_query,
+                text=REFUSAL_MESSAGE,
+                fused=fused,
             )
-        hybrid_timing = TimingContext(
+        return ResponsePlan(
+            kind="hybrid",
+            query=query,
+            history=history,
+            standalone_query=standalone_query,
+            fused=fused,
+        )
+
+    # Advisory / synthesis turn: the documents hold the facts but never the
+    # conclusion asked for ("KH sẽ chọn sản phẩm nào?"), which the strict prompt
+    # refuses outright — same context, a prompt that may reason across it.
+    advisory = settings.advisory_mode_enabled and (
+        bool(carried_labels)
+        or is_advisory_query(query)
+        or is_advisory_query(standalone_query)
+    )
+    if advisory:
+        logger.info("advisory mode: synthesizing over %d hit(s)", len(hits))
+    return ResponsePlan(
+        kind="grounded",
+        query=query,
+        history=history,
+        standalone_query=standalone_query,
+        hits=hits,
+        fused=fused,
+        advisory=advisory,
+    )
+
+
+@router.post("/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    """Answer a chat request, grounded only in retrieved document chunks."""
+    # End-to-end timer: everything the user waits for (retrieval + generation)
+    # is measured from here, so the "⏱ Thời gian trả lời" footer and the timing
+    # log reflect the real answer latency, not just token generation.
+    started_at = time.perf_counter()
+    query, history = _split_request(request)
+    plan = await run_in_threadpool(plan_response, query, history)
+
+    if plan.kind == "meta":
+        answer = await run_in_threadpool(generator.generate_plain, plan.query)
+        return _static_response(request, answer)
+    if plan.kind == "clarification":
+        return _static_response(request, plan.text)
+    if plan.kind == "refusal":
+        return _static_response(
+            request,
+            plan.text,
+            timing=TimingContext(
+                started_at,
+                "refusal",
+                n_hits=len(plan.hits),
+                query_chars=len(plan.standalone_query),
+                stream=request.stream,
+            ),
+        )
+
+    if plan.kind == "hybrid":
+        timing = TimingContext(
             started_at,
             "hybrid",
             n_hits=0,
-            query_chars=len(standalone_query),
+            query_chars=len(plan.standalone_query),
             stream=request.stream,
         )
         if request.stream:
             return StreamingResponse(
                 generator.stream_hybrid_answer(
-                    standalone_query, history, timing=hybrid_timing
+                    plan.standalone_query, plan.history, timing=timing
                 ),
                 media_type="text/event-stream",
             )
         answer = await run_in_threadpool(
             generator.generate_hybrid_answer,
-            standalone_query,
-            history,
-            timing=hybrid_timing,
+            plan.standalone_query,
+            plan.history,
+            timing=timing,
         )
-    else:
-        # Advisory / synthesis turn: the documents hold the facts but never the
-        # conclusion the user is asking for ("KH sẽ chọn sản phẩm nào?"), which
-        # the strict prompt refuses outright. Same retrieved context, a prompt
-        # that may reason across it — see app/generation/advisory.py.
-        advisory = settings.advisory_mode_enabled and (
-            bool(carried_labels)
-            or is_advisory_query(query)
-            or is_advisory_query(standalone_query)
-        )
-        if advisory:
-            logger.info("advisory mode: synthesizing over %d hit(s)", len(hits))
-        grounded_timing = TimingContext(
+    else:  # grounded
+        timing = TimingContext(
             started_at,
-            "advisory" if advisory else "grounded",
-            n_hits=len(hits),
-            query_chars=len(standalone_query),
+            "advisory" if plan.advisory else "grounded",
+            n_hits=len(plan.hits),
+            query_chars=len(plan.standalone_query),
             stream=request.stream,
         )
         if request.stream:
             return StreamingResponse(
                 generator.stream_answer(
-                    standalone_query,
-                    hits,
-                    history,
-                    advisory=advisory,
-                    timing=grounded_timing,
+                    plan.standalone_query,
+                    plan.hits,
+                    plan.history,
+                    advisory=plan.advisory,
+                    timing=timing,
                 ),
                 media_type="text/event-stream",
             )
         answer = await run_in_threadpool(
             generator.generate_answer,
-            standalone_query,
-            hits,
-            history,
-            advisory,
-            timing=grounded_timing,
+            plan.standalone_query,
+            plan.hits,
+            plan.history,
+            plan.advisory,
+            timing=timing,
         )
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",

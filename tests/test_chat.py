@@ -147,7 +147,12 @@ def _post(monkeypatch, query: str, history: list[ChatMessage]) -> bool:
     monkeypatch.setattr(
         chat_module,
         "_retrieve",
-        lambda q, h: (q, [_stub_hit()], chat_module._advisory_followup_labels(q, h)),
+        lambda q, h: (
+            q,
+            [_stub_hit()],
+            chat_module._advisory_followup_labels(q, h),
+            [],
+        ),
     )
     seen: dict[str, str] = {}
 
@@ -198,7 +203,9 @@ def test_company_self_reference_is_not_refused_by_the_product_guard(
     from app.generation import generator
     from app.main import app
 
-    monkeypatch.setattr(chat_module, "_retrieve", lambda q, h: (q, [_stub_hit()], []))
+    monkeypatch.setattr(
+        chat_module, "_retrieve", lambda q, h: (q, [_stub_hit()], [], [])
+    )
     monkeypatch.setattr(
         generator, "_generate_chat", lambda messages, suffix_fn: "Câu trả lời."
     )

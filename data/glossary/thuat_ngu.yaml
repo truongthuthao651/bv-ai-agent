@@ -58,3 +58,199 @@
   synonyms: ["technical interest rate", "lãi suất định phí", "valuation interest rate", "assumed interest rate"]
   symbol: "i"
   definition: "Lãi suất giả định dùng để chiết khấu dòng tiền khi tính phí và dự phòng của hợp đồng bảo hiểm."
+
+# ---- Life-contingency quantities & notation ----
+- term: "lực tử vong"
+  synonyms: ["force of mortality", "cường độ tử vong", "hazard rate"]
+  symbol: "\\mu_x"
+  definition: "Tỷ lệ tử vong tức thời tại tuổi x, là giới hạn của xác suất tử vong trên một khoảng thời gian rất nhỏ."
+
+- term: "kỳ vọng sống"
+  synonyms: ["life expectancy", "tuổi thọ trung bình", "complete expectation of life"]
+  symbol: "\\overset{\\circ}{e}_x"
+  definition: "Số năm sống trung bình còn lại kỳ vọng của một người ở tuổi x."
+
+- term: "số người sống"
+  synonyms: ["number living", "số sống", "survivors"]
+  symbol: "l_x"
+  definition: "Số người còn sống đến tuổi x trong bảng tỷ lệ tử vong, xuất phát từ một nhóm gốc l_0."
+
+- term: "số người chết"
+  synonyms: ["number dying", "số tử vong trong năm"]
+  symbol: "d_x"
+  definition: "Số người chết giữa tuổi x và x+1 trong bảng tỷ lệ tử vong, bằng l_x trừ l_{x+1}."
+
+- term: "niên kim tạm thời"
+  synonyms: ["temporary annuity", "niên kim có kỳ hạn", "term annuity"]
+  symbol: "\\ddot{a}_{x:\\overline{n}|}"
+  definition: "Giá trị hiện tại của dòng chi trả định kỳ trong tối đa n năm khi người được bảo hiểm còn sống."
+
+- term: "niên kim trả sau"
+  synonyms: ["immediate annuity", "niên kim cuối kỳ", "annuity-immediate"]
+  symbol: "a_x"
+  definition: "Niên kim nhân thọ với khoản chi trả vào CUỐI mỗi kỳ khi người được bảo hiểm còn sống."
+
+- term: "niên kim trả trước"
+  synonyms: ["annuity-due", "niên kim đầu kỳ"]
+  symbol: "\\ddot{a}_x"
+  definition: "Niên kim nhân thọ với khoản chi trả vào ĐẦU mỗi kỳ khi người được bảo hiểm còn sống."
+
+- term: "bảo hiểm tử kỳ"
+  synonyms: ["term insurance", "bảo hiểm có thời hạn", "term assurance"]
+  symbol: "A^{1}_{x:\\overline{n}|}"
+  definition: "Bảo hiểm chi trả số tiền bảo hiểm nếu người được bảo hiểm tử vong trong thời hạn n năm."
+
+- term: "bảo hiểm sinh kỳ"
+  synonyms: ["pure endowment", "bảo hiểm sinh tồn"]
+  symbol: "{}_{n}E_x"
+  definition: "Bảo hiểm sinh kỳ thuần túy: chi trả 1 đơn vị vào cuối n năm nếu người được bảo hiểm còn sống đến khi đó."
+
+- term: "bảo hiểm hỗn hợp"
+  synonyms: ["endowment insurance", "bảo hiểm vừa tử kỳ vừa sinh kỳ"]
+  symbol: "A_{x:\\overline{n}|}"
+  definition: "Kết hợp bảo hiểm tử kỳ và sinh kỳ thuần: chi trả khi tử vong trong hạn hoặc khi đáo hạn còn sống."
+
+- term: "số giao hoán"
+  synonyms: ["commutation functions", "hàm giao hoán"]
+  symbol: "D_x, N_x, C_x, M_x"
+  definition: "Các đại lượng trung gian (D_x, N_x, C_x, M_x) giúp rút gọn công thức tính niên kim, bảo hiểm và phí thuần."
+
+# ---- Pricing & principles ----
+- term: "nguyên tắc cân bằng"
+  synonyms: ["equivalence principle", "nguyên lý tương đương", "actuarial equivalence"]
+  symbol: null
+  definition: "Nguyên tắc định phí theo đó giá trị hiện tại kỳ vọng của phí thuần bằng giá trị hiện tại kỳ vọng của quyền lợi."
+
+- term: "phụ phí"
+  synonyms: ["loading", "expense loading", "phần phụ phí", "phí phụ trội"]
+  symbol: null
+  definition: "Phần cộng thêm vào phí thuần để bù đắp chi phí khai thác, quản lý và lợi nhuận, tạo thành phí gộp."
+
+- term: "định phí"
+  synonyms: ["premium calculation", "pricing", "tính phí bảo hiểm", "actuarial pricing"]
+  symbol: null
+  definition: "Quá trình tính phí bảo hiểm dựa trên xác suất tử vong, lãi suất kỹ thuật và chi phí."
+
+- term: "giá trị hiện tại"
+  synonyms: ["present value", "hiện giá", "PV"]
+  symbol: "PV"
+  definition: "Giá trị quy đổi về thời điểm hiện tại của một hoặc nhiều dòng tiền tương lai bằng cách chiết khấu."
+
+- term: "giá trị hiện tại kỳ vọng"
+  synonyms: ["expected present value", "EPV", "hiện giá kỳ vọng"]
+  symbol: "EPV"
+  definition: "Giá trị hiện tại của một dòng tiền có tính đến cả chiết khấu theo lãi suất và xác suất xảy ra."
+
+# ---- Policy features & benefits ----
+- term: "số tiền bảo hiểm"
+  synonyms: ["sum assured", "sum insured", "mệnh giá bảo hiểm", "STBH"]
+  symbol: "SA"
+  definition: "Số tiền công ty cam kết chi trả khi xảy ra sự kiện bảo hiểm theo hợp đồng."
+
+- term: "quyền lợi tử vong"
+  synonyms: ["death benefit", "quyền lợi bảo hiểm tử vong"]
+  symbol: null
+  definition: "Khoản chi trả cho người thụ hưởng khi người được bảo hiểm tử vong trong thời hạn hợp đồng."
+
+- term: "quyền lợi đáo hạn"
+  synonyms: ["maturity benefit", "quyền lợi khi đáo hạn"]
+  symbol: null
+  definition: "Khoản chi trả khi hợp đồng đáo hạn và người được bảo hiểm còn sống."
+
+- term: "giá trị hoàn lại"
+  synonyms: ["surrender value", "cash value", "giá trị giải ước", "giá trị tiền mặt"]
+  symbol: null
+  definition: "Số tiền bên mua bảo hiểm được nhận khi chấm dứt hợp đồng trước hạn."
+
+- term: "thời gian gia hạn đóng phí"
+  synonyms: ["grace period", "thời gian ân hạn"]
+  symbol: null
+  definition: "Khoảng thời gian sau ngày đến hạn đóng phí mà hợp đồng vẫn giữ hiệu lực dù chưa đóng phí."
+
+- term: "thời gian cân nhắc"
+  synonyms: ["free-look period", "thời gian xem xét", "cooling-off period"]
+  symbol: null
+  definition: "Khoảng thời gian đầu hợp đồng cho phép bên mua hủy hợp đồng và được hoàn phí đã đóng."
+
+- term: "khôi phục hiệu lực hợp đồng"
+  synonyms: ["reinstatement", "phục hồi hiệu lực"]
+  symbol: null
+  definition: "Việc khôi phục một hợp đồng đã mất hiệu lực do không đóng phí, theo các điều kiện quy định."
+
+- term: "loại trừ trách nhiệm bảo hiểm"
+  synonyms: ["exclusions", "điều khoản loại trừ", "trường hợp không chi trả"]
+  symbol: null
+  definition: "Các trường hợp mà công ty không chi trả quyền lợi bảo hiểm theo quy định của hợp đồng."
+
+- term: "thời hạn hợp đồng"
+  synonyms: ["policy term", "thời hạn bảo hiểm", "policy duration"]
+  symbol: "n"
+  definition: "Khoảng thời gian hợp đồng bảo hiểm có hiệu lực."
+
+- term: "tuổi định phí"
+  synonyms: ["issue age", "tuổi phát hành", "entry age"]
+  symbol: "x"
+  definition: "Tuổi của người được bảo hiểm tại thời điểm phát hành hợp đồng, dùng làm cơ sở tính phí."
+
+# ---- Parties ----
+- term: "người được bảo hiểm"
+  synonyms: ["insured", "life assured", "người được bảo vệ"]
+  symbol: null
+  definition: "Người mà tính mạng, sức khỏe của họ là đối tượng của hợp đồng bảo hiểm."
+
+- term: "bên mua bảo hiểm"
+  synonyms: ["policyholder", "chủ hợp đồng", "người tham gia bảo hiểm"]
+  symbol: null
+  definition: "Tổ chức hoặc cá nhân giao kết hợp đồng và đóng phí bảo hiểm."
+
+- term: "người thụ hưởng"
+  synonyms: ["beneficiary", "người nhận quyền lợi"]
+  symbol: null
+  definition: "Người được nhận quyền lợi bảo hiểm theo chỉ định của bên mua bảo hiểm."
+
+# ---- Experience & risk ----
+- term: "tỷ lệ hủy hợp đồng"
+  synonyms: ["lapse rate", "tỷ lệ hủy bỏ", "tỷ lệ chấm dứt hợp đồng"]
+  symbol: null
+  definition: "Tỷ lệ hợp đồng chấm dứt trước hạn do không tiếp tục đóng phí trong một kỳ."
+
+- term: "tỷ lệ duy trì hợp đồng"
+  synonyms: ["persistency", "tỷ lệ tái tục"]
+  symbol: null
+  definition: "Tỷ lệ hợp đồng còn duy trì hiệu lực sau một khoảng thời gian nhất định."
+
+- term: "biên khả năng thanh toán"
+  synonyms: ["solvency margin", "biên thanh toán"]
+  symbol: null
+  definition: "Phần chênh lệch giữa tài sản và nợ mà doanh nghiệp bảo hiểm phải duy trì để bảo đảm khả năng chi trả."
+
+- term: "tỷ lệ bồi thường"
+  synonyms: ["claims ratio", "loss ratio", "tỷ lệ tổn thất"]
+  symbol: null
+  definition: "Tỷ lệ giữa số tiền bồi thường/chi trả quyền lợi trên phí bảo hiểm thu được; KHÁC với lãi suất hay phí."
+
+# ---- Universal-life account mechanics ----
+- term: "giá trị tài khoản hợp đồng"
+  synonyms: ["account value", "giá trị tài khoản", "policy account value"]
+  symbol: null
+  definition: "Số dư tài khoản của hợp đồng, tăng theo phí phân bổ và lãi công bố, giảm theo các khoản phí khấu trừ."
+
+- term: "phí ban đầu"
+  synonyms: ["initial charge", "premium charge", "phí tính trên phí đóng"]
+  symbol: null
+  definition: "Khoản phí khấu trừ trên phí bảo hiểm trước khi phân bổ vào giá trị tài khoản hợp đồng."
+
+- term: "phí quản lý hợp đồng"
+  synonyms: ["policy administration charge", "phí hành chính"]
+  symbol: null
+  definition: "Khoản phí định kỳ khấu trừ để bù đắp chi phí quản lý, duy trì hợp đồng."
+
+- term: "phí bảo hiểm rủi ro"
+  synonyms: ["cost of insurance", "COI", "phí rủi ro"]
+  symbol: null
+  definition: "Khoản phí khấu trừ hằng kỳ để chi trả cho phần bảo vệ rủi ro tử vong/thương tật của hợp đồng."
+
+- term: "lãi suất cam kết"
+  synonyms: ["guaranteed interest rate", "lãi suất bảo đảm", "lãi suất tối thiểu"]
+  symbol: null
+  definition: "Mức lãi suất tối thiểu công ty cam kết cộng vào giá trị tài khoản; KHÁC với tỷ lệ bồi thường hay tỷ lệ chi trả quyền lợi."

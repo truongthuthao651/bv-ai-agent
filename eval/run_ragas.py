@@ -1,8 +1,10 @@
 """Evaluation harness for the golden set (eval/golden_set.jsonl).
 
-Scores the production query flow (glossary expansion -> hybrid search ->
-rerank -> generation; mirrors ``app.api.chat._retrieve`` — keep them in sync)
-with RAGAS-style metrics, fully offline:
+Scores the production query flow with RAGAS-style metrics, fully offline. It
+drives the SAME decision tree the chat endpoint uses (``app.api.chat.plan_response``
+— spellcheck gate, product-scope guard, hybrid/refusal fallback, advisory
+routing), so a false refusal or a wrong-product refusal shows up here instead of
+slipping past a drifting copy of the flow:
 
 * **Context precision/recall** — deterministic, from the golden set's labeled
   ``source_doc``/``source_section``: was the right document (and section)
@@ -47,19 +49,11 @@ import httpx
 # Make `app` importable whether run from the repo root or eval/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.api.chat import plan_response  # noqa: E402
 from app.api.ingest import doc_id_for_filename  # noqa: E402
 from app.config.settings import settings  # noqa: E402
 from app.generation import generator  # noqa: E402
 from app.generation.prompts import REFUSAL_MESSAGE  # noqa: E402
-from app.models.schemas import Hit  # noqa: E402
-from app.retrieval.comparison import (  # noqa: E402
-    is_multi_product_query,
-    retrieve_multi_product,
-)
-from app.retrieval.metric_guard import filter_metric_mismatch  # noqa: E402
-from app.retrieval.query_expansion import expand_query  # noqa: E402
-from app.retrieval.reranker import rerank  # noqa: E402
-from app.retrieval.retriever import hybrid_search  # noqa: E402
 
 _GOLDEN_PATH = Path(__file__).resolve().parent / "golden_set.jsonl"
 _RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -190,6 +184,10 @@ class Row:
     doc_hit: bool | None = None
     section_hit: bool | None = None
     n_hits: int = 0
+    # Which branch of the production decision tree fired (grounded / advisory /
+    # hybrid / refusal / clarification) — records guard behaviour the old
+    # inline flow never exercised.
+    plan_kind: str | None = None
     answer: str | None = None
     checks: dict[str, bool | None] = field(default_factory=dict)
     judge_correct: bool | None = None
@@ -223,7 +221,13 @@ def _judge(prompt: str, key: str) -> bool | None:
 def evaluate_item(
     item: GoldenItem, *, generate: bool = True, judge: bool = True
 ) -> Row:
-    """Run one golden question through retrieval (+ generation + judge)."""
+    """Run one golden question through the REAL pipeline (+ generation + judge).
+
+    The golden set has no chat history, so ``plan_response`` runs the exact
+    production decision tree for a fresh question: glossary expansion, hybrid
+    search, rerank, metric guard, the product-scope guard, and the
+    hybrid/refusal/advisory routing. ``plan.kind`` records which branch fired.
+    """
     row = Row(id=item.id, category=item.category)
     expected_doc_id = (
         doc_id_for_filename(source_filename(item.source_doc))
@@ -232,34 +236,15 @@ def evaluate_item(
     )
 
     t0 = time.perf_counter()
-    # No chat history in the golden set, so the standalone rewrite is a no-op
-    # and deliberately skipped (mirrors app.api.chat._retrieve gating).
-    # Multi-product questions use the same per-product path as chat._retrieve.
-    if settings.comparison_retrieval_enabled and is_multi_product_query(
-        item.question
-    ):
-
-        def _rerank_cap(q: str, raw: list[Hit], top_k: int) -> list[Hit]:
-            return rerank(q, raw, top_k=top_k)
-
-        fused = []  # no single fused pool on this path
-        hits = retrieve_multi_product(
-            item.question,
-            search_fn=hybrid_search,
-            rerank_fn=_rerank_cap,
-            expand_fn=expand_query,
-        )
-    else:
-        fused = hybrid_search(expand_query(item.question))
-        hits = rerank(item.question, fused)
-    if settings.metric_guard_enabled:
-        hits = filter_metric_mismatch(item.question, hits)
+    plan = plan_response(item.question, [])
     row.retrieval_ms = (time.perf_counter() - t0) * 1000
+    row.plan_kind = plan.kind
+    hits = plan.hits
     row.n_hits = len(hits)
 
     if expected_doc_id is not None:
         row.fused_doc_rank = doc_rank(
-            [h.payload.doc_id for h in fused], expected_doc_id
+            [h.payload.doc_id for h in plan.fused], expected_doc_id
         )
         row.reranked_doc_rank = doc_rank(
             [h.payload.doc_id for h in hits], expected_doc_id
@@ -275,15 +260,17 @@ def evaluate_item(
         return row
 
     t1 = time.perf_counter()
-    # Mirror the chat endpoint: zero surviving hits either fall back to a
-    # labeled general-knowledge answer or refuse deterministically, matching
-    # settings.hybrid_fallback_enabled (app/api/chat.py).
-    if hits:
-        answer = generator.generate_answer(item.question, hits)
-    elif settings.hybrid_fallback_enabled:
-        answer = generator.generate_hybrid_answer(item.question)
-    else:
-        answer = REFUSAL_MESSAGE
+    # Render the plan the same way the endpoint does. A clarification (spellcheck
+    # gate fired on a well-formed golden question) or a refusal both count as
+    # "did not answer" for the rule checks below.
+    if plan.kind == "grounded":
+        answer = generator.generate_answer(
+            plan.standalone_query, hits, advisory=plan.advisory
+        )
+    elif plan.kind == "hybrid":
+        answer = generator.generate_hybrid_answer(plan.standalone_query)
+    else:  # refusal / clarification
+        answer = plan.text or REFUSAL_MESSAGE
     row.generation_ms = (time.perf_counter() - t1) * 1000
     row.answer = answer
     row.checks = check_answer(item, answer)
@@ -363,6 +350,69 @@ def _print_summary(title: str, summary: dict[str, Any]) -> None:
             print(f"  {key:<24} {value}")
 
 
+def did_not_answer(row: Row) -> bool:
+    """True when an answerable question was NOT answered (refused or clarified).
+
+    Catches both the guard-level refusals/clarifications (visible from
+    ``plan_kind`` even in retrieval-only mode) and a model/hybrid refusal in the
+    generated text — the two ways a false refusal can happen.
+    """
+    if row.plan_kind in ("refusal", "clarification"):
+        return True
+    return bool(row.answer and is_refusal(row.answer))
+
+
+def leaked_answer(row: Row) -> bool:
+    """True when a refusal-category question produced a real answer instead.
+
+    A refusal question refuses either at a guard (``plan_kind == 'refusal'``) or,
+    when retrieval finds nothing, at generation via the hybrid prompt. So a
+    definite leak is: retrieval surfaced a document (``plan_kind == 'grounded'``),
+    or a generated answer exists and is not the refusal. A ``hybrid`` plan with no
+    generated answer yet (``--retrieval-only``) is UNDECIDED — not a leak.
+    """
+    if row.answer is not None:
+        return not is_refusal(row.answer) and row.plan_kind not in (
+            "refusal",
+            "clarification",
+        )
+    return row.plan_kind == "grounded"
+
+
+def gate(rows: list[Row]) -> dict[str, list[str]]:
+    """Hard pass/fail signals for CI (see ``--strict``).
+
+    ``false_refusals``: answerable questions the pipeline did not answer.
+    ``leaked_refusals``: refusal-category questions that got an answer instead.
+    """
+    answerable = [r for r in rows if r.category != "refusal"]
+    refusal_rows = [r for r in rows if r.category == "refusal"]
+    return {
+        "false_refusals": [r.id for r in answerable if did_not_answer(r)],
+        "leaked_refusals": [r.id for r in refusal_rows if leaked_answer(r)],
+    }
+
+
+def _print_gate(rows: list[Row]) -> bool:
+    """Print the pass/fail gate; return True when it FAILED."""
+    result = gate(rows)
+    n_answerable = sum(1 for r in rows if r.category != "refusal")
+    n_refusal = sum(1 for r in rows if r.category == "refusal")
+    print("\n== GATE ==")
+    print(
+        f"  false refusals (answerable not answered): "
+        f"{len(result['false_refusals'])}/{n_answerable}"
+    )
+    for rid in result["false_refusals"]:
+        print(f"    - {rid}")
+    print(
+        f"  leaked refusals (should refuse, answered): {len(result['leaked_refusals'])}/{n_refusal}"
+    )
+    for rid in result["leaked_refusals"]:
+        print(f"    - {rid}")
+    return bool(result["false_refusals"] or result["leaked_refusals"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -378,6 +428,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--no-judge", action="store_true", help="skip the LLM judge (keep generation)"
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero if the gate fails (a false refusal or a leaked "
+        "refusal) — for CI",
     )
     parser.add_argument("--out", type=Path, default=None, help="results JSON path")
     args = parser.parse_args()
@@ -401,6 +457,7 @@ def main() -> None:
     _print_summary("overall", summarize(rows))
     for category in sorted({r.category for r in rows}):
         _print_summary(category, summarize([r for r in rows if r.category == category]))
+    gate_failed = _print_gate(rows)
 
     out_path = args.out or _RESULTS_DIR / f"run-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -416,12 +473,16 @@ def main() -> None:
             category: summarize([r for r in rows if r.category == category])
             for category in sorted({r.category for r in rows})
         },
+        "gate": gate(rows),
         "rows": [asdict(r) for r in rows],
     }
     out_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"\nResults written to {out_path}")
+
+    if args.strict and gate_failed:
+        raise SystemExit("GATE FAILED: see the == GATE == section above.")
 
 
 if __name__ == "__main__":

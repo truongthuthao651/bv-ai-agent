@@ -39,3 +39,20 @@ def _neutralize_query_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(settings, "show_response_time", False)
     monkeypatch.setattr(settings, "query_timing_log_enabled", False)
+
+
+@pytest.fixture(autouse=True)
+def _no_implicit_index_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep product/comparison helpers from implicitly reading the live Qdrant.
+
+    ``named_product_labels`` / ``is_multi_product_query`` load indexed titles when
+    the caller passes none, so their result would otherwise depend on whether the
+    embedded store happens to be readable during the test run (it is when the API
+    is stopped for an eval, locked when it's running). Pinning the loaders to
+    empty makes those tests hermetic — they exercise the cue-span fallback; tests
+    that need real titles inject them explicitly.
+    """
+    from app.retrieval import comparison, product_scope
+
+    monkeypatch.setattr(product_scope, "_load_indexed_titles", lambda: [])
+    monkeypatch.setattr(comparison, "_load_indexed_docs", lambda: [])
