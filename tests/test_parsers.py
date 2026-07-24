@@ -222,7 +222,9 @@ def test_title_merges_product_name_from_filename() -> None:
     # Unrelated / junk filenames leave the heading untouched.
     assert title_from_markdown(md, "scan_001") == "Bảo hiểm liên kết chung"
     # Filename equal to the heading (no extra words) is not a superset.
-    assert title_from_markdown(md, "Bảo hiểm liên kết chung") == "Bảo hiểm liên kết chung"
+    assert (
+        title_from_markdown(md, "Bảo hiểm liên kết chung") == "Bảo hiểm liên kết chung"
+    )
 
 
 def test_parse_pdf_scanned_raises_clear_error(monkeypatch) -> None:

@@ -437,28 +437,87 @@ def test_rerank_relative_floor_zero_is_noop() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_product_guard_refuses_when_named_product_absent() -> None:
-    # Asks about "An Thịnh Phúc Niên"; only a DIFFERENT product was retrieved.
-    titles = ["Bảo hiểm liên kết chung An Khang Như Ý", "Từ điển thuật ngữ"]
+def test_product_guard_refuses_when_named_product_is_a_different_indexed_one() -> None:
+    # Query names An Khang (a product the index contains) but only a DIFFERENT
+    # indexed product was retrieved -> refuse rather than answer from the wrong
+    # product's near-identical benefit clauses.
+    known = [
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+        "Bảo hiểm hỗn hợp An Lộc Vững Bền",
+    ]
+    hits = ["Bảo hiểm hỗn hợp An Lộc Vững Bền"]
     assert query_names_absent_product(
-        "Liệt kê chi tiết quyền lợi của bảo hiểm liên kết an thịnh phúc niên",
-        titles,
+        "quyền lợi của bảo hiểm an khang như ý", hits, known_titles=known
+    )
+
+
+def test_product_guard_no_longer_refuses_a_product_absent_from_the_index() -> None:
+    # CONTRACT (C1 fix): the guard used to invent a product from any noun after a
+    # cue phrase, which false-refused ordinary questions. It now fires only for
+    # products the index actually contains, so a product absent from the whole
+    # corpus (deleted / not yet ingested) is left to the system prompt's rule-1
+    # wrong-product refusal rather than a deterministic block here.
+    known = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    assert not query_names_absent_product(
+        "quyền lợi của bảo hiểm An Thịnh Phúc Niên", known, known_titles=known
     )
 
 
 def test_product_guard_allows_when_named_product_present() -> None:
-    titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    known = ["Bảo hiểm liên kết chung An Khang Như Ý"]
     assert not query_names_absent_product(
-        "quyền lợi của bảo hiểm an khang như ý", titles
+        "quyền lợi của bảo hiểm an khang như ý", known, known_titles=known
     )
 
 
 def test_product_guard_ignores_generic_questions() -> None:
     # No specific product is named -> never blocks the general/topical question.
     titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
-    assert not query_names_absent_product("bảo hiểm nhân thọ là gì", titles)
-    assert not query_names_absent_product("bảo hiểm hỗn hợp gồm những gì", titles)
-    assert not query_names_absent_product("quyền lợi tử vong là gì", titles)
+    assert not query_names_absent_product(
+        "bảo hiểm nhân thọ là gì", titles, known_titles=titles
+    )
+    assert not query_names_absent_product(
+        "bảo hiểm hỗn hợp gồm những gì", titles, known_titles=titles
+    )
+    assert not query_names_absent_product(
+        "quyền lợi tử vong là gì", titles, known_titles=titles
+    )
+
+
+def test_product_guard_ignores_common_nouns_after_a_cue_phrase() -> None:
+    # Regression (C1): the earlier guard read the noun after "bảo hiểm/sản phẩm"
+    # as a product name, so ordinary questions fabricated a product ("bước",
+    # "giấy tờ", "lâu") absent from every title and hard-refused. A common noun
+    # does not strongly match any product title, so it must never refuse when the
+    # relevant document was actually retrieved.
+    known = [
+        "Quy trình Giải quyết Quyền lợi Bảo hiểm (bản giả định)",
+        "Quy tắc, Điều khoản Sản phẩm Bảo hiểm tử vong và thương tật nghiêm trọng",
+        "Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)",
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+    ]
+    process = ["Quy trình Giải quyết Quyền lợi Bảo hiểm (bản giả định)"]
+    policy = [
+        "Quy tắc, Điều khoản Sản phẩm Bảo hiểm tử vong và thương tật nghiêm trọng"
+    ]
+    reserve = ["Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)"]
+    cases = [
+        ("Quy trình giải quyết quyền lợi bảo hiểm gồm những bước nào?", process),
+        ("Hồ sơ yêu cầu giải quyết quyền lợi bảo hiểm gồm những giấy tờ gì?", process),
+        (
+            "Thời gian cân nhắc được quy định thế nào trong quy tắc, "
+            "điều khoản sản phẩm?",
+            policy,
+        ),
+        (
+            "Dự phòng toán học theo phương pháp phí thuần cho hợp đồng bảo hiểm "
+            "trọn đời được tính thế nào?",
+            reserve,
+        ),
+        ("Thời gian chờ của hợp đồng bảo hiểm là bao lâu?", policy),
+    ]
+    for query, hits in cases:
+        assert not query_names_absent_product(query, hits, known_titles=known), query
 
 
 def test_product_guard_ignores_our_own_company_name() -> None:
@@ -472,7 +531,7 @@ def test_product_guard_ignores_our_own_company_name() -> None:
         "bảo việt life có những sản phẩm nào",
         "san pham bao hiem cua bao viet life",  # no diacritics
     ):
-        assert not query_names_absent_product(query, titles), query
+        assert not query_names_absent_product(query, titles, known_titles=titles), query
 
 
 def test_product_guard_does_not_cross_a_clause_boundary() -> None:
@@ -486,22 +545,35 @@ def test_product_guard_does_not_cross_a_clause_boundary() -> None:
     assert all("cong" not in span for span in spans)
 
 
-def test_product_guard_still_refuses_a_genuinely_absent_product() -> None:
-    # The guard's original purpose must survive the company-name fix.
-    titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
-    assert query_names_absent_product(
-        "quyền lợi của bảo hiểm An Thịnh Phúc Niên của Bảo Việt Life", titles
+def test_product_guard_absent_product_with_company_self_reference() -> None:
+    # Under the C1 title-resolution contract a product absent from the index is
+    # no longer deterministically refused (see
+    # test_product_guard_no_longer_refuses_a_product_absent_from_the_index); the
+    # system prompt's rule 1 handles the wrong-product case instead. The company
+    # self-reference must still not be parsed as a product either way.
+    known = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    assert not query_names_absent_product(
+        "quyền lợi của bảo hiểm An Thịnh Phúc Niên của Bảo Việt Life",
+        known,
+        known_titles=known,
     )
 
 
 def test_product_guard_matches_without_diacritics() -> None:
-    titles = ["SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"]
+    known = [
+        "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền",
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+    ]
+    loc = ["SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"]
     # No-diacritics typing still lines up with the diacritic title (present).
     assert not query_names_absent_product(
-        "bao hiem loc vung ben co quyen loi gi", titles
+        "bao hiem loc vung ben co quyen loi gi", loc, known_titles=known
     )
-    # A different, absent product -> refuse.
-    assert query_names_absent_product("bao hiem an thinh phuc nien", titles)
+    # Names a different indexed product (An Khang) with no diacritics while only
+    # Lộc Vững Bền was retrieved -> refuse.
+    assert query_names_absent_product(
+        "bao hiem an khang nhu y co quyen loi gi", loc, known_titles=known
+    )
 
 
 def test_named_product_labels_extracts_both_comparison_products() -> None:
@@ -540,13 +612,18 @@ def test_informal_nicknames_resolve_via_indexed_titles() -> None:
 def test_product_guard_allows_partial_comparison_hit() -> None:
     # Comparison names A and B; only A was retrieved → do NOT refuse (generation
     # can still answer A and say B is missing). Refuse only when neither hits.
-    titles = ["Bảo hiểm hỗn hợp An Lộc Vững Bền"]
+    known = [
+        "Bảo hiểm hỗn hợp An Lộc Vững Bền",
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+    ]
     q = (
         "so sánh bảo hiểm hỗn hợp An Lộc Vững Bền và "
         "bảo hiểm liên kết chung An Khang Như Ý"
     )
-    assert not query_names_absent_product(q, titles)
-    assert query_names_absent_product(q, ["Từ điển thuật ngữ"])
+    assert not query_names_absent_product(
+        q, ["Bảo hiểm hỗn hợp An Lộc Vững Bền"], known_titles=known
+    )
+    assert query_names_absent_product(q, ["Từ điển thuật ngữ"], known_titles=known)
 
 
 # --------------------------------------------------------------------------- #
@@ -701,9 +778,7 @@ def test_is_multi_product_query() -> None:
         "so sánh bảo hiểm An Lộc Vững Bền và bảo hiểm An Khang Như Ý",
         titles=[],
     )
-    assert not is_multi_product_query(
-        "quyền lợi bảo hiểm An Khang Như Ý", titles=[]
-    )
+    assert not is_multi_product_query("quyền lợi bảo hiểm An Khang Như Ý", titles=[])
 
 
 # --------------------------------------------------------------------------- #

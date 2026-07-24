@@ -31,6 +31,7 @@ class TitleResult(NamedTuple):
     title: str
     source: str  # "heading" | "heading+filename" | "filename"
 
+
 # ATX heading: "## Chương II: ..." -> (level=2, "Chương II: ...")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 
@@ -57,9 +58,7 @@ def _heading_label(text: str) -> str:
 def _fold(word: str) -> str:
     """Diacritic- and case-insensitive form of a word (đ/Đ -> d)."""
     stripped = "".join(
-        c
-        for c in unicodedata.normalize("NFKD", word)
-        if not unicodedata.combining(c)
+        c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c)
     )
     return stripped.replace("đ", "d").replace("Đ", "d").lower()
 

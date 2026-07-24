@@ -261,9 +261,7 @@ def _product_span(tokens: list[str]) -> list[str]:
     return max(spans, key=len)
 
 
-def named_product_labels(
-    query: str, *, titles: list[str] | None = None
-) -> list[str]:
+def named_product_labels(query: str, *, titles: list[str] | None = None) -> list[str]:
     """Surface-form product labels named in ``query``, in appearance order.
 
     Prefers full indexed document titles when the query mentions them (even
@@ -400,19 +398,42 @@ def _load_indexed_titles() -> list[str]:
         return []
 
 
-def query_names_absent_product(query: str, hit_titles: list[str]) -> bool:
-    """True when every product named in the query is absent from hit titles.
+def query_names_absent_product(
+    query: str,
+    hit_titles: list[str],
+    *,
+    known_titles: list[str] | None = None,
+) -> bool:
+    """True when the query names a KNOWN product that is absent from the hits.
 
-    Only fires when the query explicitly names at least one product via a cue
-    phrase (``bảo hiểm …``); informal nickname-only questions are handled by
-    comparison title matching instead and are never blocked here. For
-    comparisons naming A and B, refuse only when *neither* appears in any
-    retrieved title.
+    "Known" means the query resolves — via ``mentioned_doc_titles``, i.e. a ≥2
+    distinctive-token overlap — to at least one *indexed* document title. That
+    strong-match requirement is the whole point of this revision: the earlier
+    version read any non-stopword token after a cue phrase ("bảo hiểm", "sản
+    phẩm", ...) as a product name, so ordinary questions like "...bảo hiểm gồm
+    những **bước** nào?" or "...cần những **giấy tờ** gì?" fabricated a product
+    ("bước", "giấy tờ") and refused an answerable question. A common noun does
+    not strongly match any product title, so it can no longer trigger a refusal.
+
+    We only refuse when the query genuinely points at a product the corpus
+    contains AND none of the retrieved documents are that product — the
+    wrong-product case this guard exists for (e.g. asking about product A while
+    only product B was retrieved). For a comparison naming A and B, refuses only
+    when BOTH named products are absent from the retrieved titles.
+
+    Trade-off (intended): a product ABSENT from the whole index — deleted, or
+    carried only under an abbreviated title sharing no token with its spelled-out
+    name — no longer trips this deterministic guard. Those cases fall back to the
+    system prompt's own wrong-product refusal (rule 1). This narrowing is
+    deliberate: it removes the false refusals, relying on the prompt rather than
+    code for the rarer absent-from-corpus case.
+
+    ``known_titles`` defaults to the currently indexed titles (loaded from
+    Qdrant); injected in tests.
     """
-    spans = _product_spans(_fold_tokens(query))
-    if not spans:
+    known = known_titles if known_titles is not None else _load_indexed_titles()
+    named = mentioned_doc_titles(query, known)
+    if not named:
         return False
-    title_tokens: set[str] = set()
-    for title in hit_titles:
-        title_tokens.update(_fold_tokens(title))
-    return all(not (set(span) & title_tokens) for span in spans)
+    hit_set = {title.casefold() for title in hit_titles}
+    return all(title.casefold() not in hit_set for title in named)

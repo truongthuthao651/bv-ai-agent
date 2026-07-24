@@ -153,6 +153,12 @@ def _ollama_payload(
     ``think`` is sent explicitly so reasoning models (qwen3) skip their hidden
     chain-of-thought when ``settings.llm_thinking`` is False — the single biggest
     latency win on CPU-only setups.
+
+    ``num_ctx`` is sent explicitly too: Ollama otherwise loads the model at its
+    modelfile default (2k-4k for qwen3), silently truncating the prompt via
+    context-shift once the system prompt + retrieved chunks + history exceed it —
+    an invisible grounding failure. Pinning it to ``settings.llm_context_window``
+    makes the retrieved context actually reach the model.
     """
     return {
         "model": settings.chat_model,
@@ -165,6 +171,7 @@ def _ollama_payload(
         "options": {
             "temperature": settings.llm_temperature,
             "num_predict": settings.llm_max_tokens,
+            "num_ctx": settings.llm_context_window,
         },
     }
 

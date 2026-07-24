@@ -6,7 +6,9 @@ from app.api import docview
 from app.auth import is_public_path
 
 
-def _chunk(idx: int, section_path: str, text: str, **extra: object) -> dict[str, object]:
+def _chunk(
+    idx: int, section_path: str, text: str, **extra: object
+) -> dict[str, object]:
     return {
         "chunk_index": idx,
         "doc_title": "Quy trình giải quyết quyền lợi",
@@ -64,9 +66,7 @@ def test_render_page_highlights_requested_section() -> None:
     _, sections = docview.reconstruct_sections(
         [_chunk(0, "Điều 1", "A."), _chunk(1, "Điều 2", "B.")]
     )
-    page = docview.render_page(
-        "Doc", sections, doc_id="d1", highlight_section="Điều 2"
-    )
+    page = docview.render_page("Doc", sections, doc_id="d1", highlight_section="Điều 2")
     # Exactly one section carries the target class, and it's Điều 2's.
     assert page.count('class="doc-section target"') == 1
     idx2 = page.index("Điều 2")

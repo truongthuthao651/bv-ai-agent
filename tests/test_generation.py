@@ -450,6 +450,14 @@ def test_ollama_payload_sends_keep_alive() -> None:
     assert payload["keep_alive"] == settings.ollama_keep_alive
 
 
+def test_ollama_payload_sends_context_window() -> None:
+    # Without num_ctx Ollama loads the model at its (small) modelfile default and
+    # silently context-shifts away the retrieved chunks — an invisible grounding
+    # failure. It must carry settings.llm_context_window.
+    payload = _ollama_payload([{"role": "user", "content": "hi"}], stream=False)
+    assert payload["options"]["num_ctx"] == settings.llm_context_window
+
+
 def _collect_sse_content(chunks: list[str]) -> str:
     text = ""
     for chunk in chunks:
