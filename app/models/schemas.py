@@ -32,6 +32,11 @@ class DocType(str, Enum):
     IMAGE = "image"
     FIGURE = "figure"
     GLOSSARY = "glossary"
+    # Public reference material ingested as an offline "knowledge pack" (law,
+    # circulars, public product brochures). Same retrieval path as any other
+    # document, but its citations link to the public ``source_url`` it was
+    # downloaded from instead of an internal viewer page.
+    REFERENCE = "reference"
     OTHER = "other"
 
 
@@ -73,6 +78,10 @@ class ParsedDocument:
     # Provenance / metadata carried into each chunk's payload.
     source_path: str | None = None
     department: str | None = None
+    # Public URL this document was downloaded from (knowledge-pack material
+    # only). Never fetched at runtime — it exists purely so citations can link
+    # to the public original. None for internal company documents.
+    source_url: str | None = None
     # How doc_title was obtained ("heading" | "heading+filename" | "filename"),
     # or None for parsers whose title isn't heading-derived (XLSX/glossary).
     # Lets ingestion warn on a title taken purely from a generic heading.
@@ -103,6 +112,9 @@ class Chunk:
     # citations can link back to the source document. None for sources that
     # were never an uploaded file (e.g. glossary entries built in-memory).
     source_filename: str | None = None
+    # Public URL of the original (knowledge-pack documents only) — citations
+    # link here instead of the internal viewer. See ParsedDocument.source_url.
+    source_url: str | None = None
     # Set when OCR/formula extraction confidence is low (skill, section 1).
     needs_review: bool = False
 
@@ -118,6 +130,7 @@ class Chunk:
             display_text=self.display_text,
             figure_image_path=self.figure_image_path,
             source_filename=self.source_filename,
+            source_url=self.source_url,
             needs_review=self.needs_review,
             chunk_index=self.chunk_index,
             ingested_at=(ingested_at or datetime.now(timezone.utc)).isoformat(),
@@ -145,6 +158,7 @@ class QdrantPayload(BaseModel):
     display_text: str
     figure_image_path: str | None = None
     source_filename: str | None = None
+    source_url: str | None = None
     needs_review: bool = False
     chunk_index: int
     ingested_at: str  # ISO-8601 UTC
@@ -201,13 +215,14 @@ class DocumentUpdateRequest(BaseModel):
     body are applied (the endpoint inspects ``model_fields_set``). Changing
     ``doc_title`` re-ingests the document from its source file so the new title
     flows into the embeddings/reranking (title is part of ``embed_text``);
-    ``doc_type``/``department`` are a metadata-only payload update. An empty
-    ``department`` string clears the department.
+    ``doc_type``/``department``/``source_url`` are a metadata-only payload
+    update. An empty ``department`` / ``source_url`` string clears that field.
     """
 
     doc_title: str | None = None
     doc_type: DocType | None = None
     department: str | None = None
+    source_url: str | None = None
 
 
 class DocumentInfo(BaseModel):
@@ -217,6 +232,7 @@ class DocumentInfo(BaseModel):
     doc_title: str
     doc_type: DocType
     department: str | None = None
+    source_url: str | None = None
     n_chunks: int = Field(..., ge=0)
     ingested_at: str | None = None
 

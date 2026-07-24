@@ -267,13 +267,14 @@ User message (Open WebUI / curl)
     │
     ▼
 query_rewrite.py     # "cái đó là bao nhiêu?" + history → câu hỏi đứng độc lập
-    │
+    │                  (bỏ sticky 1-sản-phẩm nếu câu hỏi đã nêu ≥2 sản phẩm)
     ▼
 query_expansion.py   # "net premium" → thêm "phí thuần" (từ glossary, không gọi LLM)
     │
     ▼
 hybrid_search        # dense top-20 + sparse top-20 → RRF fusion
-    │
+    │                  (câu so sánh ≥2 SP: search+rerank *từng* SP rồi merge —
+    │                   comparison.py; tránh 1 SP chiếm hết top-k)
     ▼
 rerank               # cross-encoder → top-5; drop nếu score < RERANK_MIN_SCORE
     │                  nếu không còn hit → trả REFUSAL ngay (không gọi LLM đoán)

@@ -14,7 +14,9 @@ This skill covers HOW to implement and modify each stage correctly.
 
 - Develop and test ONLY against `data/synthetic/`. `data/real/` is off-limits, always.
   Textbook actuarial formulas/terminology are public knowledge and fine to use.
-- No network calls at runtime; the app must work air-gapped.
+- No network calls at runtime; the app must work air-gapped. No web search, no
+  runtime fetching — public references come in via the offline knowledge pack
+  (section 6), whose recorded URLs are rendered as citation links, never requested.
 - Canonical format everywhere: **Markdown + LaTeX** (`$...$`, `$$...$$`).
 - All Vietnamese text is NFC-normalized at ingestion. All config goes through
   `app/config/settings.py`.
@@ -136,6 +138,10 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   in CLAUDE.md — keep them in sync with `schemas.py`.
 - Query flow: glossary expansion → rewrite → hybrid search (top-20 each, RRF fuse)
   → rerank to top-5 → generation. Don't change top-k values in code; they're settings.
+  **Comparison exception:** when the query names ≥2 products
+  (`COMPARISON_RETRIEVAL_ENABLED`), run search+rerank **per product** and merge
+  (`app/retrieval/comparison.py`) so one product cannot fill the entire top-k.
+  Also skip sticky single-product conversation scope on those turns.
 - Deleting/re-ingesting a document: delete by `doc_id` filter first, then upsert
   (idempotent ingestion). Delete also removes the doc's saved figure images.
 
@@ -164,6 +170,39 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   6. **Metrics:** never remap table types (lãi suất cam kết / phí ≠ tỷ lệ bồi
      thường); refuse when context lacks the requested benefit metric.
   Any prompt edit must preserve all of the above.
+- **Answer modes** — `prompts.system_prompt(advisory=..., general_knowledge=...)`
+  assembles the grounded prompt from shared rule blocks. Rules 2 and 4-7 above
+  are single shared blocks used by every mode: edit the block, never fork it.
+  - *Strict* (default): rules 1 and 3 as written above.
+  - *Advisory* (`ADVISORY_MODE_ENABLED`, routed by
+    `app/generation/advisory.py::is_advisory_query`): for comparison /
+    recommendation turns ("so sánh A và B", "KH nên chọn sản phẩm nào?"). The
+    documents state facts and never state the requested conclusion, so strict
+    rule 3 refuses them even right after producing the comparison table. The
+    advisory variant keeps every *datum* sourced from context and keeps the
+    wrong-product refusal, but permits reasoning ACROSS the retrieved facts,
+    forbids collapsing a partly-covered comparison into a full refusal, and
+    requires conditional, non-sales phrasing. `ADVISORY_DISCLAIMER` is appended
+    deterministically.
+  - *General-knowledge supplement* (`GENERAL_KNOWLEDGE_SUPPLEMENT_ENABLED`):
+    either mode may append ONE section fenced behind `GENERAL_KNOWLEDGE_HEADING`
+    with textbook knowledge only — no company specifics, no citations, never a
+    replacement for the grounded part. The generator detects the heading and
+    appends `GENERAL_KNOWLEDGE_DISCLAIMER`.
+  - Advisory follow-ups that name no product ("KH sẽ chọn sản phẩm nào nhỉ")
+    carry the previously-cited titles into comparison retrieval via
+    `conversation_scope.cited_titles_in_history` — otherwise sticky single-product
+    scope pins one product and the other's benefits never reach the context.
+  - All three disclaimers follow the same pattern as the calc/hybrid ones:
+    the prompt asks, the code enforces (a small local model forgets).
+- **Knowledge pack** (`scripts/ingest_knowledge_pack.py`, `doc_type=reference`):
+  public references (law, circulars, published brochures) are downloaded BY HAND
+  into `data/knowledge_pack/`, listed in `manifest.yaml` with their public URLs,
+  and indexed like any other document. The app never fetches — `source_url` is
+  rendered as the citation link only, labeled `(nguồn công khai)` by
+  `format_sources`. Validate URLs with `_validate_source_url` (http(s) only: the
+  value lands in a Markdown link). This is the ONLY sanctioned way to widen the
+  assistant's knowledge beyond company documents; never add a web-search path.
 - Query-time metric guard (`app/retrieval/metric_guard.py`,
   `METRIC_GUARD_ENABLED`): on benefit-payout queries, drop fee/interest hits
   before generation so a claim-% question cannot be answered from a guaranteed-

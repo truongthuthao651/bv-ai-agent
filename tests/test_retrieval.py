@@ -461,6 +461,39 @@ def test_product_guard_ignores_generic_questions() -> None:
     assert not query_names_absent_product("quyền lợi tử vong là gì", titles)
 
 
+def test_product_guard_ignores_our_own_company_name() -> None:
+    # Regression: "sản phẩm bảo hiểm của Bảo Việt Life" parsed "Việt Life" as a
+    # product name, matched no document title, and hard-refused an answerable
+    # question before generation ever ran. The company is not a product.
+    titles = ["Bảo hiểm liên kết chung An Khang Như Ý", "Bảo hiểm hỗn hợp An Lộc"]
+    for query in (
+        "so sánh các sản phẩm bảo hiểm của bảo việt life và các công ty khác",
+        "sản phẩm bảo hiểm của Bảo Việt Nhân Thọ có những gì?",
+        "bảo việt life có những sản phẩm nào",
+        "san pham bao hiem cua bao viet life",  # no diacritics
+    ):
+        assert not query_names_absent_product(query, titles), query
+
+
+def test_product_guard_does_not_cross_a_clause_boundary() -> None:
+    # A cue phrase must not skip past "và" and claim the next noun as a
+    # product ("... và các công ty khác" is not a product name).
+    from app.retrieval.product_scope import _fold_tokens, _product_spans
+
+    spans = _product_spans(
+        _fold_tokens("so sánh sản phẩm bảo hiểm của chúng ta và các công ty khác")
+    )
+    assert all("cong" not in span for span in spans)
+
+
+def test_product_guard_still_refuses_a_genuinely_absent_product() -> None:
+    # The guard's original purpose must survive the company-name fix.
+    titles = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    assert query_names_absent_product(
+        "quyền lợi của bảo hiểm An Thịnh Phúc Niên của Bảo Việt Life", titles
+    )
+
+
 def test_product_guard_matches_without_diacritics() -> None:
     titles = ["SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"]
     # No-diacritics typing still lines up with the diacritic title (present).
@@ -469,6 +502,208 @@ def test_product_guard_matches_without_diacritics() -> None:
     )
     # A different, absent product -> refuse.
     assert query_names_absent_product("bao hiem an thinh phuc nien", titles)
+
+
+def test_named_product_labels_extracts_both_comparison_products() -> None:
+    from app.retrieval.product_scope import named_product_labels
+
+    q = (
+        "So sánh quyền lợi tử vong của bảo hiểm hỗn hợp An Lộc Vững Bền "
+        "và bảo hiểm liên kết chung An Khang Như Ý"
+    )
+    labels = named_product_labels(q, titles=[])
+    assert len(labels) >= 2
+    joined = " ".join(labels).lower()
+    assert "lộc" in joined or "loc" in joined.lower()
+    assert "khang" in joined.lower()
+
+
+def test_informal_nicknames_resolve_via_indexed_titles() -> None:
+    from app.retrieval.comparison import is_multi_product_query
+    from app.retrieval.product_scope import mentioned_doc_titles, named_product_labels
+
+    titles = [
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+        "Bảo hiểm hỗn hợp An Lộc Vững Bền",
+    ]
+    q = (
+        "so sánh quyền lợi cầu an khang như ý và an lộc vững bền. "
+        "KH sẽ thích sản phẩm nào hơn?"
+    )
+    mentioned = mentioned_doc_titles(q, titles)
+    assert len(mentioned) == 2
+    labels = named_product_labels(q, titles=titles)
+    assert labels == mentioned
+    assert is_multi_product_query(q, titles=titles)
+
+
+def test_product_guard_allows_partial_comparison_hit() -> None:
+    # Comparison names A and B; only A was retrieved → do NOT refuse (generation
+    # can still answer A and say B is missing). Refuse only when neither hits.
+    titles = ["Bảo hiểm hỗn hợp An Lộc Vững Bền"]
+    q = (
+        "so sánh bảo hiểm hỗn hợp An Lộc Vững Bền và "
+        "bảo hiểm liên kết chung An Khang Như Ý"
+    )
+    assert not query_names_absent_product(q, titles)
+    assert query_names_absent_product(q, ["Từ điển thuật ngữ"])
+
+
+# --------------------------------------------------------------------------- #
+# Comparison / multi-product retrieval (per-product quota + merge)
+# --------------------------------------------------------------------------- #
+
+
+def _cmp_hit(pid: str, title: str, section: str = "QL") -> Hit:
+    return Hit(
+        point_id=pid,
+        score=1.0,
+        payload=QdrantPayload(
+            doc_id=f"d-{pid}",
+            doc_title=title,
+            section_path=section,
+            doc_type=DocType.POLICY,
+            display_text=f"nội dung {section}",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+
+def test_merge_per_product_hits_round_robins_and_dedupes() -> None:
+    from app.retrieval.comparison import merge_per_product_hits
+
+    a = [_cmp_hit("a1", "A"), _cmp_hit("a2", "A"), _cmp_hit("shared", "A")]
+    b = [_cmp_hit("b1", "B"), _cmp_hit("shared", "B"), _cmp_hit("b2", "B")]
+    merged = merge_per_product_hits([a, b], total_cap=4)
+    assert [h.point_id for h in merged] == ["a1", "b1", "a2", "shared"]
+
+
+def test_retrieve_multi_product_quotas_each_side() -> None:
+    from app.retrieval.comparison import retrieve_multi_product
+
+    akny = "Bảo hiểm liên kết chung An Khang Như Ý"
+    alvb = "Bảo hiểm hỗn hợp An Lộc Vững Bền"
+    # Search returns the same mixed pool every time; title filter + quota should
+    # still keep both products in the merged context.
+    pool = [
+        _cmp_hit("k1", akny, "Tử vong"),
+        _cmp_hit("k2", akny, "Chú thích"),
+        _cmp_hit("k3", akny, "TT cần biết"),
+        _cmp_hit("k4", akny, "Giới thiệu"),
+        _cmp_hit("l1", alvb, "QL sản phẩm"),
+        _cmp_hit("l2", alvb, "TTTV"),
+    ]
+
+    def search_fn(_q: str, _doc_ids: list[str] | None) -> list[Hit]:
+        return list(pool)
+
+    def rerank_fn(_q: str, hits: list[Hit], top_k: int) -> list[Hit]:
+        return hits[:top_k]
+
+    q = (
+        "So sánh quyền lợi tử vong và thương tật của "
+        "bảo hiểm hỗn hợp An Lộc Vững Bền và bảo hiểm liên kết chung An Khang Như Ý"
+    )
+    out = retrieve_multi_product(
+        q,
+        search_fn=search_fn,
+        rerank_fn=rerank_fn,
+        per_product_top_k=2,
+        max_products=2,
+        titles=[akny, alvb],
+        docs=[],
+    )
+    titles = {h.payload.doc_title for h in out}
+    assert akny in titles
+    assert alvb in titles
+    assert len(out) == 4  # 2 per product
+
+
+def test_retrieve_multi_product_scopes_search_by_doc_id() -> None:
+    """Each product's search is filtered to its own documents."""
+    from app.retrieval.comparison import retrieve_multi_product
+
+    akny = "Bảo hiểm liên kết chung An Khang Như Ý"
+    alvb = "Bảo hiểm hỗn hợp An Lộc Vững Bền"
+    docs = [("doc-akny", akny), ("doc-alvb", alvb)]
+    seen: list[list[str] | None] = []
+
+    def search_fn(_q: str, doc_ids: list[str] | None) -> list[Hit]:
+        seen.append(doc_ids)
+        return [_cmp_hit("h1", akny if doc_ids == ["doc-akny"] else alvb)]
+
+    def rerank_fn(_q: str, hits: list[Hit], top_k: int) -> list[Hit]:
+        return hits[:top_k]
+
+    retrieve_multi_product(
+        "so sánh quyền lợi của An Khang Như Ý và An Lộc Vững Bền",
+        search_fn=search_fn,
+        rerank_fn=rerank_fn,
+        per_product_top_k=2,
+        max_products=2,
+        titles=[akny, alvb],
+        docs=docs,
+    )
+    assert sorted(ids[0] for ids in seen if ids) == ["doc-akny", "doc-alvb"]
+
+
+def test_retrieve_multi_product_keeps_low_ranked_benefit_chunk() -> None:
+    """Regression: title filtering must precede the rerank top-k cut.
+
+    The old order (rerank to a global top-k, then filter by title) let the
+    better-parsed product fill the cut, so the other product kept only its
+    cover-page chunks and the model answered "không nêu rõ" for indexed facts.
+    """
+    from app.retrieval.comparison import retrieve_multi_product
+
+    akny = "Bảo hiểm liên kết chung An Khang Như Ý"
+    alvb = "Bảo hiểm hỗn hợp An Lộc Vững Bền"
+    # AKNY's real benefit section sits below many ALVB chunks in the raw pool.
+    pool = [
+        _cmp_hit("k-cover", akny, "THÔNG TIN CẦN BIẾT"),
+        *[_cmp_hit(f"l{i}", alvb, "QUYỀN LỢI SẢN PHẨM") for i in range(8)],
+        _cmp_hit("k-benefit", akny, "QUYỀN LỢI BẢO HIỂM"),
+    ]
+
+    def search_fn(_q: str, _doc_ids: list[str] | None) -> list[Hit]:
+        return list(pool)
+
+    def rerank_fn(_q: str, hits: list[Hit], top_k: int) -> list[Hit]:
+        return hits[:top_k]  # order-preserving stand-in for the cross-encoder
+
+    out = retrieve_multi_product(
+        "so sánh quyền lợi của An Khang Như Ý và An Lộc Vững Bền",
+        search_fn=search_fn,
+        rerank_fn=rerank_fn,
+        per_product_top_k=2,
+        max_products=2,
+        titles=[akny, alvb],
+        docs=[],
+    )
+    assert "k-benefit" in {h.point_id for h in out}
+
+
+def test_build_filter_matches_any_for_list_values() -> None:
+    from app.retrieval.retriever import _build_filter
+
+    f = _build_filter({"doc_id": ["a", "b"], "doc_type": "policy"})
+    assert f is not None
+    matches = {c.key: c.match for c in f.must}
+    assert matches["doc_id"].any == ["a", "b"]
+    assert matches["doc_type"].value == "policy"
+
+
+def test_is_multi_product_query() -> None:
+    from app.retrieval.comparison import is_multi_product_query
+
+    assert is_multi_product_query(
+        "so sánh bảo hiểm An Lộc Vững Bền và bảo hiểm An Khang Như Ý",
+        titles=[],
+    )
+    assert not is_multi_product_query(
+        "quyền lợi bảo hiểm An Khang Như Ý", titles=[]
+    )
 
 
 # --------------------------------------------------------------------------- #

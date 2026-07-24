@@ -38,6 +38,12 @@ Chunking, enrichment, embedding, and display only ever deal with this one format
    them. Exception: `data/glossary/` IS committed (public terminology only).
 4. No external API calls in application code. The app must work air-gapped.
    Allowed network use at setup time only: `ollama pull`, `pip install`, HF model download.
+   No web search, no runtime document fetching. Public reference material reaches
+   the assistant via the **offline knowledge pack** instead: a human downloads the
+   public files by hand into `data/knowledge_pack/`, records each one's public URL
+   in `manifest.yaml`, and `scripts/ingest_knowledge_pack.py` indexes them locally.
+   The recorded `source_url` is only ever *rendered* as the citation link — never
+   requested by the app.
 5. Do not add telemetry or analytics of any kind.
 
 ## Project structure
@@ -87,6 +93,7 @@ bv-ai-agent/
 │   │   └── query_rewrite.py   # Standalone-question rewriting from chat history
 │   ├── generation/
 │   │   ├── prompts.py         # Vietnamese system prompts, citation format, math rules
+│   │   ├── advisory.py        # Detect comparison/recommendation turns → advisory prompt
 │   │   └── generator.py       # Ollama call, streaming, context assembly
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
@@ -96,11 +103,14 @@ bv-ai-agent/
 │   ├── stop_native.sh         # Stop what run_native.sh started (pid files in run/)
 │   ├── setup_models.sh        # ollama pull + HF downloads (native/docker autodetect)
 │   ├── ingest.sh              # Batch-ingest a folder
+│   ├── ingest_knowledge_pack.py  # Index manually-downloaded PUBLIC refs + their URLs
 │   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
 │   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
-├── data/                      # GITIGNORED except glossary/
+├── data/                      # GITIGNORED except glossary/ + the pack manifest template
 │   ├── glossary/
 │   │   └── thuat_ngu.yaml     # Actuarial term glossary: term, synonyms, symbol, definition
+│   ├── knowledge_pack/        # PUBLIC refs downloaded by hand (law, circulars, brochures)
+│   │   └── manifest.example.yaml  # Template: file → title + public url (committed)
 │   ├── synthetic/             # Fake docs — the ONLY data used in dev/tests
 │   └── real/                  # Exists only on the company machine — NEVER touch
 ├── eval/
@@ -130,7 +140,10 @@ bv-ai-agent/
   what bge-m3 sees) and `display_text` (clean Markdown+LaTeX — what goes into the
   generation context). Qdrant payload: `doc_id, doc_title, section_path, page,
   department, doc_type, figure_image_path (optional), ingested_at`.
-  `doc_type ∈ {policy, procedure, form, spreadsheet, image, figure, glossary, other}`.
+  `doc_type ∈ {policy, procedure, form, spreadsheet, image, figure, glossary,
+  reference, other}` (`reference` = public knowledge-pack material).
+  Knowledge-pack chunks also carry `source_url` (the public page the file was
+  downloaded from); citations then link there, labeled `(nguồn công khai)`.
   Prepend `"Tài liệu: {doc_title} > {section_path}"` to embed_text.
 - **Answering rules:** answer only from retrieved context; cite as
   `[Tên tài liệu, mục X]`; reply "Tôi không tìm thấy thông tin trong tài liệu"
@@ -143,6 +156,16 @@ bv-ai-agent/
   section was retrieved, never invent exclusions);
   never remap table metrics (lãi suất cam kết / phí ≠ tỷ lệ bồi thường).
   Never weaken these in prompts.py.
+- **Answer modes:** `prompts.system_prompt()` assembles one grounded prompt from
+  shared rule blocks. *Strict* (default) answers only from context. *Advisory*
+  (comparison / "KH nên chọn sản phẩm nào?" — routed by
+  `app/generation/advisory.py`) keeps every datum sourced from context and keeps
+  the wrong-product refusal, but may reason across the retrieved facts and give
+  conditional recommendations; it is labeled `ADVISORY_DISCLAIMER`. Either may
+  append ONE fenced "Kiến thức chung (ngoài tài liệu)" section of textbook
+  knowledge (`GENERAL_KNOWLEDGE_SUPPLEMENT_ENABLED`), labeled and never a
+  substitute for the grounded part. Rules 2 and 4-7 are shared blocks — changing
+  them applies to both modes by construction; never fork them.
 - **Versions:** pin everything (requirements.txt exact versions, Docker image tags).
   Never use `:latest`.
 - **Style:** type hints everywhere, `ruff` for lint/format, small pure functions
@@ -159,6 +182,8 @@ bash scripts/healthcheck.sh                                 # smoke test
 python scripts/make_synthetic_data.py                       # regenerate fake docs
 bash scripts/ingest.sh data/synthetic                       # index synthetic corpus
 bash scripts/ingest.sh data/glossary                        # index the glossary
+python scripts/ingest_knowledge_pack.py --dry-run           # validate the pack manifest
+python scripts/ingest_knowledge_pack.py                     # index public reference docs
 pytest tests/ -x -q                                         # unit tests (no services needed)
 python eval/run_ragas.py                                    # RAG quality metrics (native: stop the API first — embedded Qdrant is single-process)
 ruff check app/ && ruff format app/                         # lint + format

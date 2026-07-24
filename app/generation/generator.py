@@ -20,13 +20,16 @@ import httpx
 
 from app.config.settings import settings
 from app.generation.prompts import (
+    ADVISORY_DISCLAIMER,
     CALC_DISCLAIMER,
+    GENERAL_KNOWLEDGE_DISCLAIMER,
+    GENERAL_KNOWLEDGE_HEADING,
     HYBRID_DISCLAIMER,
     HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
-    SYSTEM_PROMPT,
     build_user_prompt,
     format_sources,
+    system_prompt,
 )
 from app.models.schemas import ChatMessage, Hit
 
@@ -109,10 +112,18 @@ class ThinkStripper:
 
 
 def build_messages(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    *,
+    advisory: bool = False,
 ) -> list[dict[str, str]]:
-    """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn.
+
+    ``advisory`` selects the synthesis-permitting variant of the grounded system
+    prompt (comparison / "which should the customer pick?" turns).
+    """
+    messages = [{"role": "system", "content": system_prompt(advisory=advisory)}]
     for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": build_user_prompt(query, hits)})
@@ -237,6 +248,36 @@ def _hybrid_disclaimer_suffix(answer: str) -> str:
     return f"\n\n_{HYBRID_DISCLAIMER}_"
 
 
+def _advisory_disclaimer_suffix(answer: str) -> str:
+    """The "this is a synthesis, not official advice" label for advisory answers.
+
+    Same guardrail pattern as the other disclaimers: enforced in code, not
+    trusted to the prompt. No-op for refusals/empty answers or if already present.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if ADVISORY_DISCLAIMER in answer:
+        return ""
+    return f"\n\n_{ADVISORY_DISCLAIMER}_"
+
+
+def _general_knowledge_suffix(answer: str) -> str:
+    """Label the optional "Kiến thức chung" section when the model produced one.
+
+    The section is fenced behind a fixed heading (GENERAL_KNOWLEDGE_HEADING);
+    when it's present, the answer mixes document-sourced content with the
+    model's own knowledge, so the boundary gets stated explicitly rather than
+    left to the heading alone. No-op when the model skipped the section.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if GENERAL_KNOWLEDGE_HEADING not in answer:
+        return ""
+    if GENERAL_KNOWLEDGE_DISCLAIMER in answer:
+        return ""
+    return f"\n\n_{GENERAL_KNOWLEDGE_DISCLAIMER}_"
+
+
 def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     """The sources block to append after ``answer``, or "" when inapplicable.
 
@@ -325,16 +366,34 @@ async def _stream_chat(
     yield "data: [DONE]\n\n"
 
 
-async def stream_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
-) -> AsyncIterator[str]:
-    """Stream the assistant's grounded answer as SSE lines."""
-    messages = build_messages(query, hits, history)
+def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]:
+    """Suffixes appended after a grounded answer, in reading order.
+
+    Calculation disclaimer, then the advisory label, then the general-knowledge
+    label, then the sources block — the sources stay last so the numbered
+    citations remain the final thing on screen.
+    """
 
     def suffix_fn(body: str) -> str:
-        return _disclaimer_suffix(body) + _sources_suffix(body, hits)
+        out = _disclaimer_suffix(body)
+        if advisory:
+            out += _advisory_disclaimer_suffix(body)
+        out += _general_knowledge_suffix(body)
+        return out + _sources_suffix(body, hits)
 
-    async for chunk in _stream_chat(messages, suffix_fn):
+    return suffix_fn
+
+
+async def stream_answer(
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    *,
+    advisory: bool = False,
+) -> AsyncIterator[str]:
+    """Stream the assistant's grounded answer as SSE lines."""
+    messages = build_messages(query, hits, history, advisory=advisory)
+    async for chunk in _stream_chat(messages, _grounded_suffix_fn(hits, advisory)):
         yield chunk
 
 
@@ -417,13 +476,14 @@ def _generate_chat(
 
 
 def generate_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    advisory: bool = False,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
-    messages = build_messages(query, hits, history)
-    return _generate_chat(
-        messages, lambda body: _disclaimer_suffix(body) + _sources_suffix(body, hits)
-    )
+    messages = build_messages(query, hits, history, advisory=advisory)
+    return _generate_chat(messages, _grounded_suffix_fn(hits, advisory))
 
 
 def generate_hybrid_answer(query: str, history: list[ChatMessage] | None = None) -> str:

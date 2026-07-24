@@ -162,6 +162,30 @@ class Settings(BaseSettings):
     # product (near-identical benefit clauses fool the reranker), refuse instead
     # of answering from the wrong product. False disables the guard.
     product_scope_guard_enabled: bool = True
+    # Comparison / multi-product questions (app/retrieval/comparison.py): when
+    # the query names ≥2 products, retrieve + rerank per product and merge so
+    # one product's overview chunks cannot crowd the other out of the global
+    # top-k. False restores the single global pool (starves comparisons).
+    comparison_retrieval_enabled: bool = True
+    # Chunks kept per named product before merge (2 products × 3 = 6 context).
+    comparison_per_product_top_k: int = 3
+    # Cap how many named products get their own retrieval pass (latency).
+    comparison_max_products: int = 3
+    # Advisory / synthesis answers (app/generation/advisory.py): comparison and
+    # "which product should the customer pick?" questions ask for a conclusion
+    # no document literally states, so the strict prompt refuses them even when
+    # the benefit facts were retrieved. When enabled, such questions get a
+    # prompt that still sources every datum from context (and still refuses on
+    # a wrong/absent product) but may compare and phrase conditional
+    # recommendations, always labeled with ADVISORY_DISCLAIMER.
+    # False restores the strict-only behavior.
+    advisory_mode_enabled: bool = True
+    # Let a grounded answer append ONE clearly-fenced "Kiến thức chung (ngoài
+    # tài liệu)" section of general (textbook) insurance knowledge after the
+    # document-sourced part. Never replaces it, never carries company specifics,
+    # and is labeled with GENERAL_KNOWLEDGE_DISCLAIMER. Fully offline — this is
+    # the model's own knowledge, not a web lookup.
+    general_knowledge_supplement_enabled: bool = True
     # Drop fee / guaranteed-interest chunks from benefit-payout queries
     # (app/retrieval/metric_guard.py) so a "claim bao nhiêu%?" question cannot
     # be answered from a lãi suất cam kết table. False disables the filter.

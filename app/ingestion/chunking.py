@@ -263,6 +263,7 @@ def chunk_document(
                     page=section.page,
                     department=doc.department,
                     source_filename=source_filename,
+                    source_url=doc.source_url,
                 )
             )
             idx += 1

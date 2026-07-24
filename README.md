@@ -102,6 +102,35 @@ Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm tron
 > tạo cơ sở dữ liệu cấu hình). Nếu nâng cấp `open-webui` bằng pip, chỉ cần
 > khởi động lại bằng `run_native.sh` là thương hiệu được áp dụng lại.
 
+> **Trợ lý tư vấn / so sánh sản phẩm:** với câu hỏi mang tính so sánh hoặc
+> khuyến nghị ("so sánh quyền lợi A và B", "khách hàng nên chọn sản phẩm nào?"),
+> trợ lý được phép **đối chiếu và tổng hợp trên các dữ kiện đã trích dẫn** thay
+> vì từ chối. Mọi số liệu vẫn phải lấy từ tài liệu, vẫn từ chối nếu hỏi về sản
+> phẩm không có trong kho, và phần gợi ý luôn kèm ghi chú "không phải tư vấn
+> sản phẩm chính thức". Tắt bằng `ADVISORY_MODE_ENABLED=false` trong `.env`.
+> Trợ lý cũng có thể thêm một mục **"Kiến thức chung (ngoài tài liệu)"** ở cuối
+> câu trả lời (kiến thức bảo hiểm tổng quát, có gắn nhãn rõ, không chứa số liệu
+> nội bộ) — tắt bằng `GENERAL_KNOWLEDGE_SUPPLEMENT_ENABLED=false`.
+
+> **Kho tài liệu tham khảo công khai (knowledge pack):** hệ thống **không** tra
+> cứu Internet — nó chạy hoàn toàn ngoại tuyến. Muốn trợ lý biết thêm luật,
+> thông tư hay brochure đã công bố, hãy **tải thủ công** các tệp công khai đó về
+> `data/knowledge_pack/`, sao chép `manifest.example.yaml` thành `manifest.yaml`,
+> ghi tiêu đề + địa chỉ gốc của từng tệp, rồi chạy:
+>
+> ```bash
+> bash scripts/stop_native.sh                          # Qdrant nhúng chỉ 1 tiến trình
+> python scripts/ingest_knowledge_pack.py --dry-run    # kiểm tra manifest trước
+> python scripts/ingest_knowledge_pack.py              # nạp vào kho
+> bash scripts/run_native.sh
+> ```
+>
+> Khi trợ lý dùng các tài liệu này, phần "Nguồn tham khảo" sẽ hiển thị **liên
+> kết tới địa chỉ công khai gốc** kèm nhãn "(nguồn công khai)", để nhân viên bấm
+> vào kiểm chứng. Ứng dụng không bao giờ tự truy cập địa chỉ đó. **Chỉ đặt tài
+> liệu CÔNG KHAI vào đây** — tài liệu nội bộ nạp qua Open WebUI như bình thường.
+> Cách khác cho một tệp lẻ: nạp qua trang quản trị và điền ô "Nguồn URL công khai".
+
 > Mọi giá trị đặc thù theo máy nằm trong `.env`, **không** nằm trong mã nguồn.
 
 ---
@@ -179,6 +208,8 @@ bash scripts/run_native.sh                  # start the stack natively (no Docke
 bash scripts/stop_native.sh                 # stop it
 bash scripts/setup_models.sh                # (re-)pull models — autodetects native vs docker
 bash scripts/healthcheck.sh                 # smoke test
+python scripts/ingest_knowledge_pack.py --dry-run   # validate the public-reference manifest
+python scripts/ingest_knowledge_pack.py     # index public refs — native: stop the API first
 pytest tests/ -x -q                         # unit tests (no services needed)
 .venv/bin/python eval/run_ragas.py          # golden-set eval — native: stop the API first
 ruff check app/ && ruff format app/         # lint + format

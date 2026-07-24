@@ -7,6 +7,7 @@ glossary loader reads the real (committed) data/glossary/thuat_ngu.yaml.
 from __future__ import annotations
 
 from app.retrieval.spellcheck import (
+    apply_suggestions,
     build_confirmation_message,
     find_suggestions,
     is_affirmation,
@@ -203,3 +204,36 @@ def test_no_diacritics_product_name_still_not_flagged_on_long_title() -> None:
     title = "SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"
     query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vung ben"
     assert find_suggestions(query, titles=[title]) == []
+
+
+def test_does_not_flag_correct_product_name_followed_by_punctuation() -> None:
+    # A correctly-spelled product name with a clinging sentence-ending period
+    # ("... an lộc vững bền. KH ...") must not be mistaken for a typo: the
+    # period-glued token "bền." folded to "ben." (absent from the vocabulary)
+    # and resembled the title token "bền", triggering a spurious confirmation
+    # that derailed the comparison question.
+    titles = [
+        "Bảo hiểm hỗn hợp An Khang Như Ý",
+        "Bảo hiểm hỗn hợp An Lộc Vững Bền",
+    ]
+    query = (
+        "so sánh quyền lợi an khang như ý và an lộc vững bền. "
+        "KH sẽ thích sản phẩm nào hơn?"
+    )
+    assert find_suggestions(query, titles=titles) == []
+
+
+def test_apply_suggestions_replaces_matched_span_with_canonical() -> None:
+    query = "so sánh an loc vuwng ben với sản phẩm khác"
+    out = apply_suggestions(
+        query,
+        [
+            Suggestion(
+                canonical="Bảo hiểm hỗn hợp An Lộc Vững Bền",
+                matched_span="an loc vuwng ben",
+                ratio=0.9,
+            )
+        ],
+    )
+    assert "Bảo hiểm hỗn hợp An Lộc Vững Bền" in out
+    assert "vuwng" not in out

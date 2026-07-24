@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config.settings import settings
 from app.generation import generator
+from app.generation.advisory import is_advisory_query
 from app.generation.prompts import REFUSAL_MESSAGE
 from app.models.schemas import (
     ChatCompletionChoice,
@@ -28,7 +29,8 @@ from app.models.schemas import (
     ModelCard,
     ModelList,
 )
-from app.retrieval.conversation_scope import active_scope
+from app.retrieval.comparison import is_multi_product_query, retrieve_multi_product
+from app.retrieval.conversation_scope import active_scope, cited_titles_in_history
 from app.retrieval.metric_guard import filter_metric_mismatch
 from app.retrieval.product_scope import query_names_absent_product
 from app.retrieval.query_expansion import expand_query
@@ -36,6 +38,7 @@ from app.retrieval.query_rewrite import rewrite_standalone
 from app.retrieval.reranker import rerank
 from app.retrieval.retriever import hybrid_search
 from app.retrieval.spellcheck import (
+    corrected_query_after_confirmation,
     is_affirmation,
     is_confirmation_prompt,
     maybe_suggest_correction,
@@ -118,9 +121,9 @@ def _resolve_confirmation(
     The typo gate spans two turns but the endpoint is stateless: when the last
     assistant turn was one of our clarification messages and the user simply
     confirms it ("đúng"), retrieving on the word "đúng" finds nothing. Instead we
-    replay the *original* question (the user turn before the clarification), drop
-    that resolved exchange from history, and signal the caller to skip the gate
-    so it can't re-trigger the same clarification in a loop.
+    replay the *original* question with suggested corrections applied, drop that
+    resolved exchange from history, and signal the caller to skip the gate so it
+    can't re-trigger the same clarification in a loop.
 
     Returns ``(query, history, skip_spellcheck)`` unchanged when this isn't a
     confirmation continuation.
@@ -132,27 +135,100 @@ def _resolve_confirmation(
         and is_confirmation_prompt(history[-1].content)
         and is_affirmation(query)
     ):
-        return history[-2].content, history[:-2], True
+        original = history[-2].content
+        corrected = corrected_query_after_confirmation(original)
+        return corrected, history[:-2], True
     return query, history, False
 
 
-def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
+def _advisory_followup_labels(query: str, history: list[ChatMessage]) -> list[str]:
+    """Products still under comparison for an advisory follow-up that names none.
+
+    "KH sẽ chọn sản phẩm nào nhỉ" carries no product name, so single-scope
+    retrieval pins one of the two products just compared and the other's
+    benefits never reach the context — leaving the model nothing to weigh.
+    Recovering the titles cited by the previous turns keeps every candidate in
+    play. Empty (so nothing changes) unless this really is an advisory turn
+    following a multi-document answer.
+    """
+    if not settings.advisory_mode_enabled or not settings.comparison_retrieval_enabled:
+        return []
+    if not is_advisory_query(query) or is_multi_product_query(query):
+        return []
+    titles = cited_titles_in_history(history)[: settings.comparison_max_products]
+    return titles if len(titles) >= 2 else []
+
+
+def _retrieve(
+    query: str, history: list[ChatMessage]
+) -> tuple[str, list[Hit], list[str]]:
     """Run rewrite -> expansion -> hybrid search -> rerank; each stage is self-gating.
 
-    Logs per-stage wall time so slow answers can be attributed to a stage
-    instead of guessed at. eval/run_ragas.py mirrors this flow stage-by-stage —
-    keep the two in sync when the query flow changes.
+    Multi-product (comparison) queries take a per-product search path so each
+    named product keeps a fair share of the context budget. Logs per-stage wall
+    time so slow answers can be attributed to a stage instead of guessed at.
+    eval/run_ragas.py mirrors this flow stage-by-stage — keep the two in sync
+    when the query flow changes.
+
+    Returns ``(standalone_query, hits, followup_labels)``; the labels are the
+    carried-over comparison products (empty for ordinary turns) and are only
+    returned so the caller can log/route on them.
     """
-    scope = active_scope(history) if settings.conversation_scope_enabled else None
+    # Sticky single-product scope biases rewrite toward one title; skip it when
+    # the user already named ≥2 products (comparison / side-by-side questions)
+    # or is following up on a comparison of several cited documents.
+    followup_labels = _advisory_followup_labels(query, history)
+    multi = settings.comparison_retrieval_enabled and (
+        is_multi_product_query(query) or bool(followup_labels)
+    )
+    scope = (
+        None
+        if multi
+        else (active_scope(history) if settings.conversation_scope_enabled else None)
+    )
     t0 = time.perf_counter()
     standalone_query = rewrite_standalone(history, query, scope=scope)
     t1 = time.perf_counter()
-    search_query = expand_query(standalone_query)
-    t2 = time.perf_counter()
-    hits = hybrid_search(search_query)
-    t3 = time.perf_counter()
-    hits = rerank(standalone_query, hits)
-    t4 = time.perf_counter()
+
+    # Re-check on the rewritten question (rewrite may surface a second product
+    # from history, or drop one — prefer the standalone form for routing).
+    named_multi = settings.comparison_retrieval_enabled and is_multi_product_query(
+        standalone_query
+    )
+    # Carried-over labels only apply when the rewritten question still names no
+    # products of its own (otherwise the query text is the better signal).
+    explicit_labels = followup_labels if not named_multi else []
+    use_multi = named_multi or bool(explicit_labels)
+    if use_multi:
+        t2 = time.perf_counter()
+
+        def _rerank_cap(q: str, raw: list[Hit], top_k: int) -> list[Hit]:
+            return rerank(q, raw, top_k=top_k)
+
+        def _search_scoped(q: str, doc_ids: list[str] | None) -> list[Hit]:
+            # Scoping by doc_id gives each product a full retrieve_top_k pool of
+            # its own documents instead of a share of one corpus-wide pool.
+            filters = {"doc_id": doc_ids} if doc_ids else None
+            return hybrid_search(q, filters=filters)
+
+        hits = retrieve_multi_product(
+            standalone_query,
+            search_fn=_search_scoped,
+            rerank_fn=_rerank_cap,
+            expand_fn=expand_query,
+            labels=explicit_labels or None,
+        )
+        # Per-product path folds expand+search+rerank into one timed block.
+        t3 = t2
+        t4 = time.perf_counter()
+    else:
+        search_query = expand_query(standalone_query)
+        t2 = time.perf_counter()
+        hits = hybrid_search(search_query)
+        t3 = time.perf_counter()
+        hits = rerank(standalone_query, hits)
+        t4 = time.perf_counter()
+
     if settings.metric_guard_enabled:
         before = len(hits)
         hits = filter_metric_mismatch(standalone_query, hits)
@@ -164,7 +240,7 @@ def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
     t5 = time.perf_counter()
     logger.info(
         "retrieval timings: rewrite=%.0fms expand=%.0fms search=%.0fms "
-        "rerank=%.0fms metric_guard=%.0fms hits=%d scope=%s",
+        "rerank=%.0fms metric_guard=%.0fms hits=%d scope=%s multi=%s carried=%s",
         (t1 - t0) * 1000,
         (t2 - t1) * 1000,
         (t3 - t2) * 1000,
@@ -172,8 +248,10 @@ def _retrieve(query: str, history: list[ChatMessage]) -> tuple[str, list[Hit]]:
         (t5 - t4) * 1000,
         len(hits),
         scope or "-",
+        use_multi,
+        explicit_labels or "-",
     )
-    return standalone_query, hits
+    return standalone_query, hits, explicit_labels
 
 
 @router.post("/chat/completions")
@@ -201,7 +279,9 @@ async def chat_completions(request: ChatCompletionRequest):
     if clarification:
         return _static_response(request, clarification)
 
-    standalone_query, hits = await run_in_threadpool(_retrieve, query, history)
+    standalone_query, hits, carried_labels = await run_in_threadpool(
+        _retrieve, query, history
+    )
 
     # Product-scope guard: the query names a specific product, but every
     # retrieved document is a DIFFERENT product (cross-product benefit clauses
@@ -246,14 +326,31 @@ async def chat_completions(request: ChatCompletionRequest):
         answer = await run_in_threadpool(
             generator.generate_hybrid_answer, standalone_query, history
         )
-    elif request.stream:
-        return StreamingResponse(
-            generator.stream_answer(standalone_query, hits, history),
-            media_type="text/event-stream",
-        )
     else:
+        # Advisory / synthesis turn: the documents hold the facts but never the
+        # conclusion the user is asking for ("KH sẽ chọn sản phẩm nào?"), which
+        # the strict prompt refuses outright. Same retrieved context, a prompt
+        # that may reason across it — see app/generation/advisory.py.
+        advisory = settings.advisory_mode_enabled and (
+            bool(carried_labels)
+            or is_advisory_query(query)
+            or is_advisory_query(standalone_query)
+        )
+        if advisory:
+            logger.info("advisory mode: synthesizing over %d hit(s)", len(hits))
+        if request.stream:
+            return StreamingResponse(
+                generator.stream_answer(
+                    standalone_query, hits, history, advisory=advisory
+                ),
+                media_type="text/event-stream",
+            )
         answer = await run_in_threadpool(
-            generator.generate_answer, standalone_query, hits, history
+            generator.generate_answer,
+            standalone_query,
+            hits,
+            history,
+            advisory,
         )
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",

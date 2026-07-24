@@ -5,13 +5,17 @@
 /TEAM_GUIDE.md
 
 # ---- Data (confidential) ----
-# The whole data/ tree is ignored EXCEPT the public glossary.
-# NEVER force-add anything else under data/.
+# The whole data/ tree is ignored EXCEPT the public glossary and the
+# knowledge-pack manifest TEMPLATE (the downloaded public files and the real
+# manifest stay local). NEVER force-add anything else under data/.
 data/*
 !data/glossary/
 data/glossary/*
 !data/glossary/*.yaml
 !data/glossary/*.yml
+!data/knowledge_pack/
+data/knowledge_pack/*
+!data/knowledge_pack/manifest.example.yaml
 
 # ---- Models & vector store (large / machine-local) ----
 # Leading slash: anchor to repo root ONLY — an unanchored "models/" also

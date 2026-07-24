@@ -1,0 +1,26 @@
+# Knowledge pack — tài liệu tham khảo CÔNG KHAI (không phải tài liệu nội bộ).
+#
+# Mục đích: trợ lý cần kiến thức nền công khai (luật, thông tư, brochure sản
+# phẩm đã công bố) mà không được phép gọi mạng lúc trả lời (CLAUDE.md quy tắc 4
+# — ứng dụng phải chạy air-gapped). Cách làm: một người TẢI THỦ CÔNG các tệp
+# công khai về thư mục này, ghi lại địa chỉ gốc ở đây, rồi chạy:
+#
+#     python scripts/ingest_knowledge_pack.py
+#
+# Địa chỉ `url` KHÔNG BAO GIỜ được ứng dụng truy cập — nó chỉ được hiển thị làm
+# liên kết trong phần "Nguồn tham khảo" để nhân viên bấm vào xem bản gốc công
+# khai. Trích dẫn của các tài liệu này được gắn nhãn "(nguồn công khai)".
+#
+# CHỈ đặt tài liệu công khai vào đây. Tài liệu nội bộ nạp qua trang quản trị.
+#
+# Cách dùng: sao chép tệp này thành `manifest.yaml` trong cùng thư mục và sửa.
+
+- file: luat_kinh_doanh_bao_hiem_2022.pdf
+  title: Luật Kinh doanh bảo hiểm 2022 (Luật 08/2022/QH15)
+  url: https://vanban.chinhphu.vn/dia-chi-cong-khai-cua-van-ban
+  doc_type: reference        # tuỳ chọn, mặc định "reference"
+  department: Pháp chế       # tuỳ chọn, phải nằm trong DEPARTMENTS ở .env
+
+- file: thong_tu_huong_dan.pdf
+  title: Thông tư hướng dẫn nghiệp vụ bảo hiểm nhân thọ
+  url: https://example.gov.vn/dia-chi-cong-khai-cua-thong-tu

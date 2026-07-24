@@ -8,6 +8,7 @@ loop. See the ingestion modules and the insurance-rag-pipeline skill (sections 1
 
 from __future__ import annotations
 
+import re
 import unicodedata
 import uuid
 from pathlib import Path, PurePosixPath
@@ -68,6 +69,31 @@ def _validate_department(department: str | None) -> str | None:
     return department
 
 
+def _validate_source_url(source_url: str | None) -> str | None:
+    """Normalize/validate the public URL a knowledge-pack document came from.
+
+    Empty/whitespace -> None. Only ``http(s)`` is accepted: the value is
+    rendered as a Markdown citation link, so a ``javascript:``/``data:`` URL
+    would be an injection vector, and any other scheme could not be a public
+    source anyway. The app NEVER fetches this URL — it is provenance only, so
+    accepting it does not put the deployment back on the network.
+    """
+    if source_url is None:
+        return None
+    source_url = source_url.strip()
+    if not source_url:
+        return None
+    if not re.match(r"^https?://[^\s<>\"')]+$", source_url, flags=re.IGNORECASE):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Nguồn URL không hợp lệ: «{source_url}». "
+                "Chỉ chấp nhận địa chỉ bắt đầu bằng http:// hoặc https://."
+            ),
+        )
+    return source_url
+
+
 def _safe_filename(name: str | None) -> str:
     """Reduce an uploaded filename to a safe basename.
 
@@ -115,10 +141,12 @@ def _run_pipeline(
     doc_type: DocType | None,
     doc_title: str | None = None,
     department: str | None = None,
+    source_url: str | None = None,
 ) -> IngestResponse:
     """Synchronous parse -> clean -> chunk -> enrich -> index for one file."""
     doc = route_to_parser(path, doc_type=doc_type)
     doc.department = department  # None keeps it unset; carried into every chunk
+    doc.source_url = source_url  # public original, for knowledge-pack citations
     override_given = bool(doc_title and doc_title.strip())
     if override_given:
         # Manual override: real-world PDFs often carry a generic first heading
@@ -156,9 +184,16 @@ async def ingest_file(
     doc_type: DocType | None = Form(default=None),
     doc_title: str | None = Form(default=None),
     department: str | None = Form(default=None),
+    source_url: str | None = Form(default=None),
 ) -> IngestResponse:
-    """Ingest a single document (Markdown/DOCX/XLSX/glossary YAML)."""
+    """Ingest a single document (Markdown/DOCX/XLSX/glossary YAML).
+
+    ``source_url`` marks the file as knowledge-pack material downloaded from a
+    public page (law, circular, public brochure): citations then link to that
+    public original instead of the internal viewer.
+    """
     department = _validate_department(department)
+    source_url = _validate_source_url(source_url)
     filename = _safe_filename(file.filename)
     uploads = settings.data_dir / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)
@@ -167,7 +202,7 @@ async def ingest_file(
 
     try:
         return await run_in_threadpool(
-            _run_pipeline, dest, doc_type, doc_title, department
+            _run_pipeline, dest, doc_type, doc_title, department, source_url
         )
     except (NotImplementedError, ValueError) as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
@@ -303,8 +338,8 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
     new title flows into embeddings + reranking (it's part of ``embed_text``);
     when there is no source file to re-ingest from, it degrades to a
     metadata-only title change (retrieval stays keyed to the old embedded title
-    until the file is re-uploaded). ``doc_type``/``department`` are always a
-    metadata-only ``set_payload`` — neither is embedded.
+    until the file is re-uploaded). ``doc_type``/``department``/``source_url``
+    are always a metadata-only ``set_payload`` — none of them is embedded.
     """
     meta = indexer.get_document_meta(doc_id)
     if meta is None:
@@ -316,6 +351,8 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
     new_type = req.doc_type if "doc_type" in fields and req.doc_type else None
     set_department = "department" in fields
     new_dept = _validate_department(req.department) if set_department else None
+    set_source_url = "source_url" in fields
+    new_source_url = _validate_source_url(req.source_url) if set_source_url else None
 
     new_title = None
     if "doc_title" in fields and req.doc_title and req.doc_title.strip():
@@ -329,7 +366,9 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
             # preserving the current values for whatever the caller didn't touch.
             eff_type = new_type or DocType(meta["doc_type"])
             eff_dept = new_dept if set_department else meta["department"]
-            _run_pipeline(source, eff_type, new_title, eff_dept)
+            # .get: documents indexed before source_url existed carry no such key.
+            eff_url = new_source_url if set_source_url else meta.get("source_url")
+            _run_pipeline(source, eff_type, new_title, eff_dept, eff_url)
         else:
             indexer.set_document_metadata(
                 doc_id,
@@ -337,6 +376,8 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
                 doc_type=(new_type.value if new_type else None),
                 department=new_dept,
                 set_department=set_department,
+                source_url=new_source_url,
+                set_source_url=set_source_url,
             )
     else:
         indexer.set_document_metadata(
@@ -344,6 +385,8 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
             doc_type=(new_type.value if new_type else None),
             department=new_dept,
             set_department=set_department,
+            source_url=new_source_url,
+            set_source_url=set_source_url,
         )
 
     info = _document_info(doc_id)

@@ -11,7 +11,9 @@ from urllib.parse import quote
 from app.config.settings import settings
 from app.generation.generator import (
     ThinkStripper,
+    _advisory_disclaimer_suffix,
     _disclaimer_suffix,
+    _general_knowledge_suffix,
     _hybrid_disclaimer_suffix,
     _is_refusal,
     _ollama_payload,
@@ -23,7 +25,11 @@ from app.generation.generator import (
     strip_think,
 )
 from app.generation.prompts import (
+    ADVISORY_DISCLAIMER,
+    ADVISORY_SYSTEM_PROMPT,
     CALC_DISCLAIMER,
+    GENERAL_KNOWLEDGE_DISCLAIMER,
+    GENERAL_KNOWLEDGE_HEADING,
     HYBRID_DISCLAIMER,
     HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
@@ -31,6 +37,7 @@ from app.generation.prompts import (
     build_user_prompt,
     format_context,
     format_sources,
+    system_prompt,
 )
 from app.models.schemas import ChatMessage, DocType, Hit, QdrantPayload
 
@@ -41,6 +48,7 @@ def _hit(
     text: str,
     page: int | None = None,
     source_filename: str | None = None,
+    source_url: str | None = None,
 ) -> Hit:
     payload = QdrantPayload(
         doc_id="d1",
@@ -51,6 +59,7 @@ def _hit(
         display_text=text,
         chunk_index=0,
         source_filename=source_filename,
+        source_url=source_url,
         ingested_at="2026-01-01T00:00:00+00:00",
     )
     return Hit(point_id="p1", score=1.0, payload=payload)
@@ -144,7 +153,10 @@ def test_build_messages_includes_system_history_and_grounded_question() -> None:
     hits = [_hit("Tài liệu A", "Điều 1", "Nội dung.")]
     messages = build_messages("còn phí gộp?", hits, history)
 
-    assert messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    # The system turn is the assembled strict prompt (SYSTEM_PROMPT plus the
+    # optional general-knowledge block when that setting is on).
+    assert messages[0] == {"role": "system", "content": system_prompt()}
+    assert messages[0]["content"].startswith(SYSTEM_PROMPT.split("\n")[0])
     assert messages[1] == {"role": "user", "content": "Phí thuần là gì?"}
     assert messages[2] == {"role": "assistant", "content": "Phí thuần là ..."}
     assert messages[-1]["role"] == "user"
@@ -219,6 +231,86 @@ def test_hybrid_disclaimer_not_duplicated() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Advisory / synthesis prompt variant
+# --------------------------------------------------------------------------- #
+
+
+def test_advisory_prompt_keeps_every_non_negotiable_property() -> None:
+    # Advisory mode widens *reasoning*, never sourcing: the refusal sentence,
+    # the citation format, the wrong-product ban, the calc disclaimer, the
+    # exclusion rules and the metric rule must all survive verbatim.
+    assert REFUSAL_MESSAGE.rstrip(".") in ADVISORY_SYSTEM_PROMPT
+    assert "[Tên tài liệu, mục X]" in ADVISORY_SYSTEM_PROMPT
+    assert (
+        "TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác"
+        in ADVISORY_SYSTEM_PROMPT
+    )
+    assert CALC_DISCLAIMER.rstrip(".") in ADVISORY_SYSTEM_PROMPT
+    assert "LOẠI TRỪ" in ADVISORY_SYSTEM_PROMPT
+    assert "CHỈ VÌ ngữ cảnh có mục loại trừ" in ADVISORY_SYSTEM_PROMPT
+    assert "Lãi suất cam kết" in ADVISORY_SYSTEM_PROMPT
+
+
+def test_advisory_prompt_permits_synthesis_that_strict_prompt_forbids() -> None:
+    assert ADVISORY_SYSTEM_PROMPT != SYSTEM_PROMPT
+    # Strict forbids anything outside the context outright...
+    assert "Không dùng kiến thức bên ngoài ngữ cảnh" in SYSTEM_PROMPT
+    # ...advisory instead requires every DATUM to come from context while
+    # allowing conclusions to be drawn across those data.
+    assert "ĐƯỢC PHÉP suy luận và tổng hợp" in ADVISORY_SYSTEM_PROMPT
+    assert "phù hợp với nhu cầu nào" in ADVISORY_SYSTEM_PROMPT
+    # And it must not let a partly-covered comparison collapse into a refusal.
+    assert "KHÔNG được từ chối toàn bộ" in ADVISORY_SYSTEM_PROMPT
+    # Recommendations stay conditional and internal-facing.
+    assert "không dùng ngôn ngữ chào bán" in ADVISORY_SYSTEM_PROMPT
+
+
+def test_build_messages_selects_prompt_variant() -> None:
+    hits = [_hit("Tài liệu A", "Điều 1", "Nội dung.")]
+    strict = build_messages("so sánh?", hits, None, advisory=False)
+    advisory = build_messages("so sánh?", hits, None, advisory=True)
+    assert strict[0]["content"] == system_prompt(advisory=False)
+    assert advisory[0]["content"] == system_prompt(advisory=True)
+    assert strict[0]["content"] != advisory[0]["content"]
+    # The retrieved context is identical — only the instructions differ.
+    assert strict[-1] == advisory[-1]
+
+
+def test_advisory_disclaimer_appended_labeled_and_not_duplicated() -> None:
+    suffix = _advisory_disclaimer_suffix("Sản phẩm A phù hợp nếu ...")
+    assert ADVISORY_DISCLAIMER in suffix
+    assert _advisory_disclaimer_suffix(f"... {ADVISORY_DISCLAIMER}") == ""
+    assert _advisory_disclaimer_suffix(REFUSAL_MESSAGE) == ""
+    assert _advisory_disclaimer_suffix("") == ""
+
+
+# --------------------------------------------------------------------------- #
+# Optional general-knowledge supplement
+# --------------------------------------------------------------------------- #
+
+
+def test_general_knowledge_block_is_opt_in_via_settings() -> None:
+    with_block = system_prompt(general_knowledge=True)
+    without = system_prompt(general_knowledge=False)
+    assert GENERAL_KNOWLEDGE_HEADING in with_block
+    assert GENERAL_KNOWLEDGE_HEADING not in without
+    assert without == SYSTEM_PROMPT
+    # It may never displace the grounded answer, nor carry company specifics.
+    assert "KHÔNG BAO GIỜ thay thế phần trả lời dựa trên ngữ cảnh" in with_block
+    assert "KHÔNG trích dẫn [Tên tài liệu, mục X]" in with_block
+
+
+def test_general_knowledge_label_added_only_when_the_section_is_present() -> None:
+    plain = "Quyền lợi tử vong là 100% STBH [Quy tắc A, Điều 5]."
+    assert _general_knowledge_suffix(plain) == ""
+    mixed = f"{plain}\n\n{GENERAL_KNOWLEDGE_HEADING}\nBảo hiểm hỗn hợp là ..."
+    assert GENERAL_KNOWLEDGE_DISCLAIMER in _general_knowledge_suffix(mixed)
+    # Not duplicated, and never attached to a refusal.
+    assert _general_knowledge_suffix(f"{mixed}\n{GENERAL_KNOWLEDGE_DISCLAIMER}") == ""
+    assert _general_knowledge_suffix(REFUSAL_MESSAGE) == ""
+
+
+# --------------------------------------------------------------------------- #
 # Sources block ("Nguồn tham khảo")
 # --------------------------------------------------------------------------- #
 
@@ -270,6 +362,28 @@ def test_format_sources_falls_back_to_viewer_for_non_inline_original() -> None:
     block = format_sources(hits)
     base = settings.api_public_base_url
     assert f"{base}/documents/d1/view?section={sec}&page=2" in block
+
+
+def test_format_sources_links_knowledge_pack_to_its_public_url() -> None:
+    # Knowledge-pack material cites the public original it was downloaded from,
+    # labeled so it's never mistaken for an internal company document.
+    url = "https://vanban.example.gov.vn/luat-08-2022-qh15"
+    hits = [
+        _hit(
+            "Luật Kinh doanh bảo hiểm 2022",
+            "Điều 12",
+            "A",
+            page=4,
+            source_filename="luat.pdf",
+            source_url=url,
+        )
+    ]
+    block = format_sources(hits)
+    assert f"- [1] [Luật Kinh doanh bảo hiểm 2022]({url}) — Điều 12" in block
+    assert "(nguồn công khai)" in block
+    assert "(trang 4)" in block
+    # The public URL wins over the internal viewer/file link entirely.
+    assert settings.api_public_base_url + "/documents/d1" not in block
 
 
 def test_format_sources_empty_hits() -> None:
