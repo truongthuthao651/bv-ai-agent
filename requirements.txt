@@ -2,13 +2,13 @@
 # CORE runtime for the FastAPI app — everything Phase 1 needs, pinned & buildable.
 # The heavy document-parsing / embedding / evaluation stack lives in
 # requirements-ml.txt and is added in the phase that implements ingestion &
-# retrieval (see the note in that file and in the Dockerfile).
+# retrieval (see the note in that file).
 # Never use unpinned ranges or :latest — reproducible offline builds only.
 # =============================================================================
 
 # ---- Web framework / server ----
 fastapi==0.115.6
-uvicorn[standard]==0.34.0
+uvicorn[standard]==0.24.0
 python-multipart==0.0.20          # file uploads on /ingest
 sse-starlette==2.1.3              # SSE streaming for /v1/chat/completions
 markdown-it-py==4.2.0            # render cited source docs to HTML (document viewer)
@@ -27,7 +27,9 @@ qdrant-client==1.12.2
 # Lightweight, conflict-free. Lets setup_models.sh pre-download the reranker
 # weights into ./models so the stack can later run fully offline. The reranker
 # *runtime* (FlagEmbedding/transformers) arrives with requirements-ml.txt.
-huggingface-hub==0.27.1
+# Required by transformers/docling (the PDF ingestion stack); 0.27.1 causes
+# imports to fail because current transformers requires >=0.34.0.
+huggingface-hub==0.36.2
 
 # ---- Dev / test / lint ----
 pytest==8.3.4

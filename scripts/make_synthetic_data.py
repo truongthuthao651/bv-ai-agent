@@ -22,7 +22,7 @@ from datetime import date
 from pathlib import Path
 
 # Repo-relative output dir (this script runs on the host, not in the container,
-# so we don't use the container-absolute settings paths here).
+# so we do not use application settings paths here).
 SYNTHETIC_DIR = Path(__file__).resolve().parent.parent / "data" / "synthetic"
 
 

@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     rerank_model: str = "bge-reranker-v2-m3"
     # Local weight dirs for FlagEmbedding (bge-m3 dense+sparse) and the reranker.
     # Downloaded by setup_models.sh so indexing/reranking run fully offline.
-    # Relative to the working directory: the repo root natively, /app in Docker.
+    # Relative to the repository working directory.
     embed_model_path: str = "./models/bge-m3"
     rerank_model_path: str = "./models/bge-reranker-v2-m3"
     llm_temperature: float = 0.2
@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     # ---- Qdrant ----
     # Non-empty QDRANT_LOCAL_PATH switches the app to qdrant-client's EMBEDDED
     # local mode: the vector DB runs in-process and persists to this directory —
-    # no Qdrant server (and no Docker) needed. This is the no-Docker deployment
+    # no Qdrant server needed. This is the embedded deployment
     # mode. Caveat: the storage dir is single-process; anything else that opens
     # it (e.g. eval/run_ragas.py) must run while the API is stopped.
     # Empty (default) = classic server mode via qdrant_url.
@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     docling_models_path: Path = Path("./models/docling")
 
     # ---- Paths ----
-    # Relative to the working directory: the repo root natively, /app in Docker.
+    # Relative to the repository working directory.
     data_dir: Path = Path("./data")
     synthetic_dir: Path = Path("./data/synthetic")
     glossary_path: Path = Path("./data/glossary/thuat_ngu.yaml")

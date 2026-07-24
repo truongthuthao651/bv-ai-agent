@@ -3,7 +3,7 @@
 `GET /health` checks the two backing services (Ollama and Qdrant) and reports a
 per-service status so operators can tell WHAT is down, not just that something is.
 All checks stay on the local machine — no external hosts. When Qdrant runs
-embedded (``QDRANT_LOCAL_PATH`` set — the no-Docker mode), there is no server to
+embedded (``QDRANT_LOCAL_PATH`` set), there is no server to
 ping; the check exercises the in-process client instead.
 """
 
@@ -52,7 +52,7 @@ async def health() -> JSONResponse:
     """Report overall + per-service health.
 
     Returns HTTP 200 when every dependency is reachable, otherwise 503 so that
-    Docker/orchestration health checks can act on it.
+    monitoring tools can act on it.
     """
     async with httpx.AsyncClient(timeout=5.0) as client:
         ollama = await _ping(client, f"{settings.ollama_base_url}/api/tags")

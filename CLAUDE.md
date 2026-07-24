@@ -4,17 +4,16 @@
 
 An internal, fully-local AI assistant (ChatGPT-like) that answers employees'
 questions about company documents. Everything runs offline on one machine.
-Zero budget: only free/open-source tools. **Deployment is Docker-free**
-(company machines don't allow Docker): native venvs + Ollama, with Qdrant
-running EMBEDDED in-process (qdrant-client local mode, `QDRANT_LOCAL_PATH`).
-Docker Compose remains as an optional dev-machine stack.
+Zero budget: only free/open-source tools. Deployment uses native virtual
+environments plus Ollama, with Qdrant running EMBEDDED in-process
+(qdrant-client local mode, `QDRANT_LOCAL_PATH`).
 
 - **Inputs:** text questions, PDF / DOCX / XLSX documents, images (scans, screenshots).
   Documents are math-heavy: actuarial terminology, equations, charts.
 - **Output:** grounded answers in Vietnamese with source citations; formulas rendered as LaTeX
 - **Serving:** Ollama (chat: `qwen3:8b`, vision: `qwen2.5vl:7b`, embeddings: `bge-m3`)
 - **Vector DB:** Qdrant (hybrid dense + sparse retrieval), reranker `bge-reranker-v2-m3`;
-  embedded in-process on deployment (`QDRANT_LOCAL_PATH`), server mode in Docker dev
+  embedded in-process by default (`QDRANT_LOCAL_PATH`)
 - **Parsing:** Docling with formula enrichment (PDF), pandoc (DOCX → Markdown+LaTeX),
   pandas/openpyxl (XLSX → Markdown tables), PaddleOCR + PP-FormulaNet or Qwen2.5-VL
   (scans & formula OCR, Vietnamese)
@@ -48,9 +47,6 @@ bv-ai-agent/
 ├── README.md                  # Bilingual (VI first) — written for the manager who deploys
 ├── .env.example               # Template; each machine copies to .env
 ├── .gitignore
-├── docker-compose.yml         # CPU-safe baseline (ollama, qdrant, api, open-webui)
-├── docker-compose.gpu.yml     # Override adding NVIDIA GPU to ollama
-├── Dockerfile                 # FastAPI app image (python:3.12-slim + pandoc)
 ├── requirements.txt           # Pinned versions
 ├── .claude/
 │   └── skills/
@@ -91,10 +87,10 @@ bv-ai-agent/
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
 ├── scripts/
-│   ├── setup_native.sh        # One-time no-Docker setup: venvs + models (deployment path)
+│   ├── setup_native.sh        # One-time native setup: venvs + models
 │   ├── run_native.sh          # Start ollama/API/Open WebUI natively (embedded Qdrant)
 │   ├── stop_native.sh         # Stop what run_native.sh started (pid files in run/)
-│   ├── setup_models.sh        # ollama pull + HF downloads (native/docker autodetect)
+│   ├── setup_models.sh        # ollama pull + HF downloads
 │   ├── ingest.sh              # Batch-ingest a folder
 │   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
 │   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
@@ -143,18 +139,17 @@ bv-ai-agent/
   section was retrieved, never invent exclusions);
   never remap table metrics (lãi suất cam kết / phí ≠ tỷ lệ bồi thường).
   Never weaken these in prompts.py.
-- **Versions:** pin everything (requirements.txt exact versions, Docker image tags).
-  Never use `:latest`.
+- **Versions:** pin every Python dependency exactly. Never use unbounded ranges.
 - **Style:** type hints everywhere, `ruff` for lint/format, small pure functions
-  in ingestion/ so they're unit-testable without Docker.
+  in ingestion/ so they're unit-testable without external services.
 
 ## Commands
 
 ```bash
 bash scripts/setup_native.sh                                # one-time native setup (venvs + models)
-bash scripts/run_native.sh                                  # start stack natively (no Docker)
+bash scripts/run_native.sh                                  # start stack natively
 bash scripts/stop_native.sh                                 # stop the native stack
-bash scripts/setup_models.sh                                # pull all models (native/docker autodetect)
+bash scripts/setup_models.sh                                # pull all models
 bash scripts/healthcheck.sh                                 # smoke test
 python scripts/make_synthetic_data.py                       # regenerate fake docs
 bash scripts/ingest.sh data/synthetic                       # index synthetic corpus
@@ -162,15 +157,13 @@ bash scripts/ingest.sh data/glossary                        # index the glossary
 pytest tests/ -x -q                                         # unit tests (no services needed)
 python eval/run_ragas.py                                    # RAG quality metrics (native: stop the API first — embedded Qdrant is single-process)
 ruff check app/ && ruff format app/                         # lint + format
-docker compose up -d                                        # optional Docker dev stack (CPU)
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GPU
 ```
 
 ## Environment notes
 
 - Dev happens on a personal laptop; deployment is `git clone` + `.env` +
-  `scripts/setup_native.sh` / `run_native.sh` on a company laptop by the manager
-  — **no Docker there** (company policy). Anything machine-specific belongs in
+  `scripts/setup_native.sh` / `run_native.sh` on a company laptop by the manager.
+  Anything machine-specific belongs in
   `.env`, never in code. Keep README deployment steps up to date whenever setup
   changes.
 - Deployment needs only Python 3.11/3.12 and Ollama installed. Everything else

@@ -7,7 +7,7 @@ the Vietnamese legal hierarchy (Chương/Mục/Điều/Khoản/Điểm) embedded
 text so paths read like "Chương II > Điều 5".
 
 This is a structural split only — token-budget chunking happens later in
-chunking.py. Pure function; unit-testable without Docker.
+chunking.py. Pure function; unit-testable without external services.
 """
 
 from __future__ import annotations

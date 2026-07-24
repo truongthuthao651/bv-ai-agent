@@ -51,7 +51,7 @@ def get_client() -> QdrantClient:
     """Cached Qdrant client.
 
     With ``QDRANT_LOCAL_PATH`` set, qdrant-client runs EMBEDDED in this process
-    and persists to that directory — the no-Docker deployment mode, no Qdrant
+    and persists to that directory — the embedded deployment mode, no Qdrant
     server involved. The storage dir is single-process (file-locked), so e.g.
     eval/run_ragas.py must run while the API is stopped. Otherwise, classic
     server mode via ``QDRANT_URL``.

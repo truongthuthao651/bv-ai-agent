@@ -15,7 +15,7 @@ required_open_webui_version: 0.5.0
 
 # Open WebUI "Pipe" function. This file is NOT imported by the FastAPI app; it
 # is pasted into Open WebUI itself (Admin Panel > Settings > Functions > "+"),
-# where it runs inside the open-webui container and registers as a selectable
+# where it registers as a selectable
 # "model" in the chat UI. See scripts/open_webui/README.md for install steps.
 #
 # Why this exists: Open WebUI's native file-attach button always goes through
@@ -46,11 +46,11 @@ class Pipe:
     class Valves(BaseModel):
         INGEST_API_BASE_URL: str = Field(
             default="http://localhost:8000",
-            description="Base URL of the insurance RAG FastAPI backend. Native (no-Docker) deployment: http://localhost:8000. Docker dev stack: http://api:8000 (compose service name).",
+            description="Base URL of the local insurance RAG FastAPI backend: http://localhost:8000.",
         )
         OPENWEBUI_INTERNAL_URL: str = Field(
             default="http://localhost:3000",
-            description="Open WebUI's own URL as seen from inside itself. Native deployment: http://localhost:3000 (the serve port). Docker: http://localhost:8080 (in-container port).",
+            description="Open WebUI's local URL: http://localhost:3000.",
         )
         OPENWEBUI_API_KEY: str = Field(
             default="",

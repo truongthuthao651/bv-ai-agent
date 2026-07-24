@@ -1,6 +1,6 @@
 """Retrieval tests: glossary expansion, query rewrite gating, RRF fusion, rerank.
 
-Everything here is pure-Python / injected fakes — no Docker, Ollama, or Qdrant
+Everything here is pure-Python / injected fakes — no Ollama or Qdrant
 needed (skill sections 4-5).
 """
 

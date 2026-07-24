@@ -18,11 +18,12 @@ The ``ragas`` package itself is deliberately not used: it drags in the
 langchain/datasets stack and is built around API-hosted judges; these metrics
 mirror its intent with zero new dependencies and no network use.
 
-Run inside the api container (needs Qdrant, Ollama, and local model weights):
+Run from the repository root with the app environment (stop the API first
+because embedded Qdrant storage is single-process):
 
-    docker compose exec api python eval/run_ragas.py
-    docker compose exec api python eval/run_ragas.py --retrieval-only   # fast pass
-    docker compose exec api python eval/run_ragas.py --category formula --no-judge
+    .venv/Scripts/python.exe eval/run_ragas.py              # Windows Git Bash
+    .venv/bin/python eval/run_ragas.py                      # macOS/Linux
+    # Add --retrieval-only or --category formula --no-judge as needed.
 
 Results are printed per category and written as JSON under eval/results/
 (gitignored) so runs can be compared over time. Faithfulness or context

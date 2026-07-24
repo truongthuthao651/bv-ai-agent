@@ -1,42 +1,84 @@
 #!/usr/bin/env bash
 # =============================================================================
-# One-time NATIVE (no-Docker) setup for macOS / Linux.
+# One-time native setup for the local RAG stack.
 #
-# Installs everything into two virtualenvs inside the repo — no system-wide
-# software beyond Python 3.11/3.12 and Ollama (https://ollama.com):
-#   .venv        — the FastAPI app (pandoc arrives bundled via pypandoc-binary;
-#                  the vector DB runs EMBEDDED in-process, so no Qdrant server)
-#   .venv-webui  — Open WebUI (big dependency tree; kept apart from the app's)
-# Then pulls all model weights via scripts/setup_models.sh.
-#
-# Network access is needed ONLY during this script (pip + model downloads);
-# afterwards the stack runs fully offline via scripts/run_native.sh.
+# UV is preferred. If it is unavailable, the script falls back to Python 3.11
+# or 3.12 with venv/pip. Both the FastAPI app and Open WebUI get separate,
+# repository-local environments so no project dependency is system-installed.
 # =============================================================================
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# ---- Pick a Python: Open WebUI 0.5.4 requires >=3.11,<3.13 ----
-PYTHON=""
-for cand in python3.12 python3.11 python3; do
-  if command -v "$cand" >/dev/null 2>&1; then
-    if "$cand" -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info < (3, 13) else 1)'; then
-      PYTHON="$cand"
-      break
+find_python() {
+  local candidate
+  for candidate in python3.12 python3.11 python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c 'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))'; then
+      printf '%s\n' "$candidate"
+      return 0
     fi
+  done
+  return 1
+}
+
+venv_python() {
+  local venv_dir="$1"
+  if [[ -x "$venv_dir/bin/python" ]]; then
+    printf '%s\n' "$venv_dir/bin/python"
+  elif [[ -f "$venv_dir/Scripts/python.exe" ]]; then
+    printf '%s\n' "$venv_dir/Scripts/python.exe"
+  else
+    return 1
   fi
-done
-if [[ -z "$PYTHON" ]]; then
-  echo "ERROR: need Python 3.11 or 3.12 on PATH (Open WebUI does not support 3.13 yet)." >&2
-  echo "       Install from https://www.python.org/downloads/ and re-run." >&2
-  exit 1
+}
+
+create_venv() {
+  local venv_dir="$1"
+  if [[ -e "$venv_dir" ]]; then
+    if ! venv_python "$venv_dir" >/dev/null; then
+      echo "ERROR: $venv_dir exists but is not a usable virtual environment." >&2
+      echo "       Move it aside or remove it manually, then re-run this script." >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ "$SETUP_TOOL" == "uv" ]]; then
+    uv venv --python 3.12 "$venv_dir"
+  else
+    "$FALLBACK_PYTHON" -m venv "$venv_dir"
+  fi
+}
+
+install_into() {
+  local python_path="$1"
+  shift
+  if [[ "$SETUP_TOOL" == "uv" ]]; then
+    uv pip install --python "$python_path" "$@"
+  else
+    "$python_path" -m pip install "$@"
+  fi
+}
+
+if command -v uv >/dev/null 2>&1; then
+  SETUP_TOOL="uv"
+  FALLBACK_PYTHON=""
+  echo "==> Using uv ($(uv --version))"
+else
+  SETUP_TOOL="python"
+  FALLBACK_PYTHON="$(find_python || true)"
+  if [[ -z "$FALLBACK_PYTHON" ]]; then
+    echo "ERROR: uv is unavailable and no supported Python 3.11/3.12 interpreter was found." >&2
+    exit 1
+  fi
+  echo "==> uv not found; using $FALLBACK_PYTHON ($("$FALLBACK_PYTHON" --version))"
 fi
-echo "==> Using $($PYTHON --version) ($(command -v "$PYTHON"))"
 
 if ! command -v ollama >/dev/null 2>&1; then
-  echo "WARN: ollama not found on PATH. Install it from https://ollama.com" >&2
-  echo "      (needed to serve the chat/vision models; re-run this script after)." >&2
+  echo "ERROR: ollama CLI not found. Install it from https://ollama.com and re-run." >&2
+  exit 1
 fi
 
 if [[ ! -f .env ]]; then
@@ -44,34 +86,34 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
-# ---- App venv (install order mirrors the Dockerfile: CPU torch BEFORE the
-#      embedding stack so FlagEmbedding/docling never pull the CUDA build) ----
-echo "==> Creating app venv (.venv) and installing pinned requirements"
-[[ -d .venv ]] || "$PYTHON" -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.txt
-.venv/bin/pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
-.venv/bin/pip install -r requirements-embed.txt
-.venv/bin/pip install torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
-.venv/bin/pip install -r requirements-pdf.txt
+echo "==> Preparing app environment (.venv)"
+create_venv .venv
+APP_PYTHON="$(venv_python .venv)"
+"$APP_PYTHON" -c 'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))' \
+  || { echo "ERROR: .venv must use Python 3.11 or 3.12." >&2; exit 1; }
 
-# ---- Open WebUI venv (version pinned to match the compose image tag) ----
-echo "==> Creating Open WebUI venv (.venv-webui)"
-[[ -d .venv-webui ]] || "$PYTHON" -m venv .venv-webui
-.venv-webui/bin/pip install --upgrade pip
-.venv-webui/bin/pip install open-webui==0.5.4
+# Keep this order: CPU torch must be installed before the embedding/PDF stacks
+# so their dependencies do not select a CUDA build on CPU-only machines.
+install_into "$APP_PYTHON" -r requirements.txt
+install_into "$APP_PYTHON" torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
+install_into "$APP_PYTHON" -r requirements-embed.txt
+install_into "$APP_PYTHON" torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
+install_into "$APP_PYTHON" -r requirements-pdf.txt
 
-# ---- Bảo Việt branding (logo, colors, VI prompt suggestions) ----
-# Patches the installed Open WebUI package in place; also re-run automatically
-# by run_native.sh before each start (pip upgrades restore stock assets).
-.venv/bin/python scripts/open_webui/apply_branding.py || true
+echo "==> Preparing Open WebUI environment (.venv-webui)"
+create_venv .venv-webui
+WEBUI_PYTHON="$(venv_python .venv-webui)"
+"$WEBUI_PYTHON" -c 'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))' \
+  || { echo "ERROR: .venv-webui must use Python 3.11 or 3.12." >&2; exit 1; }
+install_into "$WEBUI_PYTHON" open-webui==0.5.4
 
-# ---- Model weights (Ollama models + HF embedding/reranker/docling) ----
+# Branding is idempotent and run again before each Open WebUI start.
+"$APP_PYTHON" scripts/open_webui/apply_branding.py || true
+
+echo "==> Downloading local model weights"
 bash scripts/setup_models.sh
 
 echo "==> Native setup complete."
-echo "    Start the stack:   bash scripts/run_native.sh"
-echo "    (Run it once now, while still online: Open WebUI fetches a small"
-echo "     internal model on first start; afterwards everything is offline.)"
-echo "    Check health:      bash scripts/healthcheck.sh"
-echo "    Stop the stack:    bash scripts/stop_native.sh"
+echo "    Start:  bash scripts/run_native.sh"
+echo "    Check:  bash scripts/healthcheck.sh"
+echo "    Stop:   bash scripts/stop_native.sh"

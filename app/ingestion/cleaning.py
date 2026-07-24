@@ -1,6 +1,6 @@
 """Text cleaning: Unicode normalization and header/footer stripping.
 
-Small pure functions so they're unit-testable without Docker. All Vietnamese
+Small pure functions so they're unit-testable without external services. All Vietnamese
 text is NFC-normalized at ingestion (CLAUDE.md convention).
 """
 

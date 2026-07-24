@@ -20,7 +20,7 @@ data/glossary/*
 /models/
 /qdrant_storage/
 
-# ---- Native (no-Docker) runtime state ----
+# ---- Native runtime state ----
 /open_webui_data/
 /logs/
 /run/

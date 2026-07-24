@@ -1,50 +1,42 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Smoke test: is every service in the stack reachable?
-# Checks ollama, qdrant, the FastAPI app (/health), and Open WebUI.
-# Exits non-zero if any check fails.
+# Smoke test for the native stack: Ollama, FastAPI (including embedded Qdrant),
+# and Open WebUI. Exits non-zero when any required endpoint is unavailable.
 # =============================================================================
-set -uo pipefail
+set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Read one variable from .env. Never `source` it: values contain spaces and
-# UTF-8 (ASSISTANT_NAME, WEBUI_NAME), which the shell would try to execute.
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 
-API_PORT="$(env_get API_PORT)"
-API_PORT="${API_PORT:-8000}"
-OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"
-OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
-QDRANT_LOCAL_PATH="$(env_get QDRANT_LOCAL_PATH)"
+API_PORT="$(env_get API_PORT)";               API_PORT="${API_PORT:-8000}"
+OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"; OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
+OLLAMA_BASE_URL="$(env_get OLLAMA_BASE_URL)"; OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 
-fail=0
-check() {
-  local name="$1" url="$2"
+check_endpoint() {
+  local name="$1" url="$2" pid_file="$3" pid_info=""
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      pid_info=" (PID: $pid)"
+    else
+      pid_info=" (stale PID file)"
+    fi
+  fi
   if curl -fsS -o /dev/null --max-time 5 "$url"; then
-    echo "  [ OK ] $name  ($url)"
+    echo "  [ OK ] $name ($url)$pid_info"
   else
-    echo "  [FAIL] $name  ($url)"
-    fail=1
+    echo "  [FAIL] $name ($url)$pid_info" >&2
+    return 1
   fi
 }
 
-echo "==> Health checks (host-facing ports)"
-check "Ollama"      "http://localhost:11434/api/tags"
-if [[ -n "$QDRANT_LOCAL_PATH" ]]; then
-  # Native mode: Qdrant runs embedded inside the API process — no port to ping.
-  # The FastAPI /health check below exercises it in-process.
-  echo "  [ -- ] Qdrant  (embedded in the API — covered by the FastAPI check)"
-else
-  check "Qdrant"    "http://localhost:6333/healthz"
-fi
-check "FastAPI app" "http://localhost:${API_PORT}/health"
-check "Open WebUI"  "http://localhost:${OPEN_WEBUI_PORT}/"
-
-if [[ "$fail" -eq 0 ]]; then
-  echo "==> All services healthy."
-else
-  echo "==> One or more services are DOWN." >&2
-fi
+echo "==> Health checks"
+fail=0
+check_endpoint "Ollama" "${OLLAMA_BASE_URL}/api/tags" "run/ollama.pid" || fail=1
+echo "  [ -- ] Qdrant (embedded in FastAPI; covered by the API health check)"
+check_endpoint "FastAPI" "http://localhost:${API_PORT}/health" "run/api.pid" || fail=1
+check_endpoint "Open WebUI" "http://localhost:${OPEN_WEBUI_PORT}/" "run/webui.pid" || fail=1
 exit "$fail"

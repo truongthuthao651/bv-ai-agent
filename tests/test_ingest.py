@@ -187,7 +187,7 @@ def test_meta_task_bypasses_retrieval(monkeypatch) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Embedded Qdrant (QDRANT_LOCAL_PATH — the no-Docker deployment mode)
+# Embedded Qdrant (QDRANT_LOCAL_PATH)
 # --------------------------------------------------------------------------- #
 
 
