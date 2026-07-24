@@ -28,9 +28,40 @@ SearchFn = Callable[[str, list[str] | None], list[Hit]]
 RerankFn = Callable[[str, list[Hit], int], list[Hit]]
 
 
+def _title_backed_labels(labels: list[str], titles: list[str]) -> list[str]:
+    """Keep only labels that resolve to a DISTINCT indexed document title.
+
+    Cue-span extraction can turn an open-ended question ("An Khang Như Ý so với
+    sản phẩm nào trên thị trường?") into junk labels ("trên thị trường ngoài
+    tương lai", "không"). Each such label would otherwise be routed to comparison
+    and burn a full per-product search+rerank pass. When the indexed titles are
+    known, a label that matches no title (or only a title another label already
+    claimed) is not a real second product and is dropped.
+    """
+    kept: list[str] = []
+    used: set[str] = set()
+    for label in labels:
+        matched = {t for t in titles if title_covers_product(t, label)}
+        if matched and not matched <= used:
+            used |= matched
+            kept.append(label)
+    return kept
+
+
 def is_multi_product_query(query: str, *, titles: list[str] | None = None) -> bool:
-    """True when ``query`` explicitly names at least two distinct products."""
-    return len(named_product_labels(query, titles=titles)) >= 2
+    """True when ``query`` explicitly names at least two distinct products.
+
+    When indexed titles are available (passed in, or loaded from Qdrant), a
+    candidate only counts if it resolves to a distinct indexed product — so an
+    open-ended "A so với sản phẩm nào?" (one real product + a junk span) is not
+    mistaken for a two-product comparison. With no titles available (e.g. unit
+    tests passing ``titles=[]``), it falls back to raw cue-span counting.
+    """
+    known = titles if titles is not None else [t for _, t in _load_indexed_docs()]
+    labels = named_product_labels(query, titles=known)
+    if known:
+        labels = _title_backed_labels(labels, known)
+    return len(labels) >= 2
 
 
 def focused_query(standalone: str, product_label: str) -> str:
@@ -145,9 +176,20 @@ def retrieve_multi_product(
 
     per_k = per_product_top_k or settings.comparison_per_product_top_k
     cap_n = max_products or settings.comparison_max_products
-    labels = labels[:cap_n]
     expand = expand_fn or (lambda q: q)
     known_docs = _load_indexed_docs() if docs is None else docs
+
+    # Drop junk labels that resolve to no indexed document before spending a
+    # (slow) search+rerank pass on each — but only when doing so still leaves a
+    # real ≥2-product comparison, so a legitimately-titled corpus never regresses
+    # to a single-product answer. Skipped when no doc info is available (tests
+    # inject docs=[] and rely on the title-fallback path below).
+    if known_docs:
+        backed = [lbl for lbl in labels if product_doc_ids(lbl, known_docs)]
+        if len(backed) >= 2:
+            labels = backed
+
+    labels = labels[:cap_n]
 
     buckets: list[list[Hit]] = []
     for label in labels:

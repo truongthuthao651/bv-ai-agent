@@ -20,6 +20,7 @@ from app.config.settings import settings
 from app.generation import generator
 from app.generation.advisory import is_advisory_query
 from app.generation.prompts import REFUSAL_MESSAGE
+from app.query_timing import TimingContext
 from app.models.schemas import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -84,23 +85,39 @@ def _is_meta_task(query: str) -> bool:
     return query.lstrip().startswith(_META_TASK_PREFIXES)
 
 
-def _static_response(request: ChatCompletionRequest, text: str):
+def _static_response(
+    request: ChatCompletionRequest,
+    text: str,
+    *,
+    timing: TimingContext | None = None,
+):
     """Return a fixed answer as SSE (``stream``) or a plain completion.
 
     Shared by every deterministic-answer path (meta-task, spellcheck
     clarification, product-scope refusal) so they all frame the response the
-    same way.
+    same way. ``timing`` is passed only for the post-retrieval refusals (which
+    really did take the retrieval time); the instant pre-retrieval paths leave
+    it ``None`` so no "0s" footer appears.
     """
     if request.stream:
         return StreamingResponse(
-            generator.stream_static_answer(text), media_type="text/event-stream"
+            generator.stream_static_answer(text, timing=timing),
+            media_type="text/event-stream",
         )
+    footer = ""
+    if timing is not None:
+        from app.query_timing import log_query_timing, response_time_footer
+
+        footer = response_time_footer(timing)
+        log_query_timing(timing, answer_chars=len(text))
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
         created=int(time.time()),
         model=settings.chat_model,
         choices=[
-            ChatCompletionChoice(message=ChatMessage(role="assistant", content=text))
+            ChatCompletionChoice(
+                message=ChatMessage(role="assistant", content=text + footer)
+            )
         ],
     )
 
@@ -257,6 +274,10 @@ def _retrieve(
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """Answer a chat request, grounded only in retrieved document chunks."""
+    # End-to-end timer: everything the user waits for (retrieval + generation)
+    # is measured from here, so the "⏱ Thời gian trả lời" footer and the timing
+    # log reflect the real answer latency, not just token generation.
+    started_at = time.perf_counter()
     query, history = _split_request(request)
 
     # If this turn just confirms a spellcheck clarification we sent, replay the
@@ -300,7 +321,17 @@ async def chat_completions(request: ChatCompletionRequest):
             "refusing",
             len(hits),
         )
-        return _static_response(request, REFUSAL_MESSAGE)
+        return _static_response(
+            request,
+            REFUSAL_MESSAGE,
+            timing=TimingContext(
+                started_at,
+                "refusal",
+                n_hits=len(hits),
+                query_chars=len(standalone_query),
+                stream=request.stream,
+            ),
+        )
 
     # No hit survived the reranker's relevance floor: either fall back to a
     # clearly-labeled general-knowledge answer (settings.hybrid_fallback_enabled)
@@ -317,14 +348,36 @@ async def chat_completions(request: ChatCompletionRequest):
                     "hybrid fallback skipped: conversation scope is set "
                     "(company-document follow-up)"
                 )
-            return _static_response(request, REFUSAL_MESSAGE)
+            return _static_response(
+                request,
+                REFUSAL_MESSAGE,
+                timing=TimingContext(
+                    started_at,
+                    "refusal",
+                    n_hits=0,
+                    query_chars=len(standalone_query),
+                    stream=request.stream,
+                ),
+            )
+        hybrid_timing = TimingContext(
+            started_at,
+            "hybrid",
+            n_hits=0,
+            query_chars=len(standalone_query),
+            stream=request.stream,
+        )
         if request.stream:
             return StreamingResponse(
-                generator.stream_hybrid_answer(standalone_query, history),
+                generator.stream_hybrid_answer(
+                    standalone_query, history, timing=hybrid_timing
+                ),
                 media_type="text/event-stream",
             )
         answer = await run_in_threadpool(
-            generator.generate_hybrid_answer, standalone_query, history
+            generator.generate_hybrid_answer,
+            standalone_query,
+            history,
+            timing=hybrid_timing,
         )
     else:
         # Advisory / synthesis turn: the documents hold the facts but never the
@@ -338,10 +391,21 @@ async def chat_completions(request: ChatCompletionRequest):
         )
         if advisory:
             logger.info("advisory mode: synthesizing over %d hit(s)", len(hits))
+        grounded_timing = TimingContext(
+            started_at,
+            "advisory" if advisory else "grounded",
+            n_hits=len(hits),
+            query_chars=len(standalone_query),
+            stream=request.stream,
+        )
         if request.stream:
             return StreamingResponse(
                 generator.stream_answer(
-                    standalone_query, hits, history, advisory=advisory
+                    standalone_query,
+                    hits,
+                    history,
+                    advisory=advisory,
+                    timing=grounded_timing,
                 ),
                 media_type="text/event-stream",
             )
@@ -351,6 +415,7 @@ async def chat_completions(request: ChatCompletionRequest):
             hits,
             history,
             advisory,
+            timing=grounded_timing,
         )
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",

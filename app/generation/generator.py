@@ -32,12 +32,9 @@ from app.generation.prompts import (
     system_prompt,
 )
 from app.models.schemas import ChatMessage, Hit
+from app.query_timing import TimingContext, log_query_timing, response_time_footer
 
 logger = logging.getLogger(__name__)
-
-# Only recent turns are sent to the model — keeps the context window bounded
-# for the small local model; retrieval already re-grounds each turn.
-_MAX_HISTORY_TURNS = 6
 
 _CONNECTION_ERROR_MESSAGE = (
     "Xin lỗi, hiện không thể kết nối tới mô hình sinh câu trả lời. "
@@ -124,7 +121,7 @@ def build_messages(
     prompt (comparison / "which should the customer pick?" turns).
     """
     messages = [{"role": "system", "content": system_prompt(advisory=advisory)}]
-    for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
+    for turn in (history or [])[-settings.max_history_turns :]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": build_user_prompt(query, hits)})
     return messages
@@ -139,7 +136,7 @@ def build_hybrid_messages(
     retrieved context to number and prepend.
     """
     messages = [{"role": "system", "content": HYBRID_SYSTEM_PROMPT}]
-    for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
+    for turn in (history or [])[-settings.max_history_turns :]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": query})
     return messages
@@ -296,18 +293,32 @@ def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     return f"\n\n{format_sources(hits)}"
 
 
-async def stream_static_answer(text: str) -> AsyncIterator[str]:
-    """Stream a fixed message as OpenAI SSE chunks (deterministic refusal path)."""
+async def stream_static_answer(
+    text: str, *, timing: TimingContext | None = None
+) -> AsyncIterator[str]:
+    """Stream a fixed message as OpenAI SSE chunks (deterministic refusal path).
+
+    ``timing``, when provided, appends the response-time footer and logs the
+    record — used for post-retrieval refusals (which really did take the
+    retrieval time), not for the instant pre-retrieval paths that pass ``None``.
+    """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
     yield _sse_chunk(completion_id, model, {"content": text}, None)
+    footer = response_time_footer(timing)
+    if footer:
+        yield _sse_chunk(completion_id, model, {"content": footer}, None)
+    log_query_timing(timing, answer_chars=len(text))
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
 
 
 async def _stream_chat(
-    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
+    messages: list[dict[str, str]],
+    suffix_fn: Callable[[str], str],
+    *,
+    timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Shared Ollama-streaming core: SSE chunks + a deterministic suffix.
 
@@ -315,6 +326,10 @@ async def _stream_chat(
     text (calc disclaimer + sources for grounded answers, the "general
     knowledge" label for hybrid ones) — kept a parameter so both answer paths
     share the exact same streaming/think-stripping/error-handling logic.
+
+    ``timing``, when provided, appends the "⏱ Thời gian trả lời" footer as the
+    final content chunk (after the sources block, so it reads as a footer) and
+    writes one metadata-only timing record once streaming completes.
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
@@ -356,6 +371,18 @@ async def _stream_chat(
         suffix = suffix_fn(body)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
+        # Response-time footer last (after the sources block) + timing record.
+        footer = response_time_footer(timing)
+        if footer:
+            yield _sse_chunk(completion_id, model, {"content": footer}, None)
+        first_token_s = (
+            (first_token_at - timing.started_at)
+            if (timing is not None and first_token_at is not None)
+            else None
+        )
+        log_query_timing(
+            timing, answer_chars=len(body) + len(suffix), first_token_s=first_token_s
+        )
         total_ms = (time.perf_counter() - started) * 1000
         first_ms = (
             (first_token_at - started) * 1000 if first_token_at is not None else -1.0
@@ -397,15 +424,21 @@ async def stream_answer(
     history: list[ChatMessage] | None = None,
     *,
     advisory: bool = False,
+    timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream the assistant's grounded answer as SSE lines."""
     messages = build_messages(query, hits, history, advisory=advisory)
-    async for chunk in _stream_chat(messages, _grounded_suffix_fn(hits, advisory)):
+    async for chunk in _stream_chat(
+        messages, _grounded_suffix_fn(hits, advisory), timing=timing
+    ):
         yield chunk
 
 
 async def stream_hybrid_answer(
-    query: str, history: list[ChatMessage] | None = None
+    query: str,
+    history: list[ChatMessage] | None = None,
+    *,
+    timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream a labeled, no-context answer when retrieval found nothing (skill note).
 
@@ -416,7 +449,7 @@ async def stream_hybrid_answer(
     mistaken for an answer sourced from company documents.
     """
     messages = build_hybrid_messages(query, history)
-    async for chunk in _stream_chat(messages, _hybrid_disclaimer_suffix):
+    async for chunk in _stream_chat(messages, _hybrid_disclaimer_suffix, timing=timing):
         yield chunk
 
 
@@ -482,18 +515,39 @@ def _generate_chat(
         return _CONNECTION_ERROR_MESSAGE
 
 
+def _with_timing(answer: str, timing: TimingContext | None) -> str:
+    """Append the response-time footer to a finished answer and log the record.
+
+    Kept at this (outer) level rather than inside ``_generate_chat`` so the
+    shared non-streaming core keeps its two-argument signature — which tests
+    monkeypatch — while both non-streaming answer paths still get the footer.
+    """
+    footer = response_time_footer(timing)
+    log_query_timing(timing, answer_chars=len(answer))
+    return answer + footer
+
+
 def generate_answer(
     query: str,
     hits: list[Hit],
     history: list[ChatMessage] | None = None,
     advisory: bool = False,
+    *,
+    timing: TimingContext | None = None,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
     messages = build_messages(query, hits, history, advisory=advisory)
-    return _generate_chat(messages, _grounded_suffix_fn(hits, advisory))
+    return _with_timing(
+        _generate_chat(messages, _grounded_suffix_fn(hits, advisory)), timing
+    )
 
 
-def generate_hybrid_answer(query: str, history: list[ChatMessage] | None = None) -> str:
+def generate_hybrid_answer(
+    query: str,
+    history: list[ChatMessage] | None = None,
+    *,
+    timing: TimingContext | None = None,
+) -> str:
     """Non-streaming variant of ``stream_hybrid_answer`` (``stream: false``)."""
     messages = build_hybrid_messages(query, history)
-    return _generate_chat(messages, _hybrid_disclaimer_suffix)
+    return _with_timing(_generate_chat(messages, _hybrid_disclaimer_suffix), timing)

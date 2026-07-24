@@ -157,6 +157,44 @@ def test_parse_pdf_sections_titles_and_cleaning(monkeypatch) -> None:
     assert "Điều 2" in dieu2.section_path
 
 
+_PAGED_PDF_MD = (
+    "# Sản phẩm bảo hiểm\n\n"
+    "Giới thiệu chung.\n\n"
+    "$DOCLING_PAGE_BREAK$\n\n"
+    "## Điều 1: Phạm vi\n\n"
+    "Nội dung Điều 1 nằm ở trang hai.\n\n"
+    "$DOCLING_PAGE_BREAK$\n\n"
+    "## Điều 2: Loại trừ\n\n"
+    "Nội dung Điều 2 nằm ở trang ba.\n"
+)
+
+
+def test_parse_pdf_stamps_starting_page_from_docling_breaks(monkeypatch) -> None:
+    # Regression (H5): Docling page-break markers must survive cleaning and stamp
+    # each section with its starting page, so citation deep-links (#page=N) work.
+    from app.ingestion.parsers import pdf_parser
+
+    monkeypatch.setattr(
+        pdf_parser, "_convert_with_docling", lambda p: (_PAGED_PDF_MD, 3)
+    )
+    doc = pdf_parser.parse_pdf("paged.pdf")
+    by_path = {s.section_path: s.page for s in doc.sections}
+    # Lead section starts on page 1; Điều 1 on page 2; Điều 2 on page 3.
+    assert by_path.get("Sản phẩm bảo hiểm") == 1
+    assert next(s.page for s in doc.sections if "Điều 1" in s.section_path) == 2
+    assert next(s.page for s in doc.sections if "Điều 2" in s.section_path) == 3
+    # The sentinel never leaks into section text.
+    assert all("DOCLING_PAGE_BREAK" not in s.text for s in doc.sections)
+
+
+def test_non_pdf_sections_have_no_page() -> None:
+    # DOCX/MD carry no page structure, so page must stay None (no misleading
+    # "(trang 1)" on every citation).
+    md = "# Tiêu đề\n\nNội dung.\n\n## Mục 1\n\nChi tiết.\n"
+    for section in sections_from_markdown(md, doc_title="Tiêu đề"):
+        assert section.page is None
+
+
 def test_title_falls_back_to_first_heading_of_any_level() -> None:
     from app.ingestion.parsers.markdown import title_from_markdown
 

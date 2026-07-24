@@ -27,3 +27,15 @@ from app.config.settings import settings
 def _neutralize_admin_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Disable the admin password gate by default (see module docstring)."""
     monkeypatch.setattr(settings, "admin_password", "")
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_query_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn off the response-time footer and timing log for the whole suite.
+
+    The footer changes answer text and the log writes a file; neither belongs in
+    unit tests that assert exact response content. Tests that specifically cover
+    the timing feature re-enable ``show_response_time`` themselves.
+    """
+    monkeypatch.setattr(settings, "show_response_time", False)
+    monkeypatch.setattr(settings, "query_timing_log_enabled", False)

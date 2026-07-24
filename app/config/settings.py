@@ -54,6 +54,19 @@ class Settings(BaseSettings):
     # to keep startup light (e.g. running only the ingestion CLI, or in tests).
     warmup_on_startup: bool = True
 
+    # ---- Response-time display / query timing log ----
+    # Append a small "⏱ Thời gian trả lời: 1m55s" footer below each answer so
+    # employees see how long their question took (measured end-to-end, from
+    # request arrival to the answer being complete). Presentation only.
+    show_response_time: bool = True
+    # Write one metadata-only JSONL record per answered question (elapsed, mode,
+    # hit count, query/answer lengths — never the query or answer text) so
+    # latency can be analysed and fed back into evaluation over time. Strictly
+    # LOCAL: it appends to a file on this machine and makes no network call (this
+    # is not telemetry — nothing leaves the machine).
+    query_timing_log_enabled: bool = True
+    query_timing_log_path: Path = Path("./logs/query_timings.jsonl")
+
     # ---- Assistant identity / branding ----
     # Display name shown in Open WebUI (browser title/header) and the admin page.
     # The underlying local model never changes — this is presentation only.
@@ -82,6 +95,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
+    # How many trailing chat turns are sent to the model as history. Kept small
+    # for the local model's bounded context; retrieval re-grounds each turn.
+    max_history_turns: int = 6
     ollama_timeout: float = 120.0
     # Ollama unloads a model after ~5 idle minutes by default, so the next
     # question after a break pays a full model reload (warmup only covers the

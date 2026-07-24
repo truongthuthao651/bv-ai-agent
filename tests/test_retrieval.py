@@ -781,6 +781,58 @@ def test_is_multi_product_query() -> None:
     assert not is_multi_product_query("quyền lợi bảo hiểm An Khang Như Ý", titles=[])
 
 
+def test_is_multi_product_query_ignores_junk_second_span() -> None:
+    # Regression (H6): an open-ended "A so với sản phẩm nào trên thị trường?"
+    # extracts one real product + a junk span. With the indexed titles known,
+    # the junk span resolves to no product, so this must NOT route to comparison
+    # (which would burn a full search+rerank pass on the junk label).
+    from app.retrieval.comparison import is_multi_product_query
+
+    titles = [
+        "Bảo hiểm liên kết chung An Khang Như Ý",
+        "Bảo hiểm hỗn hợp An Lộc Vững Bền",
+    ]
+    assert not is_multi_product_query(
+        "bảo hiểm An Khang Như Ý so với sản phẩm nào trên thị trường không?",
+        titles=titles,
+    )
+    # A genuine two-product comparison still routes to multi.
+    assert is_multi_product_query(
+        "so sánh An Khang Như Ý và An Lộc Vững Bền", titles=titles
+    )
+
+
+def test_retrieve_multi_product_skips_junk_label_pass() -> None:
+    # Regression (H6): a junk label that matches no indexed document must not get
+    # its own search+rerank pass (each costs ~tens of seconds on CPU).
+    from app.retrieval.comparison import retrieve_multi_product
+
+    akny = "Bảo hiểm liên kết chung An Khang Như Ý"
+    alvb = "Bảo hiểm hỗn hợp An Lộc Vững Bền"
+    docs = [("doc-akny", akny), ("doc-alvb", alvb)]
+    searched: list[str] = []
+
+    def search_fn(_q: str, doc_ids: list[str] | None) -> list[Hit]:
+        searched.append(doc_ids[0] if doc_ids else "UNSCOPED")
+        title = akny if doc_ids == ["doc-akny"] else alvb
+        return [_cmp_hit("h", title)]
+
+    def rerank_fn(_q: str, hits: list[Hit], top_k: int) -> list[Hit]:
+        return hits[:top_k]
+
+    retrieve_multi_product(
+        "so sánh quyền lợi",  # query text irrelevant; labels are injected
+        search_fn=search_fn,
+        rerank_fn=rerank_fn,
+        per_product_top_k=2,
+        max_products=3,
+        docs=docs,
+        labels=[akny, "không", alvb],  # middle label is junk
+    )
+    # Only the two real products get a pass; "không" is dropped, not searched.
+    assert sorted(searched) == ["doc-akny", "doc-alvb"]
+
+
 # --------------------------------------------------------------------------- #
 # Metric guard (drop fee/interest tables from benefit-payout queries)
 # --------------------------------------------------------------------------- #

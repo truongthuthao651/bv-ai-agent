@@ -16,6 +16,7 @@ import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +63,17 @@ async def _warmup() -> None:
             )
 
 
+def _citation_base_is_loopback() -> bool:
+    """True when citation links would only resolve on this machine.
+
+    ``format_sources`` builds citation links from ``API_PUBLIC_BASE_URL``. When
+    that points at loopback (the default), a link opens the *reader's own*
+    localhost — fine on the server, dead for an employee on another LAN machine.
+    """
+    host = urlparse(settings.api_public_base_url).hostname or ""
+    return host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: optional warmup on startup (see ``_warmup``)."""
@@ -70,6 +82,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning(
             "ADMIN_PASSWORD is not set: the admin dashboard (upload/delete/quick-ask) "
             "is reachable without login. Set ADMIN_PASSWORD in .env to enable the gate."
+        )
+    if _citation_base_is_loopback():
+        logger.warning(
+            "API_PUBLIC_BASE_URL is loopback (%s): citation links in answers open "
+            "the reader's OWN localhost, so they only work when browsing FROM this "
+            "server. For employees on the LAN, set API_PUBLIC_BASE_URL to this "
+            "machine's LAN address and expose the read-only /documents/{id}/view "
+            "and /file routes there (keep ADMIN_PASSWORD set so upload/delete stay "
+            "protected). See README (Liên kết trích dẫn cho người dùng trong mạng LAN).",
+            settings.api_public_base_url,
         )
     if settings.warmup_on_startup:
         await _warmup()
