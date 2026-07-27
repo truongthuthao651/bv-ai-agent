@@ -116,8 +116,9 @@ bv-ai-agent/
 │   ├── synthetic/             # Fake docs — the ONLY data used in dev/tests
 │   └── real/                  # Exists only on the company machine — NEVER touch
 ├── eval/
-│   ├── golden_set.jsonl       # Q/A pairs incl. formula, notation, and figure questions
-│   └── run_ragas.py           # Faithfulness, answer relevancy, context precision/recall
+│   ├── golden_set.jsonl       # Q/A pairs incl. formula, notation, and figure questions;
+│   │                          #   must_say/must_not_say = the deterministic safety gate
+│   └── run_ragas.py           # Context precision/recall, rule compliance, --strict gate
 └── tests/
     ├── test_parsers.py        # Incl. OMML→LaTeX and formula-OCR cases
     ├── test_chunking.py       # Incl. never-split-equation cases
@@ -169,6 +170,30 @@ bv-ai-agent/
   section was retrieved, never invent exclusions);
   never remap table metrics (lãi suất cam kết / phí ≠ tỷ lệ bồi thường).
   Never weaken these in prompts.py.
+- **Coverage questions are answered by ENUMERATING CASES, not by one verdict.**
+  "Tôi bị X thì có được chi trả không?" is almost always underdetermined by the
+  documents: the outcome depends on which benefit the event triggers (tử vong /
+  thương tật toàn bộ vĩnh viễn / nằm viện), on riders, and on conditions the
+  employee hasn't stated. The answer must lay out the branches the retrieved
+  documents actually define — each with its citation — then name what is still
+  needed to decide, and say plainly which parts the documents do not cover.
+  A single flat "được" / "không được" on an underdetermined question is a
+  DEFECT even when it happens to land on the right side.
+- **Insufficient context is never evidence of exclusion.** When the retrieved
+  context contains ONLY exclusion clauses and no benefit / scope clause, the
+  model has not found grounds to deny — it has failed to retrieve the coverage
+  side. Say the documents don't state it (and what would answer it); never
+  conclude "không được chi trả" from an absence. Real-doc failure, 2026-07-27:
+  a travel car-accident question retrieved one exclusion section and nothing
+  else, and the answer denied the claim by applying "loại trừ bổ sung" (a
+  substandard-health underwriting clause) to a car accident — while its own
+  general-knowledge block said the case could not be determined. Prompt rule
+  6(b) already forbade this in as many words, so treat prompt text as
+  insufficient on its own: an exclusion-only context needs a retrieval fix
+  (pull the benefit/scope clause too) and/or a deterministic guard.
+- **The "Kiến thức chung" block may never contradict the grounded answer.** If
+  it says the case cannot be determined, the grounded part must not have
+  asserted a verdict.
 - **Answer modes:** `prompts.system_prompt()` assembles one grounded prompt from
   shared rule blocks. *Strict* (default) answers only from context. *Advisory*
   (comparison / "KH nên chọn sản phẩm nào?" — routed by
@@ -179,6 +204,12 @@ bv-ai-agent/
   knowledge (`GENERAL_KNOWLEDGE_SUPPLEMENT_ENABLED`), labeled and never a
   substitute for the grounded part. Rules 2 and 4-7 are shared blocks — changing
   them applies to both modes by construction; never fork them.
+  Both modes aim for an ANSWER SHAPE closer to a good human adviser than to a
+  one-line verdict: state the conclusion (or that it depends), enumerate the
+  cases with their conditions, cite each, and end with what the employee should
+  check next. Brevity is not the goal — being *actionable and correct* is; the
+  `_FOOTER` "ngắn gọn" instruction must not be read as license to collapse a
+  multi-branch answer into one sentence.
 - **Versions:** pin everything (requirements.txt exact versions, Docker image tags).
   Never use `:latest`.
 - **Style:** type hints everywhere, `ruff` for lint/format, small pure functions
@@ -200,6 +231,7 @@ python scripts/ingest_knowledge_pack.py --dry-run           # validate the pack 
 python scripts/ingest_knowledge_pack.py                     # index public reference docs
 pytest tests/ -x -q                                         # unit tests (no services needed)
 python eval/run_ragas.py                                    # RAG quality metrics (native: stop the API first — embedded Qdrant is single-process)
+python eval/run_ragas.py --strict                            # same, but exit non-zero on a gate failure (CI / pre-merge)
 ruff check app/ && ruff format app/                         # lint + format
 docker compose up -d                                        # optional Docker dev stack (CPU)
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GPU
