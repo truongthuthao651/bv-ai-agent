@@ -504,7 +504,7 @@ deployment the flagship citation feature is broken for all of them.
 | M17 | Docker stack uses stock Open WebUI — no branding, no VI suggestions (parity gap) | `docker-compose.yml:77-95` |
 | M18 | Branding patches `site-packages` in place; every `pip install --upgrade open-webui` reverts it | `scripts/open_webui/apply_branding.py` |
 | M19 | Glossary holds only **10 terms** for a domain with hundreds; the skill names glossary entries as the primary fix for failed queries | `data/glossary/thuat_ngu.yaml` |
-| M20 | Stale eval baseline (12 days, different model) and `citation_rate: 0.10` unaddressed | `eval/results/` |
+| ~~M20~~ | ~~Stale eval baseline (different model) and `citation_rate` unaddressed~~ **fixed**: re-baselined on `qwen3:8b` (`cite-8b.json`); the citation metric was itself the defect | `eval/results/` |
 | M21 | `PATCH /documents` rename runs a full synchronous re-ingest inside the request | `api/ingest.py:362-371` |
 | M22 | No CI configuration in the repo | — |
 | M23 | Only 6 of 7 synthetic documents were in the index at evaluation time, so the golden set could not fully resolve | `data/synthetic/` vs `GET /documents` |
@@ -519,7 +519,7 @@ deployment the flagship citation feature is broken for all of them.
 | L27 | No rate limit / lockout on `POST /login` | `app/api/login.py:30-43` |
 | L28 | Stale Docker-era `qdrant_storage/{collections,aliases,raft_state.json}` (11 MB) beside the live `local/` store | `qdrant_storage/` |
 | L29 | `vision_model`, `embed_model`, `ocr_language` settings declared but unread | `settings.py:74-75,200` |
-| L30 | Inline citation format drifts from the numbered sources block | `prompts.py:98-102` vs `340-401` |
+| ~~L30~~ | ~~Inline citation format drifts from the numbered sources block~~ **fixed**: `[n]` is canonical and `prompts.citation_numbers` keeps context and sources numbering identical | `prompts.py` |
 | L31 | `_MAX_HISTORY_TURNS = 6` hardcoded, contrary to the settings rule | `generator.py:40` |
 | L32 | Weak admin password in the working `.env`; `.env.example` downplays the field | `.env` |
 | L33 | Plain-string logging, no request IDs — concurrent requests are untangleable in `logs/api.log` | `app/main.py:30-31` |
@@ -623,8 +623,8 @@ All items are zero-budget, fully offline, no paid services.
 |---|---|---|
 | 1 | **Parent-child ("small-to-big") chunking** (H4) | Keep today's small, precise units as the *retrieval* index; attach a `parent_id` and store the enclosing section (or a merged 500–800-token window) as the text handed to generation. Also honour `CHUNK_MIN_TOKENS` by merging adjacent sibling sections under a shared heading before packing. This is the single largest quality lever and it fixes the dangling-reference problem without hurting citation precision. |
 | 2 | **Cut rerank latency 5–10×** (H8) | In order of effort: (a) ~~rerank only the top 12–15 fused candidates~~ **shipped** as `RERANK_CANDIDATES=15` (+ `RERANK_MAX_LENGTH` wired through to `compute_score`) — on the grown corpus, parent-child median **4 227 → 2 383 ms** with identical doc/section hits (`h4-ab-pc-retrieval.json` → `h8-a-candidates15.json`); cumulative vs flat ≈ **6.6×**; (b) export bge-reranker-v2-m3 to **ONNX + INT8**; (c) tune `batch_size` / try `RERANK_MAX_LENGTH=256` against children; (d) RRF score pre-filter. Re-measure against the candidates=15 median (~2.4 s), not pre-H4. |
-| 3 | **Make the eval harness test the real pipeline** (H7) | Point `run_ragas.py` at `chat._retrieve` (or better, at `POST /v1/chat/completions` over HTTP) so every guard is in the loop. Add a **`false_refusal`** category with the questions from C1, and assert `false_refusal_rate == 0` as a gate. Re-baseline on `qwen3:8b`. One command: `make eval`. |
-| 4 | **Fix `citation_rate: 0.10`** | Measure first, then either strengthen rule 2 with a worked example in the prompt, or post-process: map the model's `[n]` markers onto the sources block and reject/repair answers with zero citations. |
+| 3 | ~~**Make the eval harness test the real pipeline**~~ **done** (H7) | Point `run_ragas.py` at `chat._retrieve` (or better, at `POST /v1/chat/completions` over HTTP) so every guard is in the loop. Add a **`false_refusal`** category with the questions from C1, and assert `false_refusal_rate == 0` as a gate. Re-baseline on `qwen3:8b`. One command: `make eval`. |
+| 4 | ~~**Fix `citation_rate: 0.10`**~~ **done — the metric was wrong, not the model** | The rate was never the number it looked like: the pattern required 2+ characters between brackets, so every `[1]`/`[2]` the model writes scored as "no citation". Rule 2 now asks for `[n]` (what the model already did), the metric counts markers that RESOLVE to the sources block, and a `dangling_citation_rate` counts invented ones. On `qwen3:8b`: **0.50 measured → 0.925 re-scored on the same answers → 0.975 after the rule change, 0.0 dangling** (`cite-8b.json`). See the note below. |
 | 5 | **Serve concurrency properly** (H8) | Move embedding + reranking into a small worker pool (2–3 processes, each with its own model instance) behind a queue, replacing the process-wide mutex. Add a request queue depth limit + friendly "đang xử lý" response. |
 | 6 | **Auto-ingest + CI** | A `watchdog`-based folder watcher (or a cron calling `scripts/ingest.sh`) that ingests new files into a configured drop directory and logs results. CI: a local `pre-commit`/`make check` running `ruff check`, `ruff format --check`, `pytest`, and a retrieval-only eval smoke test — no cloud runner needed. |
 | 7 | **Qdrant payload indexes + cache `list_documents()`** (M12, M13) | `create_payload_index` on `doc_id`, `doc_type`, `department`; TTL-cache the document list (invalidate on ingest/delete). Removes repeated full scans from the hot query path. |
@@ -817,6 +817,65 @@ Confirmed on the full 42-question set (`eval/results/big-B-temp0.json` vs
 by ~25% between the two runs for the same reason they did during the H4
 baseline — machine noise, not the change. **Treat single-run `*_ms_mean` values
 as unusable for H8; measure it interleaved, like the two A/Bs above.**
+
+#### Re-baselined on `qwen3:8b`, and the citation metric was measuring nothing
+
+Every stored run through `big-E` used `qwen3:1.7b` — not the deploy target. Two
+full 42-question runs on `qwen3:8b` (`base-8b.json`, then `cite-8b.json` after
+the changes below). Retrieval is identical across all of them, as it must be:
+the chat model cannot affect search or rerank.
+
+| | 1.7b | 8b before | 8b after |
+|---|---|---|---|
+| doc_hit / section_hit / MRR | 0.975 / 0.925 / 0.963 | identical | identical |
+| citation_rate | 0.0 | 0.50 | **0.975** |
+| dangling_citation_rate | — | — | **0.0** |
+| gate false / leaked refusals | 1/40 (earlier) | 0/40, 0/2 | **0/40, 0/2** |
+
+**The 0.50 was an artifact.** `_CITATION_RE = \[[^\[\]]{2,}\]` required two or
+more characters between the brackets, so a single-digit `[1]` — the format the
+model actually uses, keyed to the numbered context blocks — never matched.
+Re-scoring `base-8b.json`'s own answers counting `[n]` gives **0.925**, not
+0.50. (The 1.7b `0.0` was real: that model emits no markers at all. Judging
+prompt compliance on 1.7b remains a mistake.)
+
+Three changes followed:
+
+1. **`[n]` is now the canonical citation format** (rule 2, CLAUDE.md, SKILL.md),
+   replacing `[Tên tài liệu, mục X]` — closing **L30**, which was not cosmetic:
+   the prompt asked for one format while the context blocks the model reads are
+   labeled in another, and the model sensibly copied what it could see. `[n]`
+   is also the better format here, since it resolves to the hyperlinked sources
+   block.
+2. **A dangling-citation defect, found while doing (1).** `format_context` and
+   `format_sources` enumerated hits independently, and the sources block lists
+   each (doc, section) once — so a duplicate hit consumed a context number that
+   never appeared under "Nguồn tham khảo". A model citing it handed the employee
+   a number with nothing to click. Parent-child chunking makes this *likelier*
+   (two children of one parent are exactly that case). `prompts.citation_numbers`
+   now assigns one number per distinct source and both sides use it; a test
+   pins the two number sets equal.
+3. **The LLM judge is out of the gate.** Golden items carry `must_say` /
+   `must_not_say`, checked deterministically on the answer prose (sources block
+   stripped, so a document title can never satisfy an assertion). `--strict`
+   now also fails on a failed assertion or a dangling citation.
+
+**The assertion gate immediately earned its place.** Seeded on the three
+safety-critical items, it reports 2/3: `q37` (covered event not denied) and
+`q38` (excluded event denied) pass, and **`q35` fails** — it returns the full
+surrender-value formula and rate table but never states the 24-month qualifying
+condition, the completeness gap left open by the parent-child work. The judge
+scored that same answer `judge_correct: 1.0`. That is the whole argument for
+replacing it.
+
+One caveat on assertion wording, learned by getting it wrong: the first `q37`
+assertion banned "thuộc trường hợp loại trừ", which is a substring of the
+*correct* answer's "**không** thuộc các trường hợp loại trừ". Assert on the
+conclusion, never the reasoning.
+
+Still open after this: `q35`'s completeness gap (now gated), and `q03`, the one
+answer of 40 with no citation — it answers from general knowledge rather than
+the indexed document, which is a grounding question, not a formatting one.
 
 ### 5.3 Long term
 

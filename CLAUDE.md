@@ -155,8 +155,11 @@ bv-ai-agent/
   chunks the flat path produces, so disabling the flag restores it. The reranker
   keeps one child per parent before the top-k cut, and any guard inspecting chunk
   text must use `context_text` — that is what the model receives.
-- **Answering rules:** answer only from retrieved context; cite as
-  `[Tên tài liệu, mục X]`; reply "Tôi không tìm thấy thông tin trong tài liệu"
+- **Answering rules:** answer only from retrieved context; cite as `[n]` — the
+  number of the context block the fact came from, which `prompts.citation_numbers`
+  keeps identical to that source's number in the "Nguồn tham khảo" block, so
+  every marker resolves to a clickable line (never invent a number); reply
+  "Tôi không tìm thấy thông tin trong tài liệu"
   when context is insufficient; for numeric calculations, show the formula and
   substitution steps but state results must be verified with official tools
   ("Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức"); never

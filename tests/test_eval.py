@@ -101,6 +101,69 @@ def test_check_answer_citation_not_fooled_by_sources_block() -> None:
     assert checks["false_refusal"] is False
 
 
+def test_check_answer_counts_single_digit_markers_that_resolve() -> None:
+    # The model cites as [n] keyed to the numbered context blocks. A pattern
+    # requiring 2+ characters between the brackets scored every one of these as
+    # "no citation" and read 0.50 on a run whose real rate was 0.925.
+    answer = (
+        "Thời gian gia hạn là 60 ngày [2].\n\n**Nguồn tham khảo:**\n- [2] X — Điều 6"
+    )
+    checks = check_answer(_item(), answer)
+    assert checks["has_citation"] is True
+    assert checks["has_dangling_citation"] is False
+
+
+def test_check_answer_flags_a_citation_the_sources_block_does_not_list() -> None:
+    # [7] is not in the sources block: the employee clicks nothing. Invented
+    # provenance is worse than none, so it is reported separately.
+    answer = "Quyền lợi là 100% STBH [7].\n\n**Nguồn tham khảo:**\n- [1] X — Điều 4"
+    checks = check_answer(_item(), answer)
+    assert checks["has_citation"] is False
+    assert checks["has_dangling_citation"] is True
+
+
+def test_assertions_gate_exclusion_polarity_in_both_directions() -> None:
+    covered = GoldenItem(
+        id="q37",
+        category="policy_qa",
+        question="Có được chi trả không?",
+        ground_truth="Có.",
+        must_say=["được chi trả"],
+        must_not_say=["không chi trả", "không được chi trả"],
+    )
+    good = "Trường hợp này được chi trả, vì không thuộc các trường hợp loại trừ."
+    bad = "Do đó, Công ty không chi trả quyền lợi tử vong."
+    assert check_answer(covered, good)["assertions_pass"] is True
+    assert check_answer(covered, bad)["assertions_pass"] is False
+    # An item without assertions is not scored on them.
+    assert check_answer(_item(), good)["assertions_pass"] is None
+
+
+def test_assertions_ignore_the_sources_block() -> None:
+    # A document title must never satisfy a content assertion.
+    item = GoldenItem(
+        id="qx",
+        category="policy_qa",
+        question="?",
+        ground_truth="…",
+        must_say=["24 tháng"],
+    )
+    answer = (
+        "Không nêu điều kiện.\n\n**Nguồn tham khảo:**\n- [1] Quy định 24 tháng — Điều 9"
+    )
+    assert check_answer(item, answer)["assertions_pass"] is False
+
+
+def test_gate_fails_on_assertions_and_dangling_citations() -> None:
+    rows = [
+        Row(id="a", category="policy_qa", checks={"assertions_pass": False}),
+        Row(id="b", category="policy_qa", checks={"has_dangling_citation": True}),
+    ]
+    result = gate(rows)
+    assert result["failed_assertions"] == ["a"]
+    assert result["dangling_citations"] == ["b"]
+
+
 def test_check_answer_refusal_category() -> None:
     checks = check_answer(_item("refusal"), REFUSAL_MESSAGE)
     assert checks["refusal_correct"] is True

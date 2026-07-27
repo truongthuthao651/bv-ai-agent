@@ -18,7 +18,8 @@ by construction.
 The system prompt MUST preserve these properties (skill, section 6; CLAUDE.md
 answering rules):
   1. Answer only from provided context.
-  2. Cite sources as ``[Tên tài liệu, mục X]``.
+  2. Cite sources as ``[n]`` — the number of the context block the fact came
+     from, which is also its number in the "Nguồn tham khảo" block.
   3. Refuse with "Tôi không tìm thấy thông tin trong tài liệu" when context is
      insufficient.
   4. For math: show the formula (LaTeX) + substitution steps, and ALWAYS append
@@ -84,9 +85,8 @@ khác. NHƯNG câu hỏi này mang tính so sánh / lựa chọn / tư vấn, n�
 PHÉP suy luận và tổng hợp TRÊN những dữ kiện đó: đối chiếu quyền lợi giữa các \
 sản phẩm, nêu điểm mạnh — điểm hạn chế, và chỉ ra sản phẩm nào phù hợp với nhu \
 cầu nào. Mỗi nhận định PHẢI bám vào một dữ kiện có trong ngữ cảnh và được trích \
-dẫn theo định dạng [Tên tài liệu, mục X]; nhận định nào không có dữ kiện \
-chống lưng thì KHÔNG được \
-nêu. Nếu người dùng yêu cầu so sánh với sản phẩm của CÔNG TY KHÁC (đối thủ) mà \
+dẫn theo định dạng [n] (số của đoạn ngữ cảnh); nhận định nào không có dữ kiện \
+chống lưng thì KHÔNG được nêu. Nếu người dùng yêu cầu so sánh với sản phẩm của CÔNG TY KHÁC (đối thủ) mà \
 ngữ cảnh không có tài liệu về sản phẩm đó, TUYỆT ĐỐI không mô tả quyền lợi, \
 mức phí hay điều khoản của họ theo trí nhớ — hãy nói rõ tài liệu nội bộ không \
 có thông tin về sản phẩm của công ty khác, rồi chỉ trình bày phần của Bảo Việt \
@@ -97,9 +97,12 @@ bằng nội dung của một sản phẩm khác.\
 """
 
 _RULE_2 = """\
-2. Khi dùng thông tin từ một đoạn ngữ cảnh, LUÔN trích dẫn nguồn theo định dạng \
-[Tên tài liệu, mục X], trong đó "Tên tài liệu" và "mục X" lấy từ dòng "Tài liệu: \
-..." đứng đầu đoạn ngữ cảnh tương ứng.\
+2. Khi dùng thông tin từ một đoạn ngữ cảnh, LUÔN trích dẫn nguồn bằng SỐ của \
+đoạn ngữ cảnh đó theo định dạng [n] — ví dụ: "Thời gian gia hạn đóng phí là 60 \
+ngày [2]." Số [n] chính là con số in ở đầu đoạn ngữ cảnh ("[2] Tài liệu: ..."), \
+và cũng là số của nguồn đó trong mục "Nguồn tham khảo" ở cuối câu trả lời, nên \
+người đọc bấm vào là mở đúng tài liệu. CHỈ dùng những số [n] thực sự có trong \
+ngữ cảnh; TUYỆT ĐỐI không tự bịa số.\
 """
 
 # Rule 3 — refusal. Both keep the exact refusal sentence (property 3); ADVISORY
@@ -249,7 +252,7 @@ Sau khi đã trả lời xong dựa trên ngữ cảnh, nếu kiến thức bả
 liệu):**". Trong mục đó: KHÔNG nêu số liệu, biểu phí, điều khoản, quy trình hay \
 tên sản phẩm cụ thể của Bảo Việt Life; KHÔNG nêu quyền lợi, phí hay điều khoản \
 sản phẩm của BẤT KỲ công ty bảo hiểm nào khác (những con số đó không thể kiểm \
-chứng và rất dễ sai); KHÔNG trích dẫn [Tên tài liệu, mục X]; chỉ nói kiến thức \
+chứng và rất dễ sai); KHÔNG trích dẫn nguồn [n]; chỉ nói kiến thức \
 mang tính giáo khoa. Mục này KHÔNG BAO GIỜ thay thế phần trả lời dựa trên ngữ \
 cảnh, và nếu bạn không chắc chắn thì BỎ QUA nó.\
 """
@@ -341,6 +344,27 @@ _CONTEXT_HEADER = "Tài liệu: {doc_title} > {section_path}"
 _NO_CONTEXT = "(Không tìm thấy đoạn tài liệu nào liên quan đến câu hỏi.)"
 
 
+def citation_numbers(hits: list[Hit]) -> list[int]:
+    """Citation marker per hit, shared by ``format_context`` and ``format_sources``.
+
+    Hits from the same (doc_title, section_path) get the SAME number, and the
+    numbers stay contiguous from 1. Enumerating each side independently used to
+    let the two drift apart: the sources block lists a (doc, section) pair once,
+    so a duplicate hit consumed a number in the context that never appeared
+    under "Nguồn tham khảo" — the model would cite ``[2]`` off a real context
+    block and the employee would find no ``[2]`` to click. Under parent-child
+    chunking two children of one parent are exactly that case.
+    """
+    numbers: list[int] = []
+    assigned: dict[tuple[str, str], int] = {}
+    for hit in hits:
+        key = (hit.payload.doc_title, hit.payload.section_path)
+        if key not in assigned:
+            assigned[key] = len(assigned) + 1
+        numbers.append(assigned[key])
+    return numbers
+
+
 def format_context(hits: list[Hit]) -> str:
     """Number retrieved chunks (``[1] Tài liệu: ...``) so citations are checkable.
 
@@ -351,12 +375,12 @@ def format_context(hits: list[Hit]) -> str:
     if not hits:
         return _NO_CONTEXT
     blocks = []
-    for i, hit in enumerate(hits, start=1):
+    for number, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload
         header = _CONTEXT_HEADER.format(
             doc_title=payload.doc_title, section_path=payload.section_path
         )
-        blocks.append(f"[{i}] {header}\n{payload.context_text}")
+        blocks.append(f"[{number}] {header}\n{payload.context_text}")
     return "\n\n".join(blocks)
 
 
@@ -368,10 +392,10 @@ def build_user_prompt(query: str, hits: list[Hit]) -> str:
 def format_sources(hits: list[Hit]) -> str:
     """Deterministic "Nguồn tham khảo" block appended after non-refusal answers.
 
-    Lists the chunks that were actually in the generation context, keeping the
-    same numbering as ``format_context`` so the model's inline ``[n]``-style
-    citations stay checkable even when its citation formatting drifts.
-    Duplicate (doc, section) pairs are listed once.
+    Lists the chunks that were actually in the generation context, under the
+    same numbers ``format_context`` gave them (see ``citation_numbers``), so
+    every inline ``[n]`` the model writes resolves to a line here. Duplicate
+    (doc, section) pairs are listed once, under their shared number.
 
     The document title is a Markdown link that opens the source. Knowledge-pack
     documents (ingested with a public ``source_url``) link straight to that
@@ -390,7 +414,7 @@ def format_sources(hits: list[Hit]) -> str:
     base = settings.api_public_base_url
     lines = ["**Nguồn tham khảo:**"]
     seen: set[tuple[str, str]] = set()
-    for i, hit in enumerate(hits, start=1):
+    for i, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload
         key = (payload.doc_title, payload.section_path)
         if key in seen:

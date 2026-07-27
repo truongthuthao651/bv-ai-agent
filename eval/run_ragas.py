@@ -10,10 +10,17 @@ slipping past a drifting copy of the flow:
   ``source_doc``/``source_section``: was the right document (and section)
   retrieved, and at what rank (MRR)? Reported both before and after reranking
   so a miss can be attributed to search vs. the reranker.
+* **Content assertions** — per-item ``must_say``/``must_not_say`` checked
+  deterministically on the answer text. These, not the judge, are the quality
+  gate: exclusion polarity above all.
 * **Faithfulness / answer correctness** — judged by the local Ollama model
   (binary verdicts; a small local judge is unreliable on graded scales).
+  TREAT AS ADVISORY ONLY: it has returned 1.0 for every category in every run
+  so far, including one where the model told an employee that a covered death
+  was "không chi trả". It is not in the gate; ``must_say``/``must_not_say`` is.
 * **Rule compliance** — refusal accuracy, false-refusal rate, citation
-  presence, and the mandatory calculation disclaimer (CLAUDE.md answering rules).
+  presence (a ``[n]`` marker that RESOLVES to the sources block) and dangling
+  citations, plus the mandatory calculation disclaimer (CLAUDE.md answering rules).
 * **Latency** — retrieval and generation wall time per question.
 
 The ``ragas`` package itself is deliberately not used: it drags in the
@@ -59,7 +66,14 @@ _GOLDEN_PATH = Path(__file__).resolve().parent / "golden_set.jsonl"
 _RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 _SOURCES_HEADER = "**Nguồn tham khảo:**"
-_CITATION_RE = re.compile(r"\[[^\[\]]{2,}\]")
+# Citations are ``[n]`` markers keyed to the numbered context blocks (prompts
+# rule 2). A marker only counts when that number is actually listed under
+# "Nguồn tham khảo" — an unresolvable [7] is a dangling link for the employee,
+# not a citation. The earlier ``\[[^\[\]]{2,}\]`` pattern required two or more
+# characters between the brackets and so scored every single-digit marker the
+# model writes as "no citation": it read 0.50 on a run whose real rate was 0.925.
+_CITATION_MARKER_RE = re.compile(r"\[(\d{1,2})\]")
+_SOURCE_LINE_RE = re.compile(r"^- \[(\d{1,2})\]", re.MULTILINE)
 _DISCLAIMER = "kiểm tra lại bằng công cụ tính phí chính thức"
 
 _JUDGE_CORRECTNESS_PROMPT = (
@@ -100,6 +114,11 @@ class GoldenItem:
     source_doc: str | None = None
     source_section: str | None = None
     notes: str | None = None
+    # Deterministic content assertions, checked against the answer prose (see
+    # ``assertion_check``). Use them for the properties a wrong answer would be
+    # unsafe on — exclusion polarity above all — not for phrasing.
+    must_say: list[str] = field(default_factory=list)
+    must_not_say: list[str] = field(default_factory=list)
 
 
 def load_golden(path: Path = _GOLDEN_PATH) -> list[GoldenItem]:
@@ -145,6 +164,44 @@ def is_refusal(answer: str) -> bool:
     return REFUSAL_MESSAGE.rstrip(".") in answer
 
 
+def sources_numbers(answer: str) -> set[int]:
+    """The ``[n]`` numbers listed in the appended "Nguồn tham khảo" block."""
+    _, _, block = answer.partition(_SOURCES_HEADER)
+    return {int(n) for n in _SOURCE_LINE_RE.findall(block)}
+
+
+def citation_check(answer: str) -> tuple[bool, bool]:
+    """``(has_citation, has_dangling_citation)`` for one answer.
+
+    ``has_citation``: at least one ``[n]`` in the model's own prose that the
+    sources block actually lists — i.e. a marker the employee can click.
+    ``has_dangling_citation``: some ``[n]`` points at a source that is not
+    there. That is worse than no citation (it invents provenance), so it is
+    counted separately rather than folded into the rate.
+    """
+    listed = sources_numbers(answer)
+    cited = {int(n) for n in _CITATION_MARKER_RE.findall(strip_sources(answer))}
+    return bool(cited & listed), bool(cited - listed)
+
+
+def assertion_check(item: GoldenItem, answer: str) -> bool | None:
+    """Deterministic content assertions from the golden item; None when it has none.
+
+    This is the gate the LLM judge could not be: the judge returned 1.0 for
+    every category in every stored run, including the run where the model
+    inverted exclusion polarity and told an employee a covered death was
+    "không chi trả". ``must_say`` / ``must_not_say`` are matched
+    case-insensitively against the model's prose with the sources block
+    stripped (source titles must not satisfy an assertion).
+    """
+    if not item.must_say and not item.must_not_say:
+        return None
+    body = strip_sources(answer).casefold()
+    return all(s.casefold() in body for s in item.must_say) and not any(
+        s.casefold() in body for s in item.must_not_say
+    )
+
+
 def check_answer(item: GoldenItem, answer: str) -> dict[str, bool | None]:
     """Deterministic rule-compliance checks on one answer (None = not applicable)."""
     body = strip_sources(answer)
@@ -153,14 +210,17 @@ def check_answer(item: GoldenItem, answer: str) -> dict[str, bool | None]:
         "refusal_correct": None,
         "false_refusal": None,
         "has_citation": None,
+        "has_dangling_citation": None,
         "has_disclaimer": None,
+        "assertions_pass": None,
     }
     if item.category == "refusal":
         checks["refusal_correct"] = refused
         return checks
     checks["false_refusal"] = refused
+    checks["assertions_pass"] = assertion_check(item, answer)
     if not refused:
-        checks["has_citation"] = bool(_CITATION_RE.search(body))
+        checks["has_citation"], checks["has_dangling_citation"] = citation_check(answer)
     if item.category == "calculation" and not refused:
         checks["has_disclaimer"] = _DISCLAIMER in body
     return checks
@@ -334,7 +394,9 @@ def summarize(rows: list[Row]) -> dict[str, Any]:
         "refusal_correct_rate": _rate(_collect(rows, "refusal_correct")),
         "false_refusal_rate": _rate(_collect(rows, "false_refusal")),
         "citation_rate": _rate(_collect(rows, "has_citation")),
+        "dangling_citation_rate": _rate(_collect(rows, "has_dangling_citation")),
         "disclaimer_rate": _rate(_collect(rows, "has_disclaimer")),
+        "assertion_pass_rate": _rate(_collect(rows, "assertions_pass")),
         "judge_correct_rate": _rate(_collect(rows, "judge_correct")),
         "judge_faithful_rate": _rate(_collect(rows, "judge_faithful")),
         "retrieval_ms_mean": round(statistics.mean(retrieval_times), 1)
@@ -387,12 +449,22 @@ def gate(rows: list[Row]) -> dict[str, list[str]]:
 
     ``false_refusals``: answerable questions the pipeline did not answer.
     ``leaked_refusals``: refusal-category questions that got an answer instead.
+    ``failed_assertions``: answers that broke a golden item's ``must_say`` /
+    ``must_not_say`` — chiefly exclusion polarity, the failure mode that is
+    actively unsafe to ship and that the LLM judge scored as correct.
+    ``dangling_citations``: answers citing an ``[n]`` with no such source.
     """
     answerable = [r for r in rows if r.category != "refusal"]
     refusal_rows = [r for r in rows if r.category == "refusal"]
     return {
         "false_refusals": [r.id for r in answerable if did_not_answer(r)],
         "leaked_refusals": [r.id for r in refusal_rows if leaked_answer(r)],
+        "failed_assertions": [
+            r.id for r in rows if r.checks.get("assertions_pass") is False
+        ],
+        "dangling_citations": [
+            r.id for r in rows if r.checks.get("has_dangling_citation") is True
+        ],
     }
 
 
@@ -413,7 +485,15 @@ def _print_gate(rows: list[Row]) -> bool:
     )
     for rid in result["leaked_refusals"]:
         print(f"    - {rid}")
-    return bool(result["false_refusals"] or result["leaked_refusals"])
+    n_asserted = sum(1 for r in rows if r.checks.get("assertions_pass") is not None)
+    print(f"  failed assertions: {len(result['failed_assertions'])}/{n_asserted}")
+    for rid in result["failed_assertions"]:
+        print(f"    - {rid}")
+    n_cited = sum(1 for r in rows if r.checks.get("has_dangling_citation") is not None)
+    print(f"  dangling citations: {len(result['dangling_citations'])}/{n_cited}")
+    for rid in result["dangling_citations"]:
+        print(f"    - {rid}")
+    return any(result.values())
 
 
 def main() -> None:
@@ -435,8 +515,8 @@ def main() -> None:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero if the gate fails (a false refusal or a leaked "
-        "refusal) — for CI",
+        help="exit non-zero if the gate fails (false refusal, leaked refusal, "
+        "failed content assertion, or dangling citation) — for CI",
     )
     parser.add_argument("--out", type=Path, default=None, help="results JSON path")
     args = parser.parse_args()

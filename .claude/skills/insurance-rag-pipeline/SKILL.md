@@ -167,7 +167,8 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   with KaTeX.
 - System prompt is Vietnamese and MUST keep these properties:
   1. Answer only from provided context.
-  2. Cite sources as `[Tên tài liệu, mục X]`.
+  2. Cite sources as `[n]`, the context block's number — `prompts.citation_numbers`
+     gives the same number to the "Nguồn tham khảo" entry, so markers resolve.
   3. Refuse gracefully with "Tôi không tìm thấy thông tin trong tài liệu" when
      context is insufficient.
   4. **Math answers:** present the relevant formula in LaTeX, show substitution

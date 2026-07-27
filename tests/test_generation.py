@@ -76,7 +76,7 @@ def _hit(
 
 def test_system_prompt_keeps_the_four_mandatory_properties() -> None:
     assert "CHỈ trả lời dựa trên nội dung" in SYSTEM_PROMPT
-    assert "[Tên tài liệu, mục X]" in SYSTEM_PROMPT
+    assert "trích dẫn nguồn bằng SỐ của đoạn ngữ cảnh" in SYSTEM_PROMPT
     assert "Tôi không tìm thấy thông tin trong tài liệu" in SYSTEM_PROMPT
     assert (
         "Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức"
@@ -299,7 +299,8 @@ def test_advisory_prompt_keeps_every_non_negotiable_property() -> None:
     # the citation format, the wrong-product ban, the calc disclaimer, the
     # exclusion rules and the metric rule must all survive verbatim.
     assert REFUSAL_MESSAGE.rstrip(".") in ADVISORY_SYSTEM_PROMPT
-    assert "[Tên tài liệu, mục X]" in ADVISORY_SYSTEM_PROMPT
+    assert "trích dẫn nguồn bằng SỐ của đoạn ngữ cảnh" in ADVISORY_SYSTEM_PROMPT
+    assert "trích dẫn theo định dạng [n]" in ADVISORY_SYSTEM_PROMPT
     assert (
         "TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác"
         in ADVISORY_SYSTEM_PROMPT
@@ -356,7 +357,7 @@ def test_general_knowledge_block_is_opt_in_via_settings() -> None:
     assert without == SYSTEM_PROMPT
     # It may never displace the grounded answer, nor carry company specifics.
     assert "KHÔNG BAO GIỜ thay thế phần trả lời dựa trên ngữ cảnh" in with_block
-    assert "KHÔNG trích dẫn [Tên tài liệu, mục X]" in with_block
+    assert "KHÔNG trích dẫn nguồn [n]" in with_block
 
 
 def test_general_knowledge_label_added_only_when_the_section_is_present() -> None:
@@ -389,10 +390,33 @@ def test_format_sources_numbers_match_context_and_dedupes() -> None:
     # Page is carried in the link too, so a native PDF opens at the cited page.
     link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5}&page=3)"
     assert f"- [1] {link} — Điều 5 (trang 3)" in block
-    assert "[2]" not in block  # deduped, and numbering keeps context indices
+    # The duplicate shares [1] rather than consuming [2]: numbering stays
+    # contiguous, so the third source is [2] here AND [2] in the context.
     sec2 = quote("Điều 2", safe="")
     link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2})"
-    assert f"- [3] {link2} — Điều 2" in block
+    assert f"- [2] {link2} — Điều 2" in block
+    assert "[3]" not in block
+
+
+def test_every_context_number_resolves_to_a_source_line() -> None:
+    """The citation contract: no marker the model can copy is a dead link.
+
+    Enumerating context and sources independently broke this — a duplicated
+    (doc, section) consumed a context number that the deduped sources block
+    never listed, so a model citing it sent the employee to nothing. Under
+    parent-child chunking, two children of one parent are exactly that case.
+    """
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "child A"),
+        _hit("Quy tắc An Tâm", "Điều 5", "child B"),  # same parent section
+        _hit("Hướng dẫn dự phòng", "Điều 2", "C"),
+        _hit("Quy tắc An Tâm", "Điều 9", "D"),
+    ]
+    context_numbers = set(
+        re.findall(r"^\[(\d+)\] Tài liệu:", format_context(hits), re.M)
+    )
+    source_numbers = set(re.findall(r"^- \[(\d+)\]", format_sources(hits), re.M))
+    assert context_numbers == source_numbers == {"1", "2", "3"}
 
 
 def test_format_sources_links_pdf_straight_to_original_file_at_page() -> None:
