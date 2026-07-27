@@ -368,6 +368,47 @@ def test_rerank_empty_hits() -> None:
     assert rerank("query", [], score_fn=lambda _q, _d: []) == []
 
 
+def _child_hit(point_id: str, text: str, parent_index: int, parent_text: str) -> Hit:
+    hit = _hit(point_id, text)
+    hit.payload.parent_index = parent_index
+    hit.payload.parent_text = parent_text
+    return hit
+
+
+def test_rerank_keeps_only_the_best_child_of_each_parent() -> None:
+    # Generation widens every hit to its parent window, so two children of one
+    # parent would send the same text twice and waste the top_k budget.
+    hits = [
+        _child_hit("1", "child-a", 0, "window-0"),
+        _child_hit("2", "child-b", 0, "window-0"),
+        _child_hit("3", "child-c", 1, "window-1"),
+    ]
+    fake_scores = {"child-a": 0.4, "child-b": 0.9, "child-c": 0.5}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank("query", hits, top_k=5, score_fn=score_fn)
+    assert [h.point_id for h in ranked] == ["2", "3"]
+
+
+def test_rerank_collapse_frees_room_for_another_window() -> None:
+    # Collapsing happens BEFORE the top_k cut, so top_k means top_k distinct
+    # windows — a third parent still makes it into a top_k=2 result.
+    hits = [
+        _child_hit("1", "child-a", 0, "window-0"),
+        _child_hit("2", "child-b", 0, "window-0"),
+        _child_hit("3", "child-c", 1, "window-1"),
+    ]
+    fake_scores = {"child-a": 0.9, "child-b": 0.8, "child-c": 0.5}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank("query", hits, top_k=2, score_fn=score_fn)
+    assert [h.point_id for h in ranked] == ["1", "3"]
+
+
 def test_rerank_drops_hits_below_min_score() -> None:
     hits = [
         _hit("1", "chunk-irrelevant"),
@@ -429,6 +470,29 @@ def test_rerank_relative_floor_zero_is_noop() -> None:
         "query", hits, top_k=5, min_score=0.05, min_ratio=0.0, score_fn=score_fn
     )
     assert [h.point_id for h in ranked] == ["1", "2"]
+
+
+def test_rerank_candidates_truncates_before_scoring() -> None:
+    # Hits arrive RRF-sorted; only the first ``candidates`` should reach the
+    # cross-encoder. A later hit that would have scored highest must not win.
+    hits = [_hit("1", "a"), _hit("2", "b"), _hit("3", "c"), _hit("4", "d")]
+    seen: list[int] = []
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        seen.append(len(docs))
+        # Prefer later docs if they were scored — proves truncation works.
+        return [0.1 + 0.1 * i for i in range(len(docs))]
+
+    ranked = rerank(
+        "query",
+        hits,
+        top_k=5,
+        candidates=2,
+        min_score=0.0,
+        score_fn=score_fn,
+    )
+    assert seen == [2]
+    assert [h.point_id for h in ranked] == ["2", "1"]
 
 
 # --------------------------------------------------------------------------- #
@@ -902,3 +966,19 @@ def test_metric_guard_noop_for_interest_rate_question() -> None:
     )
     q = "Lãi suất cam kết tối thiểu năm 1 là bao nhiêu?"
     assert filter_metric_mismatch(q, [interest]) == [interest]
+
+
+def test_metric_guard_sees_the_parent_window_of_a_child_chunk() -> None:
+    # Under parent-child chunking the caption naming the metric can sit in the
+    # parent while the matched child is a bare row group. The guard must judge
+    # the text generation would receive, not just the child.
+    from app.retrieval.metric_guard import filter_metric_mismatch
+
+    child = _metric_hit("Chương II > Điều 4", "| Năm | % |\n| --- | --- |\n| 1 | 2.5 |")
+    child.payload.parent_index = 0
+    child.payload.parent_text = (
+        "Lãi suất cam kết tối thiểu theo năm hợp đồng:\n\n"
+        "| Năm | % |\n| --- | --- |\n| 1 | 2.5 |"
+    )
+    q = "gặp tai nạn xe cộ và chết thì được claim bao nhiêu%?"
+    assert filter_metric_mismatch(q, [child]) == []

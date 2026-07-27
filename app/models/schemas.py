@@ -94,8 +94,13 @@ class Chunk:
 
     ``embed_text`` is what bge-m3 sees (doc/section prefix + display text +
     Vietnamese verbalizations); ``display_text`` is clean Markdown+LaTeX that
-    goes into the generation context and UI. Only ``display_text`` is stored in
-    the payload — ``embed_text`` exists solely to produce the vectors.
+    identifies this chunk in retrieval, reranking, and the UI. ``embed_text`` is
+    not stored in the payload — it exists solely to produce the vectors.
+
+    With parent-child chunking (settings.parent_child_chunking_enabled) the
+    chunk is a small CHILD and ``parent_text`` carries the larger window it was
+    cut from, which is what generation reads. ``parent_text`` is None when the
+    child is the whole parent (nothing to widen to) or the feature is off.
     """
 
     doc_id: str
@@ -108,6 +113,10 @@ class Chunk:
     page: int | None = None
     department: str | None = None
     figure_image_path: str | None = None
+    # Parent window for generation, and the index identifying it within the
+    # document so several retrieved children of one parent can be collapsed.
+    parent_text: str | None = None
+    parent_index: int | None = None
     # Basename of the originally uploaded file (under data/uploads), so
     # citations can link back to the source document. None for sources that
     # were never an uploaded file (e.g. glossary entries built in-memory).
@@ -128,6 +137,8 @@ class Chunk:
             department=self.department,
             doc_type=self.doc_type,
             display_text=self.display_text,
+            parent_text=self.parent_text,
+            parent_index=self.parent_index,
             figure_image_path=self.figure_image_path,
             source_filename=self.source_filename,
             source_url=self.source_url,
@@ -145,8 +156,10 @@ class Chunk:
 class QdrantPayload(BaseModel):
     """Payload stored alongside each vector point.
 
-    Mirrors CLAUDE.md's field list. ``display_text`` is included so retrieval
-    can assemble the generation context without a second lookup.
+    Mirrors CLAUDE.md's field list. ``display_text`` — and, under parent-child
+    chunking, ``parent_text`` — are included so retrieval can assemble the
+    generation context without a second lookup. Both parent fields default to
+    None, so points indexed before parent-child chunking existed still load.
     """
 
     doc_id: str
@@ -156,12 +169,24 @@ class QdrantPayload(BaseModel):
     department: str | None = None
     doc_type: DocType
     display_text: str
+    parent_text: str | None = None
+    parent_index: int | None = None
     figure_image_path: str | None = None
     source_filename: str | None = None
     source_url: str | None = None
     needs_review: bool = False
     chunk_index: int
     ingested_at: str  # ISO-8601 UTC
+
+    @property
+    def context_text(self) -> str:
+        """The text generation should read: the parent window when there is one.
+
+        Retrieval and reranking work on the narrow ``display_text``; only the
+        prompt widens to the parent, so a match on a short passage still gives
+        the model the definitions and conditions around it.
+        """
+        return self.parent_text or self.display_text
 
 
 # --------------------------------------------------------------------------- #

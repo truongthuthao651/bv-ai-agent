@@ -165,6 +165,11 @@ def _run_pipeline(
         count_tokens=indexer.count_tokens,
         max_tokens=settings.chunk_max_tokens,
         overlap_pct=settings.chunk_overlap_pct,
+        child_max_tokens=(
+            settings.chunk_child_max_tokens
+            if settings.parent_child_chunking_enabled
+            else None
+        ),
     )
     chunks = enrich_chunks(chunks)
     n_points = indexer.index_chunks(chunks)

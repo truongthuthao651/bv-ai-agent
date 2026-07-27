@@ -82,7 +82,8 @@ bv-ai-agent/
 │   │   │   └── ocr.py             # Shared PaddleOCR wrapper (lang="vi")
 │   │   ├── cleaning.py        # NFC Unicode normalization, header/footer strip
 │   │   ├── chunking.py        # Heading-aware split (Điều/Khoản/Điểm), 500–800 tok,
-│   │   │                      #   10–15% overlap; NEVER splits equations (see skill)
+│   │   │                      #   10–15% overlap; NEVER splits equations (see skill);
+│   │   │                      #   parent-child: small children indexed, parent generated
 │   │   ├── enrichment.py      # LLM verbalization of formulas (VI) + VLM figure
 │   │   │                      #   descriptions; produces embed_text vs display_text
 │   │   └── indexer.py         # bge-m3 embed (dense+sparse) → Qdrant upsert
@@ -105,6 +106,7 @@ bv-ai-agent/
 │   ├── ingest.sh              # Batch-ingest a folder
 │   ├── ingest_knowledge_pack.py  # Index manually-downloaded PUBLIC refs + their URLs
 │   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
+│   ├── chunk_stats.py         # Parent/child chunk sizes for a folder (budget tuning)
 │   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
 ├── data/                      # GITIGNORED except glossary/ + the pack manifest template
 │   ├── glossary/
@@ -137,14 +139,22 @@ bv-ai-agent/
   Vietnamese verbalization for embedding (see enrichment). Actuarial pre-subscript
   notation (e.g. `{}_np_x`) is error-prone in OCR — cross-check against glossary symbols.
 - **Chunk fields:** each chunk has `embed_text` (prose + LaTeX + verbalization —
-  what bge-m3 sees) and `display_text` (clean Markdown+LaTeX — what goes into the
-  generation context). Qdrant payload: `doc_id, doc_title, section_path, page,
-  department, doc_type, figure_image_path (optional), ingested_at`.
+  what bge-m3 sees) and `display_text` (clean Markdown+LaTeX — the unit that is
+  retrieved and reranked). Qdrant payload: `doc_id, doc_title, section_path, page,
+  department, doc_type, parent_text (optional), parent_index (optional),
+  figure_image_path (optional), ingested_at`.
   `doc_type ∈ {policy, procedure, form, spreadsheet, image, figure, glossary,
   reference, other}` (`reference` = public knowledge-pack material).
   Knowledge-pack chunks also carry `source_url` (the public page the file was
   downloaded from); citations then link there, labeled `(nguồn công khai)`.
   Prepend `"Tài liệu: {doc_title} > {section_path}"` to embed_text.
+- **Parent-child chunking** (`PARENT_CHILD_CHUNKING_ENABLED`): each indexed point
+  is a small child (`CHUNK_CHILD_MAX_TOKENS`) cut from a normal 500–800 token
+  parent. The child is embedded and reranked; generation reads
+  `payload.context_text` (the parent when there is one). Parents are exactly the
+  chunks the flat path produces, so disabling the flag restores it. The reranker
+  keeps one child per parent before the top-k cut, and any guard inspecting chunk
+  text must use `context_text` — that is what the model receives.
 - **Answering rules:** answer only from retrieved context; cite as
   `[Tên tài liệu, mục X]`; reply "Tôi không tìm thấy thông tin trong tài liệu"
   when context is insufficient; for numeric calculations, show the formula and
@@ -180,6 +190,7 @@ bash scripts/stop_native.sh                                 # stop the native st
 bash scripts/setup_models.sh                                # pull all models (native/docker autodetect)
 bash scripts/healthcheck.sh                                 # smoke test
 python scripts/make_synthetic_data.py                       # regenerate fake docs
+python scripts/chunk_stats.py data/synthetic                # parent/child chunk sizes (tuning)
 bash scripts/ingest.sh data/synthetic                       # index synthetic corpus
 bash scripts/ingest.sh data/glossary                        # index the glossary
 python scripts/ingest_knowledge_pack.py --dry-run           # validate the pack manifest

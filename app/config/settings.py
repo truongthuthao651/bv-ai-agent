@@ -92,7 +92,13 @@ class Settings(BaseSettings):
     # Relative to the working directory: the repo root natively, /app in Docker.
     embed_model_path: str = "./models/bge-m3"
     rerank_model_path: str = "./models/bge-reranker-v2-m3"
-    llm_temperature: float = 0.2
+    # Greedy decoding. Sampling buys nothing on a grounded compliance task and
+    # costs correctness in the tail: on a question no exclusion clause covered,
+    # 0.2 answered "không chi trả" in 5 of 12 samples (inventing an exclusion
+    # after correctly listing the real ones), while 0.0 was right 12 of 12
+    # — measured interleaved, same prompt and context. It also makes eval runs
+    # comparable instead of resampling a new answer each time.
+    llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
     # How many trailing chat turns are sent to the model as history. Kept small
@@ -126,6 +132,15 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     rrf_k: int = 60
     rerank_top_k: int = 5
+    # Cap how many RRF-fused hits the cross-encoder scores. Dense+sparse each
+    # return retrieve_top_k, so the fused pool can approach 2× that; the
+    # cross-encoder is the hot path, and ranks past ~15 almost never enter
+    # generation after the top_k cut. Lowering this is H8 lever (a).
+    rerank_candidates: int = 15
+    # Token cap passed to FlagReranker.compute_score. Library default is 512;
+    # with parent-child children at CHUNK_CHILD_MAX_TOKENS≈250 the query+doc
+    # pair rarely needs more. Lower values cut CPU padding cost (H8).
+    rerank_max_length: int = 512
     # Reranker (bge-reranker-v2-m3, normalized 0-1) hits scoring below this are
     # dropped before generation; when nothing survives, the API returns the
     # refusal message deterministically instead of trusting the LLM to refuse
@@ -211,6 +226,17 @@ class Settings(BaseSettings):
     chunk_min_tokens: int = 500
     chunk_max_tokens: int = 800
     chunk_overlap_pct: float = 0.12
+    # Parent-child chunking: each indexed point is a SMALL child chunk (what
+    # bge-m3 embeds and the reranker scores — short passages match a short
+    # question far more precisely), but generation receives the larger parent
+    # chunk the child was cut from, so the model still sees the surrounding
+    # definitions and conditions. Parents are exactly the chunks produced
+    # without this feature, so turning it off restores the flat behavior.
+    parent_child_chunking_enabled: bool = True
+    # Child budget in tokens. Children are packed from the same indivisible
+    # units as parents (equation units, table row groups), so a unit larger
+    # than this still becomes one oversized child rather than being split.
+    chunk_child_max_tokens: int = 250
 
     # ---- Ingestion / parsing ----
     ocr_language: str = "vi"

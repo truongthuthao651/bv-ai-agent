@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from urllib.parse import quote
 
 from app.config.settings import settings
@@ -49,6 +50,7 @@ def _hit(
     page: int | None = None,
     source_filename: str | None = None,
     source_url: str | None = None,
+    parent_text: str | None = None,
 ) -> Hit:
     payload = QdrantPayload(
         doc_id="d1",
@@ -57,6 +59,8 @@ def _hit(
         page=page,
         doc_type=DocType.OTHER,
         display_text=text,
+        parent_text=parent_text,
+        parent_index=0 if parent_text else None,
         chunk_index=0,
         source_filename=source_filename,
         source_url=source_url,
@@ -103,6 +107,40 @@ def test_system_prompt_forbids_overapplying_exclusions() -> None:
     assert "tài liệu không nêu mức chi trả cụ thể" in SYSTEM_PROMPT
 
 
+def test_system_prompt_numbers_its_rules_in_order() -> None:
+    # Assembled from shared blocks, so a reordering can leave the visible
+    # numbering out of sequence.
+    positions = [SYSTEM_PROMPT.index(f"\n{n}. ") for n in range(1, 8)]
+    assert positions == sorted(positions)
+
+
+def test_prompt_never_points_at_a_rule_by_number() -> None:
+    # The model copies the prompt's wording: "trả lời theo quy tắc 3" came back
+    # verbatim to the employee as "Trả lời theo quy tắc 3: Tôi không tìm thấy
+    # thông tin trong tài liệu." (golden fr02) — leaking internals and refusing
+    # after it had already answered. Rules must state what to do, not point at a
+    # number. The single allowed mention is the line forbidding exactly this.
+    allowed = 'kể cả số hiệu quy tắc (ví dụ "theo quy tắc 3")'
+    for advisory in (False, True):
+        prompt = system_prompt(advisory=advisory)
+        assert allowed in prompt
+        assert not re.findall(r"quy tắc \d", prompt.replace(allowed, ""))
+
+
+def test_refusal_sentence_is_written_out_only_once() -> None:
+    # Rules 1 and 6 name the refusal ("CÂU TỪ CHỐI BẮT BUỘC") instead of quoting
+    # it. Spelling it out three times made refusal salient enough to flip an
+    # answerable question (golden q29_en) into a refusal.
+    for advisory in (False, True):
+        assert system_prompt(advisory=advisory).count(REFUSAL_MESSAGE.rstrip(".")) == 1
+
+
+def test_refusal_sentence_is_the_whole_answer_or_absent() -> None:
+    # Answering and then appending the refusal is self-contradictory (fr02).
+    for advisory in (False, True):
+        assert "TOÀN BỘ câu trả lời khi dùng" in system_prompt(advisory=advisory)
+
+
 def test_system_prompt_forbids_remapping_interest_to_claim_percent() -> None:
     assert "Lãi suất cam kết" in SYSTEM_PROMPT
     assert "tỷ lệ bồi thường" in SYSTEM_PROMPT
@@ -131,6 +169,27 @@ def test_format_context_numbers_chunks_with_citation_header() -> None:
 def test_format_context_empty_hits_says_nothing_found() -> None:
     context = format_context([])
     assert "Không tìm thấy" in context
+
+
+def test_format_context_widens_a_child_to_its_parent_window() -> None:
+    # Retrieval matched a narrow passage; the model must still see the
+    # surrounding conditions it was cut from (parent-child chunking).
+    parent = (
+        "Điều kiện chi trả quyền lợi tử vong.\n\n"
+        "Công ty chi trả 100% số tiền bảo hiểm.\n\n"
+        "Trong đó số tiền bảo hiểm là mệnh giá ghi trên hợp đồng."
+    )
+    hits = [
+        _hit(
+            "Quy tắc An Tâm Bảo Vệ",
+            "Điều 5",
+            "Công ty chi trả 100% số tiền bảo hiểm.",
+            parent_text=parent,
+        )
+    ]
+    context = format_context(hits)
+    assert "Điều kiện chi trả quyền lợi tử vong." in context
+    assert "mệnh giá ghi trên hợp đồng" in context
 
 
 def test_build_user_prompt_includes_context_and_question() -> None:

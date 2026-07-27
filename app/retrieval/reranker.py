@@ -1,9 +1,12 @@
 """bge-reranker-v2-m3 cross-encoder reranking.
 
 Reduces the RRF-fused hybrid-search hits down to ``settings.rerank_top_k`` for
-generation (skill, section 5). The model is loaded lazily and cached (mirrors
-``ingestion/indexer.get_embedder``), so importing this module is cheap and
-unit tests that inject a fake ``score_fn`` never pay for the model load.
+generation (skill, section 5). Before scoring, the fused list is truncated to
+``settings.rerank_candidates`` (already RRF-sorted) so the cross-encoder does
+not pay for ranks that will never reach generation. The model is loaded lazily
+and cached (mirrors ``ingestion/indexer.get_embedder``), so importing this
+module is cheap and unit tests that inject a fake ``score_fn`` never pay for
+the model load.
 """
 
 from __future__ import annotations
@@ -43,7 +46,11 @@ def _flag_rerank_scores(query: str, documents: list[str]) -> list[float]:
         return []
     pairs = [[query, doc] for doc in documents]
     with _score_lock:
-        scores = get_reranker().compute_score(pairs, normalize=True)
+        scores = get_reranker().compute_score(
+            pairs,
+            normalize=True,
+            max_length=settings.rerank_max_length,
+        )
     # compute_score returns a bare float for a single pair instead of a list.
     return [scores] if isinstance(scores, float) else list(scores)
 
@@ -61,31 +68,72 @@ def _rerank_text(hit: Hit) -> str:
     return f"Tài liệu: {p.doc_title} > {p.section_path}\n\n{p.display_text}"
 
 
+def _parent_key(hit: Hit) -> tuple[str, str | int]:
+    """Identity of the parent window a hit would widen to in the prompt.
+
+    A chunk with no parent is its own group, keyed by point id so it can never
+    collide with another chunk (flat chunks, and points indexed before
+    parent-child chunking existed).
+    """
+    payload = hit.payload
+    if payload.parent_index is None:
+        return ("", hit.point_id)
+    return (payload.doc_id, payload.parent_index)
+
+
+def _best_per_parent(ranked: list[Hit]) -> list[Hit]:
+    """Keep only the best-scoring child of each parent window.
+
+    Under parent-child chunking several children of one parent can survive
+    reranking, and generation widens every hit to its parent — so keeping them
+    all would spend the top_k budget re-sending one window instead of adding
+    distinct material. ``ranked`` must already be sorted best-first.
+    """
+    seen: set[tuple[str, str | int]] = set()
+    out: list[Hit] = []
+    for hit in ranked:
+        key = _parent_key(hit)
+        if key not in seen:
+            seen.add(key)
+            out.append(hit)
+    return out
+
+
 def rerank(
     query: str,
     hits: list[Hit],
     *,
     top_k: int | None = None,
+    candidates: int | None = None,
     min_score: float | None = None,
     min_ratio: float | None = None,
     score_fn: ScoreFn | None = None,
 ) -> list[Hit]:
     """Cross-encoder rerank of fused hits, cut to top_k.
 
-    Each hit is scored against its title/section-prefixed display text (see
-    ``_rerank_text``). A hit is dropped when it scores below either floor:
-    ``min_score`` (an absolute normalized 0-1 threshold) or ``min_ratio`` times
-    the top hit's score (a relative floor that suppresses weak cross-document
-    chunks padding the context when a strong, coherent top hit exists;
-    ``min_ratio=0`` disables it). Dropping keeps generation from ever seeing
-    context the reranker considers irrelevant; an empty result lets the chat
-    endpoint refuse deterministically instead of trusting the LLM to. Mutates and
-    reuses each ``Hit``'s ``score`` in place (RRF score is no longer needed once
-    reranked). Returns ``[]`` for empty input.
+    ``hits`` are assumed already sorted best-first (RRF order from hybrid
+    search). Only the first ``candidates`` are scored — ranks beyond that
+    almost never survive the top_k cut, and the cross-encoder is the
+    latency bottleneck. Each scored hit uses its title/section-prefixed
+    display text (see ``_rerank_text``). A hit is dropped when it scores
+    below either floor: ``min_score`` (an absolute normalized 0-1 threshold)
+    or ``min_ratio`` times the top hit's score (a relative floor that
+    suppresses weak cross-document chunks padding the context when a strong,
+    coherent top hit exists; ``min_ratio=0`` disables it). Dropping keeps
+    generation from ever seeing context the reranker considers irrelevant; an
+    empty result lets the chat endpoint refuse deterministically instead of
+    trusting the LLM to. Surviving hits are collapsed to one child per parent
+    window before the cut, so top_k means top_k distinct windows. Mutates and
+    reuses each ``Hit``'s ``score`` in place (RRF score is no longer needed
+    once reranked). Returns ``[]`` for empty input.
     """
     if not hits:
         return []
     top_k = top_k or settings.rerank_top_k
+    if candidates is None:
+        candidates = settings.rerank_candidates
+    if candidates > 0:
+        hits = hits[:candidates]
     if min_score is None:
         min_score = settings.rerank_min_score
     if min_ratio is None:
@@ -111,5 +159,5 @@ def rerank(
             min_ratio,
             top_score,
         )
-    ranked = sorted(kept, key=lambda hit: hit.score, reverse=True)
+    ranked = _best_per_parent(sorted(kept, key=lambda hit: hit.score, reverse=True))
     return ranked[:top_k]

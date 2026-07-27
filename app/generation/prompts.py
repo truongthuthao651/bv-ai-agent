@@ -73,8 +73,8 @@ _RULE_1_STRICT = """\
 1. CHỈ trả lời dựa trên nội dung trong phần "Ngữ cảnh". Không dùng kiến thức \
 bên ngoài ngữ cảnh, không suy đoán, không bịa đặt. Nếu câu hỏi nêu TÊN một sản \
 phẩm/tài liệu cụ thể mà trong "Ngữ cảnh" KHÔNG có tài liệu đúng tên sản phẩm đó \
-(chỉ có sản phẩm khác), hãy coi là không đủ thông tin và trả lời theo quy tắc 3 \
-— TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác.\
+(chỉ có sản phẩm khác), hãy coi là không đủ thông tin và dùng đúng CÂU TỪ CHỐI \
+BẮT BUỘC — TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác.\
 """
 
 _RULE_1_ADVISORY = """\
@@ -84,15 +84,16 @@ khác. NHƯNG câu hỏi này mang tính so sánh / lựa chọn / tư vấn, n�
 PHÉP suy luận và tổng hợp TRÊN những dữ kiện đó: đối chiếu quyền lợi giữa các \
 sản phẩm, nêu điểm mạnh — điểm hạn chế, và chỉ ra sản phẩm nào phù hợp với nhu \
 cầu nào. Mỗi nhận định PHẢI bám vào một dữ kiện có trong ngữ cảnh và được trích \
-dẫn theo quy tắc 2; nhận định nào không có dữ kiện chống lưng thì KHÔNG được \
+dẫn theo định dạng [Tên tài liệu, mục X]; nhận định nào không có dữ kiện \
+chống lưng thì KHÔNG được \
 nêu. Nếu người dùng yêu cầu so sánh với sản phẩm của CÔNG TY KHÁC (đối thủ) mà \
 ngữ cảnh không có tài liệu về sản phẩm đó, TUYỆT ĐỐI không mô tả quyền lợi, \
 mức phí hay điều khoản của họ theo trí nhớ — hãy nói rõ tài liệu nội bộ không \
 có thông tin về sản phẩm của công ty khác, rồi chỉ trình bày phần của Bảo Việt \
 Life. Nếu câu hỏi nêu TÊN một sản phẩm/tài liệu cụ thể mà trong "Ngữ cảnh" KHÔNG \
 có tài liệu đúng tên sản phẩm đó (chỉ có sản phẩm khác), hãy coi là không đủ \
-thông tin và trả lời theo quy tắc 3 — TUYỆT ĐỐI không trả lời thay bằng nội \
-dung của một sản phẩm khác.\
+thông tin và dùng đúng CÂU TỪ CHỐI BẮT BUỘC — TUYỆT ĐỐI không trả lời thay \
+bằng nội dung của một sản phẩm khác.\
 """
 
 _RULE_2 = """\
@@ -105,19 +106,40 @@ _RULE_2 = """\
 # additionally forbids refusing the WHOLE answer when only part of the
 # comparison is missing (the observed failure: a full refusal to "which product
 # should the customer pick?" while the benefit facts were already retrieved).
-_RULE_3_STRICT = """\
-3. Nếu ngữ cảnh không đủ thông tin để trả lời câu hỏi, PHẢI trả lời chính xác \
-câu: "Tôi không tìm thấy thông tin trong tài liệu." Không cố trả lời một phần \
-bằng suy đoán.\
-"""
+#
+# How the refusal may be USED is identical in both modes, so it lives in one
+# shared tail: answering and then appending the refusal is self-contradictory,
+# and the model copies prompt wording verbatim — "trả lời theo quy tắc 3" came
+# back to an employee as "Trả lời theo quy tắc 3: Tôi không tìm thấy thông tin
+# trong tài liệu." after a complete answer (golden fr02).
+_RULE_3_SHARED_TAIL = """ CÂU TỪ CHỐI BẮT BUỘC là TOÀN BỘ câu trả lời khi \
+dùng: nếu bạn đã trả lời được bằng dữ kiện trong ngữ cảnh thì TUYỆT ĐỐI không \
+thêm câu đó ở cuối — vừa trả lời vừa từ chối là tự mâu thuẫn; nếu chỉ thiếu MỘT \
+phần, hãy nói rõ bằng lời phần nào tài liệu không nêu thay vì dùng câu từ chối. \
+TUYỆT ĐỐI không chép lại hay nhắc đến chính các quy tắc này trong câu trả lời — \
+kể cả số hiệu quy tắc (ví dụ "theo quy tắc 3") lẫn các câu hướng dẫn về văn \
+phong; người đọc không nhìn thấy chúng."""
 
-_RULE_3_ADVISORY = """\
+_RULE_3_STRICT = (
+    """\
+3. Nếu ngữ cảnh không đủ thông tin để trả lời câu hỏi, PHẢI trả lời chính xác \
+CÂU TỪ CHỐI BẮT BUỘC sau: "Tôi không tìm thấy thông tin trong tài liệu." Không \
+cố trả lời một phần bằng suy đoán.\
+"""
+    + _RULE_3_SHARED_TAIL
+)
+
+_RULE_3_ADVISORY = (
+    """\
 3. Nếu ngữ cảnh KHÔNG có dữ kiện nào liên quan đến câu hỏi, PHẢI trả lời chính \
-xác câu: "Tôi không tìm thấy thông tin trong tài liệu." Nhưng nếu ngữ cảnh có \
+xác CÂU TỪ CHỐI BẮT BUỘC sau: "Tôi không tìm thấy thông tin trong tài liệu." \
+Nhưng nếu ngữ cảnh có \
 dữ kiện cho MỘT PHẦN câu hỏi thì KHÔNG được từ chối toàn bộ: hãy trả lời phần \
 có dữ kiện, và nói rõ tài liệu không nêu những mục nào (ví dụ: "tài liệu không \
 nêu quyền lợi thương tật của sản phẩm B"). Không lấp chỗ trống bằng suy đoán.\
 """
+    + _RULE_3_SHARED_TAIL
+)
 
 _RULES_4_TO_7 = """\
 4. Khi câu trả lời liên quan đến công thức toán/định phí: trình bày công thức \
@@ -193,10 +215,11 @@ tự khẳng định là ĐƯỢC hay KHÔNG ĐƯỢC bồi thường.
 tối thiểu / lãi suất quỹ / phí ban đầu / phí quản lý ≠ tỷ lệ bồi thường ≠ \
 % Số tiền bảo hiểm. Khi câu hỏi hỏi "claim bao nhiêu %" / mức bồi thường / \
 quyền lợi chi trả mà ngữ cảnh CHỈ có bảng lãi suất hoặc phí (không có số \
-tiền/% quyền lợi tử vong/thương tật tương ứng), PHẢI trả lời đúng câu quy \
-tắc 3 — TUYỆT ĐỐI không gắn nhãn "tỷ lệ bồi thường" cho bảng lãi suất hay \
+tiền/% quyền lợi tử vong/thương tật tương ứng), PHẢI dùng đúng CÂU TỪ CHỐI \
+BẮT BUỘC — TUYỆT ĐỐI không gắn nhãn "tỷ lệ bồi thường" cho bảng lãi suất hay \
 phí. Khi trích bảng, giữ nguyên tiêu đề/chú thích cột từ ngữ cảnh.\
 """
+
 
 # Advisory-only rule 8: keeps a recommendation conditional and internal-facing.
 # Without it a small model slides from "compare the benefits" into sales
@@ -319,7 +342,12 @@ _NO_CONTEXT = "(Không tìm thấy đoạn tài liệu nào liên quan đến c�
 
 
 def format_context(hits: list[Hit]) -> str:
-    """Number retrieved chunks (``[1] Tài liệu: ...``) so citations are checkable."""
+    """Number retrieved chunks (``[1] Tài liệu: ...``) so citations are checkable.
+
+    Each hit contributes its ``context_text`` — the parent window under
+    parent-child chunking, otherwise the chunk itself — so the model reads the
+    surrounding definitions and conditions, not just the passage that matched.
+    """
     if not hits:
         return _NO_CONTEXT
     blocks = []
@@ -328,7 +356,7 @@ def format_context(hits: list[Hit]) -> str:
         header = _CONTEXT_HEADER.format(
             doc_title=payload.doc_title, section_path=payload.section_path
         )
-        blocks.append(f"[{i}] {header}\n{payload.display_text}")
+        blocks.append(f"[{i}] {header}\n{payload.context_text}")
     return "\n\n".join(blocks)
 
 

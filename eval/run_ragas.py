@@ -286,7 +286,10 @@ def evaluate_item(
             "correct",
         )
         if hits:
-            contexts = "\n\n".join(h.payload.display_text for h in hits)
+            # Judge against the text generation actually received (the parent
+            # window under parent-child chunking), or faithfulness would be
+            # scored against a narrower context than the model saw.
+            contexts = "\n\n".join(h.payload.context_text for h in hits)
             row.judge_faithful = _judge(
                 _JUDGE_FAITHFULNESS_PROMPT.format(contexts=contexts, answer=body),
                 "faithful",
@@ -448,7 +451,12 @@ def main() -> None:
 
     rows: list[Row] = []
     for i, item in enumerate(items, start=1):
-        print(f"[{i}/{len(items)}] {item.id} ({item.category}): {item.question[:70]}")
+        # flush: a full run takes tens of minutes on CPU and Python buffers
+        # stdout when it isn't a terminal, hiding all progress until the end.
+        print(
+            f"[{i}/{len(items)}] {item.id} ({item.category}): {item.question[:70]}",
+            flush=True,
+        )
         row = evaluate_item(
             item, generate=not args.retrieval_only, judge=not args.no_judge
         )

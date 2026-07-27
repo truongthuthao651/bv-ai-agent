@@ -622,7 +622,7 @@ All items are zero-budget, fully offline, no paid services.
 | Pri | Item | Why / how |
 |---|---|---|
 | 1 | **Parent-child ("small-to-big") chunking** (H4) | Keep today's small, precise units as the *retrieval* index; attach a `parent_id` and store the enclosing section (or a merged 500–800-token window) as the text handed to generation. Also honour `CHUNK_MIN_TOKENS` by merging adjacent sibling sections under a shared heading before packing. This is the single largest quality lever and it fixes the dangling-reference problem without hurting citation precision. |
-| 2 | **Cut rerank latency 5–10×** (H8) | In order of effort: (a) rerank only the top 12–15 fused candidates instead of up to 40; (b) export bge-reranker-v2-m3 to **ONNX + INT8 dynamic quantization** and run it under `onnxruntime` — typically 3–5× on CPU with negligible quality loss, fully offline; (c) batch pairs in one `compute_score` call; (d) add a cheap pre-filter (RRF score cutoff) before the cross-encoder. Combined with (1) reducing candidate count, sub-10 s retrieval is realistic. |
+| 2 | **Cut rerank latency 5–10×** (H8) | In order of effort: (a) ~~rerank only the top 12–15 fused candidates~~ **shipped** as `RERANK_CANDIDATES=15` (+ `RERANK_MAX_LENGTH` wired through to `compute_score`) — on the grown corpus, parent-child median **4 227 → 2 383 ms** with identical doc/section hits (`h4-ab-pc-retrieval.json` → `h8-a-candidates15.json`); cumulative vs flat ≈ **6.6×**; (b) export bge-reranker-v2-m3 to **ONNX + INT8**; (c) tune `batch_size` / try `RERANK_MAX_LENGTH=256` against children; (d) RRF score pre-filter. Re-measure against the candidates=15 median (~2.4 s), not pre-H4. |
 | 3 | **Make the eval harness test the real pipeline** (H7) | Point `run_ragas.py` at `chat._retrieve` (or better, at `POST /v1/chat/completions` over HTTP) so every guard is in the loop. Add a **`false_refusal`** category with the questions from C1, and assert `false_refusal_rate == 0` as a gate. Re-baseline on `qwen3:8b`. One command: `make eval`. |
 | 4 | **Fix `citation_rate: 0.10`** | Measure first, then either strengthen rule 2 with a worked example in the prompt, or post-process: map the model's `[n]` markers onto the sources block and reject/repair answers with zero citations. |
 | 5 | **Serve concurrency properly** (H8) | Move embedding + reranking into a small worker pool (2–3 processes, each with its own model instance) behind a queue, replacing the process-wide mutex. Add a request queue depth limit + friendly "đang xử lý" response. |
@@ -630,6 +630,193 @@ All items are zero-budget, fully offline, no paid services.
 | 7 | **Qdrant payload indexes + cache `list_documents()`** (M12, M13) | `create_payload_index` on `doc_id`, `doc_type`, `department`; TTL-cache the document list (invalidate on ingest/delete). Removes repeated full scans from the hot query path. |
 | 8 | **Batch enrichment** (M11) | Group math chunks and issue one Ollama call per batch; parallelize with a small bounded pool. Cuts ingest wall time materially. |
 | 9 | **Upload hardening** (M14) | Stream to disk in chunks, enforce `MAX_UPLOAD_MB` from settings, validate magic bytes against the extension. |
+
+#### Implementation note — H4 shipped, and it is also an H8 lever
+
+Parent-child chunking is implemented (`PARENT_CHILD_CHUNKING_ENABLED`,
+`CHUNK_CHILD_MAX_TOKENS=250`): points are children, generation reads
+`payload.context_text`. Measured on `data/synthetic/` (36 golden questions,
+retrieval-only, idle machine, same code both runs — only the index differs):
+
+| | flat | parent-child |
+|---|---|---|
+| doc_hit / section_hit / MRR | 0.912 / 0.882 / 0.897 | identical |
+| retrieval median | 8 206 ms | **3 560 ms** |
+| retrieval mean | 10 646 ms | **3 862 ms** |
+
+Two things this says. First, quality is unchanged **on this corpus** and cannot
+improve there: `scripts/chunk_stats.py` shows a median parent of 34–141 tokens
+and only 2 of 22 parents above the child budget, so the child pass is nearly
+inert. The quality claim in row 1 is still untested — it needs documents whose
+sections actually reach 500–800 tokens.
+
+Second, the 2.7× latency win is real and is a **rerank** finding: the
+cross-encoder pads every pair in a batch to the longest one, so a single long
+candidate taxes all ~40 of them. Capping chunk length is therefore a cheaper
+lever than anything in row 2, and it composes with them. Add
+`rerank_max_length` to the H8 list, and re-measure (a)–(d) against the
+parent-child baseline above, not against the pre-H4 numbers.
+
+#### Grown-corpus H4 A/B (quality settled; latency win larger)
+
+Retrieval-only on the 42-question set, parent-child vs flat index, same code
+(`eval/results/h4-ab-pc-retrieval.json` vs `h4-ab-flat-retrieval.json`):
+
+| | flat | parent-child |
+|---|---|---|
+| doc_hit / section_hit / MRR | 0.975 / 0.925 / 0.963 | **identical** |
+| doc/section disagreements | — | **0 of 42** |
+| An Bình chunks indexed | 11 | 22 |
+| retrieval median | 15 663 ms | **4 227 ms** (~3.7×) |
+| retrieval mean | 17 418 ms | **4 694 ms** |
+
+H4's *quality* claim does not move the needle on this corpus: every golden item
+hits the same document and section either way. The generation probe `q35` also
+fails both ways — flat already indexes Điều 9 as one ~2 232-char parent that
+contains the 24-month condition, and the model still omits it. That is a
+generation completeness bug, not a chunking one.
+
+H4's *latency* claim is stronger on the grown corpus than on the short one
+(3.7× vs 2.7×), still for the same reason: smaller child `display_text` shrinks
+cross-encoder batch padding. Proceed to H8 against the parent-child median
+(~4.2 s), not the flat numbers. Single-run `*_ms_mean` remains noisy; prefer
+median, and for small H8 deltas re-measure interleaved.
+
+#### Corpus grown to fix the blind spot above — and it found two defects
+
+`data/synthetic/quy_tac_tron_doi_an_binh.md` (generated by
+`scripts/make_synthetic_data.py`) is a full-length whole-life booklet: 21 KB,
+10 articles, parent tokens median 478 / max 748. The corpus now splits 7 of 33
+parents instead of 2 of 22, and 6 golden questions were added (42 total).
+Parent-child measurably does what it is designed to do on it: Điều 9 is one
+2 232-char parent cut into three ~750-char children, and the child that matches
+the surrender-value formula widens to a context that still contains the
+24-month qualifying condition sitting three paragraphs above it.
+
+Two defects that the short documents had been hiding, both from the
+parent-child run (`eval/results/big-A-parent-child.json`, overall doc_hit 0.925
+/ section_hit 0.900 / MRR 0.912):
+
+1. **Exclusion over-application (safety rule violation) — fixed by
+   `LLM_TEMPERATURE=0`.** `q37` asks whether an ordinary, law-abiding traffic
+   accident is covered. The answer was "**Công ty không chi trả** vì tai nạn
+   giao thông thuộc trường hợp loại trừ" — an exclusion that does not exist in
+   Điều 6. The striking part is the reasoning: the model lists Điều 6's real
+   clauses, states correctly that none of them apply, and *then* concludes
+   "Do đó, Công ty không chi trả". A polarity inversion at the last step, not a
+   failure to recall the rule.
+
+   Retrieval was not at fault (Điều 4, the payout clause, ranked 1; Điều 6
+   ranked 2) and neither was the prompt: rule 6(b) already forbids this in as
+   many words, with "tai nạn giao thông thông thường" as its example. It was a
+   decoding-tail failure. Interleaved A/B on the same prompt and context,
+   12 pairs: **temperature 0.2 → 7/12 correct, temperature 0.0 → 12/12**
+   (`q38` 12/12 and `q33` 12/12 both ways, so no polarity regression the other
+   direction). Greedy decoding is now the default in `settings.py` and
+   `.env.example`.
+
+   *Retracted hypothesis, recorded so it is not re-tried:* the exclusion rule
+   sits behind a ~40-line conditional diagram rule, so the obvious guess was
+   that it gets drowned out. Moving it in front appeared to fix the probe
+   completely (9/15 → 15/15). It does not: that comparison ran all of one arm
+   then all of the other, and re-running it **interleaved** gave old-order
+   16/20 vs new-order 13/20 — no effect. The reorder was reverted. Any future
+   prompt A/B on this stack must interleave its arms; sequential runs on this
+   machine drift enough to manufacture a significant-looking result.
+2. **The LLM judge is not a gate.** It marked the wrong `q37` answer both
+   `judge_correct` and `judge_faithful`, and returns 1.0 for every category in
+   every run. `judge_correct_rate` should not be read as a quality signal until
+   the judge is either strengthened or replaced with assertions on the answer
+   text. The `q37`/`q38` probes above had to be scored by keyword on the
+   model's own prose (echoed context lines stripped) precisely because the
+   judge could not tell the two apart.
+
+A lesser one, still open: `q35` omits the 24-month condition even though the
+widened parent put it in the prompt — a completeness gap in generation, not in
+retrieval.
+
+#### The typo gate was blocking answerable questions
+
+The eval GATE counts a question as a false refusal when a guard stopped it
+*before* generation, which the `false_refusal_rate` metric does not — that is
+why the two disagree (3/40 vs 1/40). The gate is the honest number. Two of its
+three hits never reached retrieval at all: `app/retrieval/spellcheck.py`
+returned "Ý bạn có phải là …?" instead of an answer.
+
+The cause is that the gate decided "is this a real word?" against a vocabulary
+built only from glossary terms and document titles — a few hundred words. Any
+ordinary Vietnamese word is therefore "unknown", and short unknown tokens
+resemble some phrase token by accident:
+
+| golden | word | folds to | matched | ratio |
+|---|---|---|---|---|
+| `q15` | giữa ("between") | `giua` | `gia` of "mệnh giá bảo hiểm" | 0.857 |
+| `q27` | Hồ (of "Hồ sơ") | `ho` | `hợp` of "… Hợp đồng …" | 0.800 |
+
+Fixed by building the vocabulary from the **indexed corpus text** as well
+(`indexer.corpus_snapshot`, one scroll cached per `index_version()`, bumped on
+upsert/delete). Real slips ("lieen", "vuwng") appear in no document and are
+still caught; both questions now plan as `grounded`. The same change removes a
+full collection scroll that the guard was doing on *every* query via
+`list_documents()` — relevant to H8.
+
+Measured over the 42-question set (`big-C-spellfix.json` vs `big-B-temp0.json`,
+same index, same temperature — only the guard changed):
+
+| | before | after |
+|---|---|---|
+| gate false refusals | 3/40 | **1/40** (only `fr02`) |
+| doc_hit | 0.925 | **0.975** |
+| section_hit | 0.900 | **0.925** |
+| MRR | 0.912 | **0.963** |
+
+The retrieval metrics moved because two questions that had been answered by a
+confirmation prompt now actually retrieve — the corpus was never the problem
+for them.
+
+A pre-existing gap surfaced while testing: "bao hiem lieen keet chung" is caught
+against a short title but not against the real, longer
+`Quy tắc, Điều khoản … "An Phú Liên Kết"` — unchanged by this fix, not caused by it.
+
+#### The prompt's own wording leaked into an answer (`fr02`)
+
+The third gate hit was not a miscount. The model answered the question in full
+and then appended:
+
+> Trả lời theo quy tắc 3: Tôi không tìm thấy thông tin trong tài liệu.
+
+— contradicting itself and showing the employee the prompt's internal rule
+numbering. The origin is literal: rules 1 and 6 said "trả lời theo quy tắc 3",
+so the model had a template to copy. Fixed by a shared rule-3 tail (both answer
+modes, never forked) saying the refusal is the WHOLE answer or absent and that
+the rules must never be quoted back, plus rules 1 and 6 naming the refusal
+instead of pointing at a number.
+
+**How they name it matters.** The first attempt had rules 1 and 6 quote the
+refusal sentence in full. That fixed `fr02` and broke `q29_en`, which had been
+answering correctly and started refusing instead — spelling the sentence out
+three times made refusal salient enough to flip an answerable question. Writing
+it once and referring to it as `CÂU TỪ CHỐI BẮT BUỘC` elsewhere keeps both. A
+test pins the count at one occurrence.
+
+Interleaved A/B, wording as of run C vs now: 3/9 → 9/9 across `fr02`, `q29_en`
+and a question that genuinely must be refused (the last stayed 3/3 in both
+arms). Answers are byte-identical across runs at temperature 0, so these
+reproduce exactly rather than being resampled.
+
+One trap worth recording: the first version of that A/B compared
+`prompts.SYSTEM_PROMPT`, and both arms passed. `SYSTEM_PROMPT` is the
+`general_knowledge=False` reference variant used by the property tests —
+production sends `system_prompt(advisory=…)`, 509 characters longer. Probe the
+function, not the constant.
+
+Confirmed on the full 42-question set (`eval/results/big-B-temp0.json` vs
+`big-A-parent-child.json`): `q37` now answers "được **chi trả**", `q38` and
+`q33` are unchanged, and every retrieval metric is identical (0.925 / 0.900 /
+0.912) since decoding cannot affect retrieval. The per-run latency means moved
+by ~25% between the two runs for the same reason they did during the H4
+baseline — machine noise, not the change. **Treat single-run `*_ms_mean` values
+as unusable for H8; measure it interleaved, like the two A/Bs above.**
 
 ### 5.3 Long term
 

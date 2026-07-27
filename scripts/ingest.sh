@@ -26,6 +26,27 @@ if [[ ! -d "$TARGET" ]]; then
   exit 1
 fi
 
+# /ingest sits behind the admin session gate (app/auth.py) whenever
+# ADMIN_PASSWORD is set, so log in once and reuse the session cookie. Without
+# this every upload comes back 401. Unset password = gate disabled = no login.
+COOKIE_JAR=""
+cleanup() { [[ -n "$COOKIE_JAR" ]] && rm -f "$COOKIE_JAR"; }
+trap cleanup EXIT
+
+ADMIN_PASSWORD="$(env_get ADMIN_PASSWORD)"
+if [[ -n "$ADMIN_PASSWORD" ]]; then
+  COOKIE_JAR="$(mktemp)"
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+    -c "$COOKIE_JAR" --data-urlencode "password=${ADMIN_PASSWORD}" \
+    "${API_URL}/login" || echo 000)"
+  if [[ "$status" != "200" ]]; then
+    echo "ERROR: admin login failed (HTTP $status). Check ADMIN_PASSWORD in .env" \
+      "and that the API is running at ${API_URL}." >&2
+    exit 1
+  fi
+  echo "==> Logged in to the admin session."
+fi
+
 # Keep in sync with app/ingestion/router.py (scanned images land with OCR).
 SUPPORTED="md markdown docx xlsx pdf yaml yml"
 
@@ -44,6 +65,7 @@ while IFS= read -r file; do
   body="$(mktemp)"
   # Long --max-time: formula verbalization is slow on CPU (see the skill).
   status="$(curl -sS -o "$body" -w '%{http_code}' --max-time 600 \
+    ${COOKIE_JAR:+-b "$COOKIE_JAR"} \
     -F "file=@${file}" "${API_URL}/ingest" || echo 000)"
   if [[ "$status" == "200" ]]; then
     echo "  [ OK ] $file -> $(cat "$body")"

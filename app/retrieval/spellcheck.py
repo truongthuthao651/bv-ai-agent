@@ -12,6 +12,11 @@ Diacritics are folded away before comparison so habitual no-diacritics typing
 (extremely common in Vietnamese) is never mistaken for a typo — only genuine
 letter-level slips lower the match ratio enough to trigger a suggestion.
 
+"Is this a real word?" is answered by the vocabulary of the INDEXED CORPUS, not
+just the glossary and document titles (see ``_vocabulary``): a few hundred
+phrase words leave ordinary Vietnamese looking unknown, and a short unknown
+token resembles some phrase token by accident.
+
 To stay precise on short terms without going blind to them, a match must cover
 most of a phrase's *distinctive* tokens (the words that identify it, as opposed
 to generic domain words like "phí"/"bảo hiểm" or a "... nhân thọ" tail shared
@@ -116,21 +121,33 @@ class Suggestion:
     ratio: float
 
 
-def _known_phrases(titles: list[str] | None) -> list[str]:
+def _indexed_corpus() -> tuple[list[str], frozenset[str]]:
+    """``(document titles, every folded word the corpus uses)`` from the index.
+
+    Both come from one cached scroll (``indexer.corpus_snapshot``), rebuilt only
+    after an ingest. Empty when Qdrant is unavailable, which degrades the gate
+    to titles+glossary rather than failing the query.
+    """
+    try:
+        from app.ingestion import indexer  # lazy: keeps this module import-light
+
+        titles, texts = indexer.corpus_snapshot(indexer.index_version())
+    except Exception:  # pragma: no cover - Qdrant unavailable/offline
+        logger.warning(
+            "Could not load the indexed corpus for spellcheck", exc_info=True
+        )
+        return [], frozenset()
+    words: set[str] = set()
+    for text in texts:
+        words.update(_normalize(text).split())
+    return list(titles), frozenset(words)
+
+
+def _known_phrases(titles: list[str]) -> list[str]:
     """Glossary terms/synonyms plus indexed document titles, deduped."""
     phrases = []
     for entry in load_glossary():
         phrases.extend(entry.names)
-    if titles is None:
-        try:
-            from app.ingestion import indexer  # lazy: keeps this module import-light
-
-            titles = [d.doc_title for d in indexer.list_documents()]
-        except Exception:  # pragma: no cover - Qdrant unavailable/offline
-            logger.warning(
-                "Could not load document titles for spellcheck", exc_info=True
-            )
-            titles = []
     phrases.extend(titles)
     return sorted({p.strip() for p in phrases if p.strip()}, key=len, reverse=True)
 
@@ -266,15 +283,23 @@ def _window_ratio(
     return 0.0, ""
 
 
-def _vocabulary(phrases: list[str]) -> frozenset[str]:
-    """Every folded token that appears in some known phrase — the set of real words.
+def _vocabulary(phrases: list[str], corpus_words: frozenset[str]) -> frozenset[str]:
+    """Every folded token the corpus actually uses — the set of real words.
 
-    A query token found here is spelled correctly (it is a word the corpus
-    actually uses), so it can never be a typo — even when it happens to resemble
-    a *different* phrase's token ("nghiêm" contains "hiểm"; "trọng" is one letter
-    from "trọn"). This is what separates such near-homographs from real slips.
+    A query token found here is spelled correctly, so it can never be a typo —
+    even when it happens to resemble a *different* phrase's token ("nghiêm"
+    contains "hiểm"; "trọng" is one letter from "trọn"). This is what separates
+    such near-homographs from real slips.
+
+    It must cover known phrases AND the body text of indexed documents. Built
+    from phrases alone it is only a few hundred words, so ordinary Vietnamese
+    ("giữa", "hồ") counts as unknown, and short unknown tokens resemble
+    something by accident — ``giua``/``gia`` scores 0.857 and ``ho``/``hợp``
+    0.800, which flagged "Mối liên hệ giữa..." and "Hồ sơ..." as typos. Real
+    slips ("lieen", "vuwng") appear in no document, so widening the vocabulary
+    removes those false positives without blunting detection.
     """
-    vocab: set[str] = set()
+    vocab: set[str] = set(corpus_words)
     for phrase in phrases:
         vocab.update(_normalize(phrase).split())
     return frozenset(vocab)
@@ -313,6 +338,7 @@ def find_suggestions(
     query: str,
     *,
     titles: list[str] | None = None,
+    corpus_words: frozenset[str] | None = None,
     min_ratio: float | None = None,
     max_ratio: float | None = None,
     typo_ratio: float | None = None,
@@ -329,6 +355,9 @@ def find_suggestions(
     ``max_ratio`` is accepted for call-site compatibility but no longer gates
     suggestions; the typo-token check is the authoritative "already correct"
     filter.
+
+    Passing ``titles`` explicitly keeps this hermetic (no Qdrant): the indexed
+    corpus is then only consulted for ``corpus_words`` if that is also omitted.
     """
     min_ratio = settings.spellcheck_min_ratio if min_ratio is None else min_ratio
     # Signature / .env compat only — the typo-token check replaced this upper gate.
@@ -340,9 +369,14 @@ def find_suggestions(
     if len(query_words) < 2:
         return []
 
+    if titles is None:
+        indexed_titles, indexed_words = _indexed_corpus()
+        titles = indexed_titles
+        if corpus_words is None:
+            corpus_words = indexed_words
     phrases = _known_phrases(titles)
     generic = _generic_tokens(phrases)
-    vocab = _vocabulary(phrases)
+    vocab = _vocabulary(phrases, corpus_words or frozenset())
     seen: set[str] = set()
     suggestions: list[Suggestion] = []
     for phrase in phrases:

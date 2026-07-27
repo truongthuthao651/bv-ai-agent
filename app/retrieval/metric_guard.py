@@ -73,8 +73,14 @@ def is_benefit_payout_query(query: str) -> bool:
 
 
 def looks_like_fee_or_interest(hit: Hit) -> bool:
-    """True when the hit is a fee / guaranteed-interest section or table."""
-    blob = _fold(f"{hit.payload.section_path}\n{hit.payload.display_text}")
+    """True when the hit is a fee / guaranteed-interest section or table.
+
+    Matches against ``context_text`` — the parent window under parent-child
+    chunking — because that is what generation would receive: a child that is a
+    harmless-looking paragraph can still be cut from a lãi suất cam kết table
+    whose caption only appears in the parent.
+    """
+    blob = _fold(f"{hit.payload.section_path}\n{hit.payload.context_text}")
     return any(m in blob for m in _FEE_INTEREST_MARKERS)
 
 

@@ -49,6 +49,37 @@ def test_reconstruct_removes_multi_block_overlap() -> None:
     assert sections[0]["text"] == "A.\n\nB.\n\nC.\n\nD."
 
 
+def test_reconstruct_rebuilds_a_section_from_parent_child_chunks() -> None:
+    # The viewer reads stored chunks, which under parent-child chunking are
+    # children. They tile their parent on block boundaries and parents overlap
+    # by whole blocks, so de-overlapping must still rebuild the exact section.
+    from app.ingestion.chunking import chunk_document
+    from app.models.schemas import DocType, ParsedDocument, ParsedSection
+
+    text = "\n\n".join(f"Đoạn số {i} về quyền lợi bảo hiểm." for i in range(14))
+    doc = ParsedDocument(
+        doc_title="Quy trình giải quyết quyền lợi",
+        doc_type=DocType.OTHER,
+        sections=[ParsedSection(section_path="Điều 1", text=text)],
+    )
+    chunks = chunk_document(
+        doc, "d1", max_tokens=60, overlap_pct=0.12, child_max_tokens=15
+    )
+    assert len(chunks) > 1
+    payloads = [
+        {
+            "chunk_index": c.chunk_index,
+            "doc_title": c.doc_title,
+            "section_path": c.section_path,
+            "display_text": c.display_text,
+        }
+        for c in chunks
+    ]
+    _, sections = docview.reconstruct_sections(payloads)
+    assert len(sections) == 1
+    assert sections[0]["text"] == text
+
+
 def test_render_markdown_preserves_math_verbatim() -> None:
     # Underscores inside LaTeX must NOT become Markdown emphasis.
     html_out = docview.render_markdown("Công thức: $_tV_x = A_{x+t} - P_x$ nhé.")
