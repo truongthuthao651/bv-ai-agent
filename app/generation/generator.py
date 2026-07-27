@@ -20,21 +20,21 @@ import httpx
 
 from app.config.settings import settings
 from app.generation.prompts import (
+    ADVISORY_DISCLAIMER,
     CALC_DISCLAIMER,
+    GENERAL_KNOWLEDGE_DISCLAIMER,
+    GENERAL_KNOWLEDGE_HEADING,
     HYBRID_DISCLAIMER,
     HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
-    SYSTEM_PROMPT,
     build_user_prompt,
     format_sources,
+    system_prompt,
 )
 from app.models.schemas import ChatMessage, Hit
+from app.query_timing import TimingContext, log_query_timing, response_time_footer
 
 logger = logging.getLogger(__name__)
-
-# Only recent turns are sent to the model — keeps the context window bounded
-# for the small local model; retrieval already re-grounds each turn.
-_MAX_HISTORY_TURNS = 6
 
 _CONNECTION_ERROR_MESSAGE = (
     "Xin lỗi, hiện không thể kết nối tới mô hình sinh câu trả lời. "
@@ -109,11 +109,19 @@ class ThinkStripper:
 
 
 def build_messages(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    *,
+    advisory: bool = False,
 ) -> list[dict[str, str]]:
-    """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
+    """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn.
+
+    ``advisory`` selects the synthesis-permitting variant of the grounded system
+    prompt (comparison / "which should the customer pick?" turns).
+    """
+    messages = [{"role": "system", "content": system_prompt(advisory=advisory)}]
+    for turn in (history or [])[-settings.max_history_turns :]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": build_user_prompt(query, hits)})
     return messages
@@ -128,7 +136,7 @@ def build_hybrid_messages(
     retrieved context to number and prepend.
     """
     messages = [{"role": "system", "content": HYBRID_SYSTEM_PROMPT}]
-    for turn in (history or [])[-_MAX_HISTORY_TURNS:]:
+    for turn in (history or [])[-settings.max_history_turns :]:
         messages.append({"role": turn.role, "content": turn.content})
     messages.append({"role": "user", "content": query})
     return messages
@@ -142,6 +150,12 @@ def _ollama_payload(
     ``think`` is sent explicitly so reasoning models (qwen3) skip their hidden
     chain-of-thought when ``settings.llm_thinking`` is False — the single biggest
     latency win on CPU-only setups.
+
+    ``num_ctx`` is sent explicitly too: Ollama otherwise loads the model at its
+    modelfile default (2k-4k for qwen3), silently truncating the prompt via
+    context-shift once the system prompt + retrieved chunks + history exceed it —
+    an invisible grounding failure. Pinning it to ``settings.llm_context_window``
+    makes the retrieved context actually reach the model.
     """
     return {
         "model": settings.chat_model,
@@ -154,6 +168,7 @@ def _ollama_payload(
         "options": {
             "temperature": settings.llm_temperature,
             "num_predict": settings.llm_max_tokens,
+            "num_ctx": settings.llm_context_window,
         },
     }
 
@@ -237,6 +252,36 @@ def _hybrid_disclaimer_suffix(answer: str) -> str:
     return f"\n\n_{HYBRID_DISCLAIMER}_"
 
 
+def _advisory_disclaimer_suffix(answer: str) -> str:
+    """The "this is a synthesis, not official advice" label for advisory answers.
+
+    Same guardrail pattern as the other disclaimers: enforced in code, not
+    trusted to the prompt. No-op for refusals/empty answers or if already present.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if ADVISORY_DISCLAIMER in answer:
+        return ""
+    return f"\n\n_{ADVISORY_DISCLAIMER}_"
+
+
+def _general_knowledge_suffix(answer: str) -> str:
+    """Label the optional "Kiến thức chung" section when the model produced one.
+
+    The section is fenced behind a fixed heading (GENERAL_KNOWLEDGE_HEADING);
+    when it's present, the answer mixes document-sourced content with the
+    model's own knowledge, so the boundary gets stated explicitly rather than
+    left to the heading alone. No-op when the model skipped the section.
+    """
+    if not answer.strip() or _is_refusal(answer):
+        return ""
+    if GENERAL_KNOWLEDGE_HEADING not in answer:
+        return ""
+    if GENERAL_KNOWLEDGE_DISCLAIMER in answer:
+        return ""
+    return f"\n\n_{GENERAL_KNOWLEDGE_DISCLAIMER}_"
+
+
 def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     """The sources block to append after ``answer``, or "" when inapplicable.
 
@@ -248,18 +293,32 @@ def _sources_suffix(answer: str, hits: list[Hit]) -> str:
     return f"\n\n{format_sources(hits)}"
 
 
-async def stream_static_answer(text: str) -> AsyncIterator[str]:
-    """Stream a fixed message as OpenAI SSE chunks (deterministic refusal path)."""
+async def stream_static_answer(
+    text: str, *, timing: TimingContext | None = None
+) -> AsyncIterator[str]:
+    """Stream a fixed message as OpenAI SSE chunks (deterministic refusal path).
+
+    ``timing``, when provided, appends the response-time footer and logs the
+    record — used for post-retrieval refusals (which really did take the
+    retrieval time), not for the instant pre-retrieval paths that pass ``None``.
+    """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
     yield _sse_chunk(completion_id, model, {"content": text}, None)
+    footer = response_time_footer(timing)
+    if footer:
+        yield _sse_chunk(completion_id, model, {"content": footer}, None)
+    log_query_timing(timing, answer_chars=len(text))
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
 
 
 async def _stream_chat(
-    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
+    messages: list[dict[str, str]],
+    suffix_fn: Callable[[str], str],
+    *,
+    timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Shared Ollama-streaming core: SSE chunks + a deterministic suffix.
 
@@ -267,6 +326,10 @@ async def _stream_chat(
     text (calc disclaimer + sources for grounded answers, the "general
     knowledge" label for hybrid ones) — kept a parameter so both answer paths
     share the exact same streaming/think-stripping/error-handling logic.
+
+    ``timing``, when provided, appends the "⏱ Thời gian trả lời" footer as the
+    final content chunk (after the sources block, so it reads as a footer) and
+    writes one metadata-only timing record once streaming completes.
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
@@ -308,6 +371,18 @@ async def _stream_chat(
         suffix = suffix_fn(body)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
+        # Response-time footer last (after the sources block) + timing record.
+        footer = response_time_footer(timing)
+        if footer:
+            yield _sse_chunk(completion_id, model, {"content": footer}, None)
+        first_token_s = (
+            (first_token_at - timing.started_at)
+            if (timing is not None and first_token_at is not None)
+            else None
+        )
+        log_query_timing(
+            timing, answer_chars=len(body) + len(suffix), first_token_s=first_token_s
+        )
         total_ms = (time.perf_counter() - started) * 1000
         first_ms = (
             (first_token_at - started) * 1000 if first_token_at is not None else -1.0
@@ -325,21 +400,45 @@ async def _stream_chat(
     yield "data: [DONE]\n\n"
 
 
-async def stream_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
-) -> AsyncIterator[str]:
-    """Stream the assistant's grounded answer as SSE lines."""
-    messages = build_messages(query, hits, history)
+def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]:
+    """Suffixes appended after a grounded answer, in reading order.
+
+    Calculation disclaimer, then the advisory label, then the general-knowledge
+    label, then the sources block — the sources stay last so the numbered
+    citations remain the final thing on screen.
+    """
 
     def suffix_fn(body: str) -> str:
-        return _disclaimer_suffix(body) + _sources_suffix(body, hits)
+        out = _disclaimer_suffix(body)
+        if advisory:
+            out += _advisory_disclaimer_suffix(body)
+        out += _general_knowledge_suffix(body)
+        return out + _sources_suffix(body, hits)
 
-    async for chunk in _stream_chat(messages, suffix_fn):
+    return suffix_fn
+
+
+async def stream_answer(
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    *,
+    advisory: bool = False,
+    timing: TimingContext | None = None,
+) -> AsyncIterator[str]:
+    """Stream the assistant's grounded answer as SSE lines."""
+    messages = build_messages(query, hits, history, advisory=advisory)
+    async for chunk in _stream_chat(
+        messages, _grounded_suffix_fn(hits, advisory), timing=timing
+    ):
         yield chunk
 
 
 async def stream_hybrid_answer(
-    query: str, history: list[ChatMessage] | None = None
+    query: str,
+    history: list[ChatMessage] | None = None,
+    *,
+    timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream a labeled, no-context answer when retrieval found nothing (skill note).
 
@@ -350,7 +449,7 @@ async def stream_hybrid_answer(
     mistaken for an answer sourced from company documents.
     """
     messages = build_hybrid_messages(query, history)
-    async for chunk in _stream_chat(messages, _hybrid_disclaimer_suffix):
+    async for chunk in _stream_chat(messages, _hybrid_disclaimer_suffix, timing=timing):
         yield chunk
 
 
@@ -416,17 +515,39 @@ def _generate_chat(
         return _CONNECTION_ERROR_MESSAGE
 
 
+def _with_timing(answer: str, timing: TimingContext | None) -> str:
+    """Append the response-time footer to a finished answer and log the record.
+
+    Kept at this (outer) level rather than inside ``_generate_chat`` so the
+    shared non-streaming core keeps its two-argument signature — which tests
+    monkeypatch — while both non-streaming answer paths still get the footer.
+    """
+    footer = response_time_footer(timing)
+    log_query_timing(timing, answer_chars=len(answer))
+    return answer + footer
+
+
 def generate_answer(
-    query: str, hits: list[Hit], history: list[ChatMessage] | None = None
+    query: str,
+    hits: list[Hit],
+    history: list[ChatMessage] | None = None,
+    advisory: bool = False,
+    *,
+    timing: TimingContext | None = None,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
-    messages = build_messages(query, hits, history)
-    return _generate_chat(
-        messages, lambda body: _disclaimer_suffix(body) + _sources_suffix(body, hits)
+    messages = build_messages(query, hits, history, advisory=advisory)
+    return _with_timing(
+        _generate_chat(messages, _grounded_suffix_fn(hits, advisory)), timing
     )
 
 
-def generate_hybrid_answer(query: str, history: list[ChatMessage] | None = None) -> str:
+def generate_hybrid_answer(
+    query: str,
+    history: list[ChatMessage] | None = None,
+    *,
+    timing: TimingContext | None = None,
+) -> str:
     """Non-streaming variant of ``stream_hybrid_answer`` (``stream: false``)."""
     messages = build_hybrid_messages(query, history)
-    return _generate_chat(messages, _hybrid_disclaimer_suffix)
+    return _with_timing(_generate_chat(messages, _hybrid_disclaimer_suffix), timing)

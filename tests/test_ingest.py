@@ -235,6 +235,7 @@ def _meta(**overrides):
         "doc_type": "policy",
         "department": None,
         "source_filename": None,
+        "source_url": None,
     }
     base.update(overrides)
     return base
@@ -285,7 +286,11 @@ def test_patch_rename_reingests_from_source(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         indexer,
         "get_document_meta",
-        lambda doc_id: _meta(doc_type="policy", department="PTSP"),
+        lambda doc_id: _meta(
+            doc_type="policy",
+            department="PTSP",
+            source_url="https://example.gov.vn/luat",
+        ),
     )
     src = tmp_path / "f.md"
     src.write_text("x")
@@ -293,9 +298,13 @@ def test_patch_rename_reingests_from_source(monkeypatch, tmp_path) -> None:
 
     called: dict = {}
 
-    def fake_pipeline(path, doc_type, doc_title, department):
+    def fake_pipeline(path, doc_type, doc_title, department, source_url=None):
         called.update(
-            path=path, doc_type=doc_type, doc_title=doc_title, department=department
+            path=path,
+            doc_type=doc_type,
+            doc_title=doc_title,
+            department=department,
+            source_url=source_url,
         )
 
     monkeypatch.setattr(ingest, "_run_pipeline", fake_pipeline)
@@ -315,11 +324,14 @@ def test_patch_rename_reingests_from_source(monkeypatch, tmp_path) -> None:
 
     resp = _client().patch("/documents/abc", json={"doc_title": "Tên mới"})
     assert resp.status_code == 200
-    # Rename re-ingested from the source file, preserving type + department.
+    # Rename re-ingested from the source file, preserving every field the
+    # caller didn't touch — including the knowledge-pack source URL, which
+    # would otherwise be silently dropped and break that document's citations.
     assert called["path"] == src
     assert called["doc_title"] == "Tên mới"
     assert called["doc_type"] == DocType.POLICY
     assert called["department"] == "PTSP"
+    assert called["source_url"] == "https://example.gov.vn/luat"
 
 
 def test_patch_unknown_document_is_404(monkeypatch) -> None:

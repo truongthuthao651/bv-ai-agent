@@ -16,7 +16,9 @@ from run_ragas import (  # noqa: E402
     GoldenItem,
     Row,
     check_answer,
+    did_not_answer,
     doc_rank,
+    gate,
     load_golden,
     section_matches,
     source_filename,
@@ -178,3 +180,59 @@ def test_summarize_refusal_rows() -> None:
 def test_run_ragas_module_has_no_import_side_effects() -> None:
     # Importing the harness must never touch Qdrant/Ollama (models are lazy).
     assert callable(run_ragas.main)
+
+
+# --------------------------------------------------------------------------- #
+# False-refusal gate (H7): the eval must catch guard-level refusals
+# --------------------------------------------------------------------------- #
+
+
+def test_did_not_answer_from_plan_kind() -> None:
+    # A guard refusal / spellcheck clarification is visible even in
+    # retrieval-only mode (no generated answer text yet).
+    assert did_not_answer(Row(id="a", category="false_refusal", plan_kind="refusal"))
+    assert did_not_answer(Row(id="b", category="policy_qa", plan_kind="clarification"))
+    assert not did_not_answer(Row(id="c", category="policy_qa", plan_kind="grounded"))
+    assert not did_not_answer(Row(id="d", category="policy_qa", plan_kind="hybrid"))
+
+
+def test_did_not_answer_from_answer_text() -> None:
+    # A model/hybrid refusal in the generated text also counts.
+    grounded_refused = Row(
+        id="e", category="policy_qa", plan_kind="grounded", answer=REFUSAL_MESSAGE
+    )
+    assert did_not_answer(grounded_refused)
+    answered = Row(
+        id="f", category="policy_qa", plan_kind="grounded", answer="Câu trả lời."
+    )
+    assert not did_not_answer(answered)
+
+
+def test_gate_flags_false_and_leaked_refusals() -> None:
+    rows = [
+        Row(id="ok", category="policy_qa", plan_kind="grounded", answer="A."),
+        Row(id="fr01", category="false_refusal", plan_kind="refusal"),
+        Row(id="ref_ok", category="refusal", plan_kind="refusal"),
+        # A refusal-category question that leaked an answer instead of refusing.
+        Row(id="ref_leak", category="refusal", plan_kind="grounded", answer="A."),
+    ]
+    result = gate(rows)
+    assert result["false_refusals"] == ["fr01"]
+    assert result["leaked_refusals"] == ["ref_leak"]
+
+
+def test_gate_does_not_flag_undecided_hybrid_refusal_in_retrieval_only() -> None:
+    # In --retrieval-only there is no generated answer yet; a refusal question
+    # whose retrieval found nothing (plan_kind="hybrid") refuses at generation
+    # via the hybrid prompt, so it must NOT be counted as a leak prematurely.
+    rows = [
+        Row(id="ref_hybrid", category="refusal", plan_kind="hybrid", answer=None),
+        # With generation, a hybrid answer that actually refused is correct too.
+        Row(
+            id="ref_hybrid_refused",
+            category="refusal",
+            plan_kind="hybrid",
+            answer=REFUSAL_MESSAGE,
+        ),
+    ]
+    assert gate(rows)["leaked_refusals"] == []

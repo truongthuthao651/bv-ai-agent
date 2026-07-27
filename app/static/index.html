@@ -298,6 +298,15 @@
       />
     </div>
     <div class="upload-row">
+      <!-- Knowledge pack: chỉ điền cho tài liệu CÔNG KHAI. Địa chỉ này không
+           bao giờ được ứng dụng truy cập, chỉ dùng làm liên kết trích dẫn. -->
+      <input
+        type="text"
+        id="sourceUrlInput"
+        placeholder="Nguồn URL công khai (tuỳ chọn — chỉ cho tài liệu công khai; trích dẫn sẽ trỏ tới địa chỉ này)"
+      />
+    </div>
+    <div class="upload-row">
       <select id="docTypeSelect">
         <option value="">Loại tài liệu: tự động theo phần mở rộng</option>
         <option value="policy">Hợp đồng / Quy tắc bảo hiểm (policy)</option>
@@ -307,6 +316,7 @@
         <option value="image">Hình ảnh scan (image)</option>
         <option value="figure">Hình vẽ / biểu đồ (figure)</option>
         <option value="glossary">Từ điển thuật ngữ (glossary)</option>
+        <option value="reference">Tham khảo công khai (reference)</option>
         <option value="other">Khác (other)</option>
       </select>
       <!-- Options mirror settings.departments (source of truth for validation). -->
@@ -356,7 +366,7 @@
 <div class="modal-backdrop" id="editModal">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
     <h3 id="editTitle">Sửa tài liệu</h3>
-    <p class="hint" style="margin:4px 0 0;">Chỉnh sửa tên, loại và phòng ban của tài liệu.</p>
+    <p class="hint" style="margin:4px 0 0;">Chỉnh sửa tên, loại, phòng ban và nguồn công khai của tài liệu.</p>
     <div class="field">
       <label for="editDocTitle">Tên tài liệu</label>
       <input type="text" id="editDocTitle" />
@@ -375,8 +385,17 @@
         <option value="image">image — Hình ảnh scan</option>
         <option value="figure">figure — Hình vẽ / biểu đồ</option>
         <option value="glossary">glossary — Từ điển thuật ngữ</option>
+        <option value="reference">reference — Tham khảo công khai</option>
         <option value="other">other — Khác</option>
       </select>
+    </div>
+    <div class="field">
+      <label for="editSourceUrl">Nguồn URL công khai</label>
+      <input type="text" id="editSourceUrl" placeholder="https://… (để trống nếu là tài liệu nội bộ)" />
+      <p class="note">
+        Chỉ dùng cho tài liệu công khai. Trích dẫn sẽ trỏ thẳng tới địa chỉ này
+        và được gắn nhãn “nguồn công khai”; ứng dụng không bao giờ tự truy cập nó.
+      </p>
     </div>
     <div class="field">
       <label for="editDept">Phòng ban</label>
@@ -445,7 +464,10 @@
       }
       docsBody.innerHTML = docs.map((d) => `
         <tr>
-          <td><a class="doc-link" href="/documents/${encodeURIComponent(d.doc_id)}/view" target="_blank" rel="noopener" title="Xem tài liệu">${escapeHtml(d.doc_title)}</a></td>
+          <td>
+            <a class="doc-link" href="/documents/${encodeURIComponent(d.doc_id)}/view" target="_blank" rel="noopener" title="Xem tài liệu">${escapeHtml(d.doc_title)}</a>
+            ${d.source_url ? '<span class="tag" title="' + escapeHtml(d.source_url) + '">nguồn công khai</span>' : ""}
+          </td>
           <td><span class="tag">${escapeHtml(d.doc_type)}</span></td>
           <td>${d.department ? escapeHtml(d.department) : "—"}</td>
           <td>${d.n_chunks}</td>
@@ -457,7 +479,8 @@
                       data-doc-id="${escapeHtml(d.doc_id)}"
                       data-doc-title="${escapeHtml(d.doc_title)}"
                       data-doc-type="${escapeHtml(d.doc_type)}"
-                      data-department="${escapeHtml(d.department || "")}">Sửa</button>
+                      data-department="${escapeHtml(d.department || "")}"
+                      data-source-url="${escapeHtml(d.source_url || "")}">Sửa</button>
               <button class="btn-danger"
                       data-action="delete"
                       data-doc-id="${escapeHtml(d.doc_id)}"
@@ -510,6 +533,7 @@
     $("editDocTitle").value = ds.docTitle;
     $("editDocType").value = ds.docType;
     $("editDept").value = ds.department || "";
+    $("editSourceUrl").value = ds.sourceUrl || "";
     editStatus.textContent = "";
     editStatus.className = "";
     $("renameNote").style.display = "none";
@@ -559,6 +583,7 @@
           doc_title: newTitle,
           doc_type: $("editDocType").value,
           department: $("editDept").value, // "" clears the department
+          source_url: $("editSourceUrl").value.trim(), // "" clears it
         }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -612,6 +637,8 @@
     if ($("deptSelect").value) fd.append("department", $("deptSelect").value);
     const docTitle = $("docTitleInput").value.trim();
     if (docTitle) fd.append("doc_title", docTitle);
+    const sourceUrl = $("sourceUrlInput").value.trim();
+    if (sourceUrl) fd.append("source_url", sourceUrl);
 
     uploadBtn.disabled = true;
     uploadStatus.className = "";
@@ -637,6 +664,7 @@
         }
         fileInput.value = "";
         $("docTitleInput").value = "";
+        $("sourceUrlInput").value = "";
         updateFilenameLabel();
         loadDocuments();
       }

@@ -18,7 +18,9 @@ patches the pip-installed package in place, which works fully offline:
    overwrite anyway). The DB is backed up first and never touched while
    Open WebUI is running.
 
-Run with the app venv (it has Pillow): .venv/bin/python scripts/open_webui/apply_branding.py
+Run with the Open WebUI venv:
+  .venv-webui/Scripts/python.exe scripts/open_webui/apply_branding.py  # Windows Git Bash
+  .venv-webui/bin/python scripts/open_webui/apply_branding.py    # macOS/Linux
 Re-run after any `pip install --upgrade open-webui` (upgrades restore the
 stock assets). run_native.sh runs it automatically before starting the UI.
 """
@@ -75,10 +77,30 @@ def env_get(key: str, default: str) -> str:
 
 
 def find_webui_pkg() -> Path | None:
-    hits = glob.glob(
-        str(REPO_ROOT / ".venv-webui/lib/python*/site-packages/open_webui")
+    candidates = [
+        Path(sys.prefix) / "Lib" / "site-packages" / "open_webui",
+        REPO_ROOT / ".venv-webui" / "Lib" / "site-packages" / "open_webui",
+    ]
+    candidates.extend(
+        Path(path)
+        for path in glob.glob(
+            str(Path(sys.prefix) / "lib" / "python*" / "site-packages" / "open_webui")
+        )
     )
-    return Path(hits[0]) if hits else None
+    candidates.extend(
+        Path(path)
+        for path in glob.glob(
+            str(
+                REPO_ROOT
+                / ".venv-webui"
+                / "lib"
+                / "python*"
+                / "site-packages"
+                / "open_webui"
+            )
+        )
+    )
+    return next((path for path in candidates if path.is_dir()), None)
 
 
 def load_font(px: int) -> ImageFont.FreeTypeFont:

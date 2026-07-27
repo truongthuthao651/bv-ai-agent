@@ -79,3 +79,19 @@ def test_lifespan_runs_warmup_when_enabled(monkeypatch) -> None:
         pass
 
     assert called is True
+
+
+def test_citation_base_loopback_detection(monkeypatch) -> None:
+    from app.config.settings import settings
+
+    for url in (
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://0.0.0.0:8000",
+    ):
+        monkeypatch.setattr(settings, "api_public_base_url", url)
+        assert main_module._citation_base_is_loopback() is True, url
+
+    for url in ("http://192.168.1.20:8000", "http://insurance.local:8000"):
+        monkeypatch.setattr(settings, "api_public_base_url", url)
+        assert main_module._citation_base_is_loopback() is False, url

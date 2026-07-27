@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -33,6 +34,14 @@ from app.retrieval.query_expansion import load_glossary
 logger = logging.getLogger(__name__)
 
 _DIACRITIC_MAP = str.maketrans({"đ": "d", "Đ": "D"})
+
+# Fold punctuation away too: whitespace-splitting alone leaves trailing marks
+# glued to words ("bền." -> token "ben."), and a correctly-spelled word with a
+# clinging period/comma is then absent from the known vocabulary and mistaken
+# for a misspelling of the same word without it (see _span_has_typo). Replace
+# any non-word/non-space char with a space so tokens are punctuation-free.
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+_WHITESPACE_RE = re.compile(r"\s+")
 
 # A reduced (dropped-word) window must retain at least this many words. Word
 # dropping is meant for long document titles shedding a generic prefix/suffix
@@ -91,10 +100,11 @@ _FUNCTION_WORDS = frozenset(
 
 
 def _normalize(text: str) -> str:
-    """Fold Vietnamese diacritics and case away for fuzzy comparison."""
+    """Fold Vietnamese diacritics, case, and punctuation away for fuzzy comparison."""
     decomposed = unicodedata.normalize("NFD", text.translate(_DIACRITIC_MAP))
     stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    return stripped.lower().strip()
+    depunctuated = _PUNCT_RE.sub(" ", stripped.lower())
+    return _WHITESPACE_RE.sub(" ", depunctuated).strip()
 
 
 @dataclass
@@ -414,6 +424,49 @@ def is_confirmation_prompt(text: str) -> bool:
 def is_affirmation(text: str) -> bool:
     """True if the whole message is a bare confirmation ("đúng", "phải", ...)."""
     return _normalize(text) in _AFFIRMATIONS
+
+
+def apply_suggestions(query: str, suggestions: list[Suggestion]) -> str:
+    """Rewrite ``query`` by substituting each matched span with its canonical form.
+
+    Used when the user confirms a spellcheck prompt: replaying the *raw* typo
+    query would re-run retrieval on the same garbled text (and often miss
+    product cues needed for comparison routing). Longest span first so a
+    longer title match isn't partially overwritten by a shorter nested one.
+    """
+    if not suggestions or not query:
+        return query
+    out = query
+    for suggestion in sorted(
+        suggestions, key=lambda s: len(s.matched_span), reverse=True
+    ):
+        span = suggestion.matched_span
+        if not span:
+            continue
+        if span in out:
+            out = out.replace(span, suggestion.canonical, 1)
+            continue
+        # Case-insensitive fallback (user may have mixed casing).
+        lower = out.lower()
+        idx = lower.find(span.lower())
+        if idx >= 0:
+            out = out[:idx] + suggestion.canonical + out[idx + len(span) :]
+    return out
+
+
+def corrected_query_after_confirmation(original_query: str) -> str:
+    """Re-detect suggestions on ``original_query`` and apply them.
+
+    The chat endpoint is stateless across the confirm turn, so we recompute the
+    same suggestions that produced the clarification rather than parsing the
+    assistant message. No-op when nothing matches (or spellcheck is off).
+    """
+    if not settings.spellcheck_enabled:
+        return original_query
+    suggestions = find_suggestions(original_query)
+    if not suggestions:
+        return original_query
+    return apply_suggestions(original_query, suggestions)
 
 
 def maybe_suggest_correction(

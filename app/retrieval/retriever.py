@@ -36,28 +36,37 @@ def rrf_fuse(rankings: list[list[str]], k: int) -> dict[str, float]:
     return scores
 
 
-def _build_filter(filters: dict[str, str] | None) -> models.Filter | None:
-    """Build a simple field==value AND-filter from a flat dict, if any given."""
+def _build_filter(filters: dict[str, str | list[str]] | None) -> models.Filter | None:
+    """Build an AND-filter from a flat dict, if any given.
+
+    A string value matches that field exactly; a list value matches any of its
+    entries (``MatchAny``) — used to scope a search to one product's documents,
+    which may be several doc_ids under one product name.
+    """
     if not filters:
         return None
-    return models.Filter(
-        must=[
-            models.FieldCondition(key=key, match=models.MatchValue(value=value))
-            for key, value in filters.items()
-        ]
-    )
+    conditions: list[models.FieldCondition] = []
+    for key, value in filters.items():
+        match: models.Match
+        if isinstance(value, (list, tuple, set)):
+            match = models.MatchAny(any=list(value))
+        else:
+            match = models.MatchValue(value=value)
+        conditions.append(models.FieldCondition(key=key, match=match))
+    return models.Filter(must=conditions)
 
 
 def hybrid_search(
     query: str,
     *,
-    filters: dict[str, str] | None = None,
+    filters: dict[str, str | list[str]] | None = None,
     top_k: int | None = None,
     rrf_k: int | None = None,
 ) -> list[Hit]:
     """Dense+sparse hybrid search over the Qdrant collection, fused via RRF.
 
-    ``filters`` is a flat field->value equality map (e.g. ``{"doc_type": "policy"}``).
+    ``filters`` is a flat field->value map (e.g. ``{"doc_type": "policy"}``); a
+    list value matches any of its entries (``{"doc_id": [id1, id2]}``).
     Returns an empty list (rather than raising) when the collection doesn't exist
     yet, e.g. before the first document has been ingested.
     """

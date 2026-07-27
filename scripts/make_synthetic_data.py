@@ -11,8 +11,9 @@ spreadsheet path (multi-sheet, dates, VND amounts), and a text-layer PDF
 exercising the Docling path (requires ``reportlab``, dev-time only). A DOCX
 (real OMML equations) and scanned/figure samples arrive with the OCR increment.
 
-Run:
-    python scripts/make_synthetic_data.py
+Run with the exact app-environment Python:
+    .venv/Scripts/python.exe scripts/make_synthetic_data.py  # Windows Git Bash
+    .venv/bin/python scripts/make_synthetic_data.py          # macOS/Linux
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ import unicodedata
 from datetime import date
 from pathlib import Path
 
-# Repo-relative output dir (this script runs on the host, not in the container,
-# so we do not use application settings paths here).
+# Repo-relative output dir; this utility deliberately does not use application
+# settings paths.
 SYNTHETIC_DIR = Path(__file__).resolve().parent.parent / "data" / "synthetic"
 
 

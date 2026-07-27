@@ -96,8 +96,8 @@ APP_PYTHON="$(venv_python .venv)"
 # so their dependencies do not select a CUDA build on CPU-only machines.
 install_into "$APP_PYTHON" -r requirements.txt
 install_into "$APP_PYTHON" torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
-install_into "$APP_PYTHON" -r requirements-embed.txt
 install_into "$APP_PYTHON" torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
+install_into "$APP_PYTHON" -r requirements-embed.txt
 install_into "$APP_PYTHON" -r requirements-pdf.txt
 
 echo "==> Preparing Open WebUI environment (.venv-webui)"
@@ -108,7 +108,7 @@ WEBUI_PYTHON="$(venv_python .venv-webui)"
 install_into "$WEBUI_PYTHON" open-webui==0.5.4
 
 # Branding is idempotent and run again before each Open WebUI start.
-"$APP_PYTHON" scripts/open_webui/apply_branding.py || true
+"$WEBUI_PYTHON" scripts/open_webui/apply_branding.py || true
 
 echo "==> Downloading local model weights"
 bash scripts/setup_models.sh

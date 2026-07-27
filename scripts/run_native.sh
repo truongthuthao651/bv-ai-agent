@@ -34,14 +34,16 @@ DEFAULT_MODELS="$(env_get DEFAULT_MODELS)";         DEFAULT_MODELS="${DEFAULT_MO
 
 APP_PYTHON="$(venv_executable .venv python python || true)"
 APP_UVICORN="$(venv_executable .venv uvicorn uvicorn || true)"
+WEBUI_PYTHON="$(venv_executable .venv-webui python python || true)"
 WEBUI_COMMAND="$(venv_executable .venv-webui open-webui open-webui || true)"
-if [[ -z "$APP_PYTHON" || -z "$APP_UVICORN" || -z "$WEBUI_COMMAND" ]]; then
+if [[ -z "$APP_PYTHON" || -z "$APP_UVICORN" || -z "$WEBUI_PYTHON" || -z "$WEBUI_COMMAND" ]]; then
   echo "ERROR: required executables are missing. Run bash scripts/setup_native.sh first." >&2
   exit 1
 fi
 
 mkdir -p logs run
 listening() { curl -sS -o /dev/null --max-time 2 "$1" 2>/dev/null; }
+log_start() { printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$2" >> "$1"; }
 
 if listening "${OLLAMA_BASE_URL}/api/tags"; then
   echo "==> Ollama already running at ${OLLAMA_BASE_URL}"
@@ -51,7 +53,8 @@ else
     exit 1
   fi
   echo "==> Starting Ollama (logs/ollama.log)"
-  nohup ollama serve > logs/ollama.log 2>&1 &
+  log_start logs/ollama.log "Starting Ollama"
+  nohup ollama serve >> logs/ollama.log 2>&1 &
   echo $! > run/ollama.pid
   for _ in $(seq 1 30); do
     listening "${OLLAMA_BASE_URL}/api/tags" && break
@@ -67,9 +70,10 @@ if listening "http://localhost:${API_PORT}/health"; then
   echo "==> API already running on port ${API_PORT}"
 else
   echo "==> Starting FastAPI on port ${API_PORT} (logs/api.log)"
+  log_start logs/api.log "Starting FastAPI on port ${API_PORT}"
   HF_HOME="$ROOT_DIR/models/hf" PYTHONUNBUFFERED=1 \
     nohup "$APP_UVICORN" app.main:app --host "$API_HOST" --port "$API_PORT" \
-    > logs/api.log 2>&1 &
+    >> logs/api.log 2>&1 &
   echo $! > run/api.pid
 fi
 
@@ -77,7 +81,8 @@ if listening "http://localhost:${OPEN_WEBUI_PORT}/"; then
   echo "==> Open WebUI already running on port ${OPEN_WEBUI_PORT}"
 else
   echo "==> Starting Open WebUI on port ${OPEN_WEBUI_PORT} (logs/webui.log)"
-  "$APP_PYTHON" scripts/open_webui/apply_branding.py >> logs/webui.log 2>&1 || true
+  log_start logs/webui.log "Starting Open WebUI on port ${OPEN_WEBUI_PORT}"
+  "$WEBUI_PYTHON" scripts/open_webui/apply_branding.py >> logs/webui.log 2>&1 || true
   DATA_DIR="$ROOT_DIR/open_webui_data" \
     OPENAI_API_BASE_URL="$OPENAI_API_BASE_URL" \
     OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -85,7 +90,7 @@ else
     WEBUI_NAME="$WEBUI_NAME" \
     DEFAULT_MODELS="$DEFAULT_MODELS" \
     nohup "$WEBUI_COMMAND" serve --host 0.0.0.0 --port "$OPEN_WEBUI_PORT" \
-    > logs/webui.log 2>&1 &
+    >> logs/webui.log 2>&1 &
   echo $! > run/webui.pid
 fi
 

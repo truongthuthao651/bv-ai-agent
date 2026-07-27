@@ -24,7 +24,11 @@ from typing import Any
 from app.config.settings import settings
 from app.ingestion.cleaning import normalize_text, strip_headers_footers
 from app.ingestion.parsers.docx_parser import title_from_path
-from app.ingestion.parsers.markdown import derive_title, sections_from_markdown
+from app.ingestion.parsers.markdown import (
+    PAGE_BREAK_SENTINEL,
+    derive_title,
+    sections_from_markdown,
+)
 from app.models.schemas import DocType, ParsedDocument
 
 logger = logging.getLogger(__name__)
@@ -73,9 +77,14 @@ def _get_converter() -> Any:
 
 
 def _convert_with_docling(path: Path) -> tuple[str, int]:
-    """Run Docling on a PDF; returns (markdown, page_count). Mocked in tests."""
+    """Run Docling on a PDF; returns (markdown, page_count). Mocked in tests.
+
+    The markdown carries ``PAGE_BREAK_SENTINEL`` at every page boundary so the
+    sectionizer can stamp each section with its starting page (citation
+    deep-links). The marker survives cleaning and is stripped during sectioning.
+    """
     result = _get_converter().convert(str(path))
-    md = result.document.export_to_markdown()
+    md = result.document.export_to_markdown(page_break_placeholder=PAGE_BREAK_SENTINEL)
     n_pages = max(len(result.document.pages), 1)
     return md, n_pages
 
@@ -99,7 +108,7 @@ def parse_pdf(
     md = unicodedata.normalize("NFC", md)
     md = strip_headers_footers(normalize_text(md))
     title = derive_title(md, title_from_path(p))
-    sections = sections_from_markdown(md, doc_title=title.title)
+    sections = sections_from_markdown(md, doc_title=title.title, track_pages=True)
     return ParsedDocument(
         doc_title=title.title,
         doc_type=doc_type,

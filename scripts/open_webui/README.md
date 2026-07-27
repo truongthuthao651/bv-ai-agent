@@ -21,8 +21,11 @@ Chạy tự động trong `setup_native.sh` và mỗi lần `run_native.sh` kh�
 Open WebUI — không cần chạy tay. Sau khi `pip install --upgrade open-webui`
 (tài nguyên gốc được khôi phục), chỉ cần khởi động lại bằng `run_native.sh`.
 Muốn sửa gợi ý câu hỏi: sửa `prompt_suggestions.json` rồi chạy
-`.venv/bin/python scripts/open_webui/apply_branding.py --force` khi hệ thống
-đang tắt (hoặc sửa trực tiếp trong Admin Panel → Settings → Interface).
+`.venv-webui/Scripts/python.exe scripts/open_webui/apply_branding.py --force`
+trên Windows Git Bash hoặc
+`.venv-webui/bin/python scripts/open_webui/apply_branding.py --force` trên
+macOS/Linux khi hệ thống đang tắt (hoặc sửa trực tiếp trong Admin Panel →
+Settings → Interface).
 
 # Nạp tài liệu từ Open WebUI (port 3000)
 

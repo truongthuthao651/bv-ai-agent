@@ -129,6 +129,30 @@ def active_scope(history: list[ChatMessage]) -> str | None:
     return _scope_from_citations(history) or _scope_from_user_turns(history)
 
 
+def cited_titles_in_history(history: list[ChatMessage]) -> list[str]:
+    """Distinct document titles cited by recent assistant turns, newest first.
+
+    ``active_scope`` collapses a conversation to ONE product, which is right for
+    a scoped follow-up but wrong for an advisory follow-up continuing a
+    comparison: "KH sẽ chọn sản phẩm nào nhỉ" names no product, so single-scope
+    retrieval pins one of the two and the other product's benefits never reach
+    the context. This returns every product still on the table so the comparison
+    retrieval path can give each one its own quota.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for msg in reversed(history[-_MAX_HISTORY_TURNS:]):
+        if msg.role != "assistant":
+            continue
+        for title in cited_doc_titles(msg.content):
+            key = title.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(title)
+    return out
+
+
 def last_user_question(history: list[ChatMessage]) -> str | None:
     """Most recent user turn in ``history``, with any prior injections stripped."""
     for msg in reversed(history[-_MAX_HISTORY_TURNS:]):

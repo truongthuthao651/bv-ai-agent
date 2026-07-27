@@ -193,6 +193,7 @@ def get_document_meta(doc_id: str) -> dict[str, Any] | None:
         "doc_type": p.get("doc_type", "other"),
         "department": p.get("department"),
         "source_filename": p.get("source_filename"),
+        "source_url": p.get("source_url"),
     }
 
 
@@ -203,13 +204,16 @@ def set_document_metadata(
     doc_type: str | None = None,
     department: str | None = None,
     set_department: bool = False,
+    source_url: str | None = None,
+    set_source_url: bool = False,
 ) -> None:
     """Update selected payload fields across all of a document's points.
 
-    Metadata-only: does NOT re-embed. Use for ``doc_type``/``department`` edits
-    (neither is part of ``embed_text``) and for renaming documents that have no
-    source file to re-ingest from. ``department`` is only written when
-    ``set_department`` is True (so ``None`` can explicitly clear it, distinct
+    Metadata-only: does NOT re-embed. Use for
+    ``doc_type``/``department``/``source_url`` edits (none of them is part of
+    ``embed_text``) and for renaming documents that have no source file to
+    re-ingest from. ``department`` / ``source_url`` are only written when their
+    ``set_*`` flag is True (so ``None`` can explicitly clear the field, distinct
     from "leave unchanged"). No-op when nothing is selected.
     """
     payload: dict[str, Any] = {}
@@ -219,6 +223,8 @@ def set_document_metadata(
         payload["doc_type"] = doc_type
     if set_department:
         payload["department"] = department
+    if set_source_url:
+        payload["source_url"] = source_url
     if not payload:
         return
     client = get_client()
@@ -348,6 +354,7 @@ def list_documents() -> list[DocumentInfo]:
                     "doc_title": p.get("doc_title", ""),
                     "doc_type": p.get("doc_type", "other"),
                     "department": p.get("department"),
+                    "source_url": p.get("source_url"),
                     "n_chunks": 0,
                     "ingested_at": p.get("ingested_at"),
                 },

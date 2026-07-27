@@ -133,6 +133,43 @@ _GENERIC: frozenset[str] = frozenset(
     }
 )
 
+# Generics that can sit *inside* a product name between distinctive tokens
+# ("An Khang Như Ý") without ending the span. "và" stays a hard terminator so
+# "A và B" still yields two separate products.
+_NAME_BRIDGES: frozenset[str] = frozenset({"nhu"})
+
+# The company's OWN name is not a product name. "sản phẩm bảo hiểm của Bảo Việt
+# Life" used to yield the span ["viet", "life"], which no document title covers,
+# so the guard refused a perfectly answerable question. Longest phrase first so
+# "bảo việt life" is consumed whole rather than leaving a stray "life".
+_COMPANY_SELF_PHRASES: tuple[tuple[str, ...], ...] = (
+    ("bao", "viet", "nhan", "tho"),
+    ("bao", "viet", "life"),
+    ("bao", "viet"),
+    ("bvl",),
+)
+
+# Tokens that end the skip-over-connectors scan after a cue phrase. Without
+# them, "sản phẩm bảo hiểm của X và các công ty khác" skips right across the
+# clause boundary and collects whatever noun follows as a "product name".
+_HARD_SEPARATORS: frozenset[str] = frozenset({"va", "hoac", "hay"})
+
+
+def _strip_company_self_reference(tokens: list[str]) -> list[str]:
+    """Drop mentions of our own company so they can't be read as a product."""
+    out: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        for phrase in _COMPANY_SELF_PHRASES:
+            if tuple(tokens[i : i + len(phrase)]) == phrase:
+                i += len(phrase)
+                break
+        else:
+            out.append(tokens[i])
+            i += 1
+    return out
+
 
 def _fold(text: str) -> str:
     """Lowercase + strip Vietnamese diacritics (so no-diacritics typing matches)."""
@@ -146,16 +183,48 @@ def _fold_tokens(text: str) -> list[str]:
     return re.findall(r"\w+", _fold(text), flags=re.UNICODE)
 
 
-def _product_span(tokens: list[str]) -> list[str]:
-    """Distinctive product-name tokens following a product cue, or [].
+def _collect_name_run(tokens: list[str], start: int) -> tuple[list[str], int]:
+    """Collect distinctive name tokens from ``start``, allowing ``_NAME_BRIDGES``.
+
+    Returns ``(span, index_after_run)``. Bridge tokens are skipped (not added to
+    the distinctive span) so "khang nhu y" → ``["khang", "y"]``.
+    """
+    span: list[str] = []
+    j = start
+    n = len(tokens)
+    while j < n:
+        tok = tokens[j]
+        if tok not in _GENERIC:
+            span.append(tok)
+            j += 1
+            continue
+        if (
+            tok in _NAME_BRIDGES
+            and span
+            and j + 1 < n
+            and tokens[j + 1] not in _GENERIC
+        ):
+            j += 1  # skip bridge, keep collecting
+            continue
+        break
+    return span, j
+
+
+def _product_spans(tokens: list[str]) -> list[list[str]]:
+    """All distinctive product-name spans in order of appearance (deduped).
 
     Scans for a trigger (``bảo hiểm`` ...), skips the generic connectors right
-    after it (``liên kết chung``, ``an`` ...), then collects the contiguous run
-    of non-generic tokens up to the next generic/question word — that run is the
-    product name. Returns the longest such span across all triggers.
+    after it (``liên kết chung``, ``an`` ...), then collects the name run.
+    Comparison questions ("A và B") yield one span per product.
+
+    Our own company name is removed first (it is not a product), and the
+    connector skip stops at a clause boundary so a cue phrase cannot reach
+    across "và" and claim an unrelated noun as a product name.
     """
+    tokens = _strip_company_self_reference(tokens)
     n = len(tokens)
-    best: list[str] = []
+    spans: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
     i = 0
     while i < n:
         matched = 0
@@ -168,29 +237,203 @@ def _product_span(tokens: list[str]) -> list[str]:
             continue
         j = i + matched
         while j < n and tokens[j] in _GENERIC:  # skip leading connectors
+            if tokens[j] in _HARD_SEPARATORS:  # never cross a clause boundary
+                break
             j += 1
-        span: list[str] = []
-        while j < n and tokens[j] not in _GENERIC:  # collect the name run
-            span.append(tokens[j])
-            j += 1
-        if len(span) > len(best):
-            best = span
+        span, j = _collect_name_run(tokens, j)
+        key = tuple(span)
+        if span and key not in seen:
+            seen.add(key)
+            spans.append(span)
         i = max(j, i + 1)
-    return best
+    return spans
 
 
-def query_names_absent_product(query: str, hit_titles: list[str]) -> bool:
-    """True when the query names a product that no retrieved title covers.
+def _product_span(tokens: list[str]) -> list[str]:
+    """Longest distinctive product-name span, or [].
 
-    Only fires when the query explicitly names a product (via a cue phrase);
-    plain topical questions ("bảo hiểm nhân thọ là gì") yield no span and are
-    never blocked. The named product is considered present when any of its
-    distinctive tokens appears in any retrieved document title.
+    Kept for sticky single-product conversation scope; comparison retrieval uses
+    ``_product_spans`` / ``named_product_labels`` instead.
     """
-    span = set(_product_span(_fold_tokens(query)))
-    if not span:
+    spans = _product_spans(tokens)
+    if not spans:
+        return []
+    return max(spans, key=len)
+
+
+def named_product_labels(query: str, *, titles: list[str] | None = None) -> list[str]:
+    """Surface-form product labels named in ``query``, in appearance order.
+
+    Prefers full indexed document titles when the query mentions them (even
+    without a ``bảo hiểm`` cue — e.g. "an khang như ý và an lộc vững bền").
+    Falls back to cue-phrase spans from the query text.
+    """
+    if not query.strip():
+        return []
+
+    known_titles = titles if titles is not None else _load_indexed_titles()
+    from_titles = mentioned_doc_titles(query, known_titles)
+    if len(from_titles) >= 2:
+        return from_titles
+
+    folded = _fold_tokens(query)
+    spans = _product_spans(folded)
+    if not spans:
+        return from_titles
+
+    raw_words = re.findall(r"\w+", query, flags=re.UNICODE)
+    labels: list[str] = []
+    used_starts: set[int] = set()
+    for span in spans:
+        label: str | None = None
+        for i in range(len(folded) - len(span) + 1):
+            if i in used_starts:
+                continue
+            if _span_matches_at(folded, i, span):
+                end = _span_end_index(folded, i, span)
+                if len(raw_words) == len(folded):
+                    label = " ".join(raw_words[i:end])
+                else:
+                    label = " ".join(span)
+                used_starts.add(i)
+                break
+        labels.append(label or " ".join(span))
+
+    # Cue spans win when they found more products than title matching
+    # (title matching can miss short suffixes like "Ý").
+    if len(labels) >= 2:
+        return labels
+    return from_titles or labels
+
+
+def _span_matches_at(tokens: list[str], start: int, span: list[str]) -> bool:
+    """True when ``span``'s distinctive tokens appear in order from ``start``."""
+    k = 0
+    j = start
+    while j < len(tokens) and k < len(span):
+        if tokens[j] == span[k]:
+            k += 1
+            j += 1
+        elif tokens[j] in _NAME_BRIDGES and k > 0:
+            j += 1
+        else:
+            return False
+    return k == len(span)
+
+
+def _span_end_index(tokens: list[str], start: int, span: list[str]) -> int:
+    """Index just past the last token of ``span`` aligned at ``start``."""
+    k = 0
+    j = start
+    while j < len(tokens) and k < len(span):
+        if tokens[j] == span[k]:
+            k += 1
+            j += 1
+        elif tokens[j] in _NAME_BRIDGES and k > 0:
+            j += 1
+        else:
+            break
+    return j
+
+
+def title_covers_product(title: str, product_label: str) -> bool:
+    """True when ``title`` shares a distinctive token with ``product_label``."""
+    label_toks = _distinctive_title_tokens(product_label)
+    if not label_toks:
         return False
-    title_tokens: set[str] = set()
-    for title in hit_titles:
-        title_tokens.update(_fold_tokens(title))
-    return not (span & title_tokens)
+    title_toks = set(_fold_tokens(title))
+    return bool(label_toks & title_toks)
+
+
+def _distinctive_title_tokens(title: str) -> set[str]:
+    """Non-generic tokens that identify a document title.
+
+    Keeps single-character tokens (e.g. ``ý``/``y`` in "An Khang Như Ý") —
+    dropping them left some real product titles with only one usable token
+    and made informal nickname matching fail.
+    """
+    return {t for t in _fold_tokens(title) if t not in _GENERIC}
+
+
+def mentioned_doc_titles(query: str, titles: list[str]) -> list[str]:
+    """Indexed doc titles whose distinctive name tokens appear in ``query``.
+
+    Catches informal mentions that omit the ``bảo hiểm`` / ``sản phẩm`` cue
+    ("so sánh an khang như ý và an lộc vững bền"). Requires ≥2 distinctive
+    token overlaps so a lone shared word cannot claim a title. Ordered by the
+    earliest distinctive-token position in the query.
+    """
+    if not query.strip() or not titles:
+        return []
+    q_toks = _fold_tokens(query)
+    q_set = set(q_toks)
+    scored: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for title in titles:
+        dist = _distinctive_title_tokens(title)
+        if len(dist) < 2:
+            continue
+        needed = max(2, (len(dist) + 1) // 2)
+        overlap = dist & q_set
+        if len(overlap) < needed:
+            continue
+        key = title.casefold()
+        if key in seen:
+            continue
+        positions = [i for i, t in enumerate(q_toks) if t in overlap]
+        pos = min(positions) if positions else 0
+        seen.add(key)
+        scored.append((pos, title))
+    scored.sort(key=lambda item: item[0])
+    return [title for _, title in scored]
+
+
+def _load_indexed_titles() -> list[str]:
+    """Best-effort titles from Qdrant; empty when the store is unavailable."""
+    try:
+        from app.ingestion import indexer
+
+        return [d.doc_title for d in indexer.list_documents()]
+    except Exception:  # pragma: no cover - Qdrant locked/offline
+        return []
+
+
+def query_names_absent_product(
+    query: str,
+    hit_titles: list[str],
+    *,
+    known_titles: list[str] | None = None,
+) -> bool:
+    """True when the query names a KNOWN product that is absent from the hits.
+
+    "Known" means the query resolves — via ``mentioned_doc_titles``, i.e. a ≥2
+    distinctive-token overlap — to at least one *indexed* document title. That
+    strong-match requirement is the whole point of this revision: the earlier
+    version read any non-stopword token after a cue phrase ("bảo hiểm", "sản
+    phẩm", ...) as a product name, so ordinary questions like "...bảo hiểm gồm
+    những **bước** nào?" or "...cần những **giấy tờ** gì?" fabricated a product
+    ("bước", "giấy tờ") and refused an answerable question. A common noun does
+    not strongly match any product title, so it can no longer trigger a refusal.
+
+    We only refuse when the query genuinely points at a product the corpus
+    contains AND none of the retrieved documents are that product — the
+    wrong-product case this guard exists for (e.g. asking about product A while
+    only product B was retrieved). For a comparison naming A and B, refuses only
+    when BOTH named products are absent from the retrieved titles.
+
+    Trade-off (intended): a product ABSENT from the whole index — deleted, or
+    carried only under an abbreviated title sharing no token with its spelled-out
+    name — no longer trips this deterministic guard. Those cases fall back to the
+    system prompt's own wrong-product refusal (rule 1). This narrowing is
+    deliberate: it removes the false refusals, relying on the prompt rather than
+    code for the rarer absent-from-corpus case.
+
+    ``known_titles`` defaults to the currently indexed titles (loaded from
+    Qdrant); injected in tests.
+    """
+    known = known_titles if known_titles is not None else _load_indexed_titles()
+    named = mentioned_doc_titles(query, known)
+    if not named:
+        return False
+    hit_set = {title.casefold() for title in hit_titles}
+    return all(title.casefold() not in hit_set for title in named)

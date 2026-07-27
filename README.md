@@ -96,6 +96,66 @@ Khi UV không có trên PATH, cùng lệnh `bash scripts/setup_native.sh` sẽ t
 Python 3.11 hoặc 3.12, tạo hai môi trường cục bộ và dùng `pip`. Không cần đổi
 lệnh khởi động, kiểm tra sức khỏe hoặc dừng hệ thống.
 
+> **Thời gian trả lời:** dưới mỗi câu trả lời có dòng nhỏ "⏱ Thời gian trả lời:
+> 1m55s" cho biết hệ thống mất bao lâu để trả lời (tính từ lúc nhận câu hỏi đến
+> khi xong). Tắt bằng `SHOW_RESPONSE_TIME=false`. Hệ thống cũng ghi lại thời
+> gian này (chỉ số liệu tổng hợp, **không** lưu nội dung câu hỏi/câu trả lời) vào
+> `logs/query_timings.jsonl` để phân tích và cải thiện tốc độ về sau — hoàn toàn
+> cục bộ, không gửi đi đâu. Tắt bằng `QUERY_TIMING_LOG_ENABLED=false`.
+
+> **Liên kết trích dẫn cho người dùng trong mạng LAN:** phần "Nguồn tham khảo"
+> tạo liên kết từ `API_PUBLIC_BASE_URL`. Mặc định là `http://localhost:8000`, nên
+> liên kết chỉ bấm được khi mở TRÊN máy chủ; nhân viên ở máy khác trong mạng LAN
+> bấm vào sẽ mở `localhost` của chính họ (không có gì). Muốn nhân viên bấm được:
+> đặt `API_PUBLIC_BASE_URL` thành địa chỉ LAN của máy chủ (ví dụ
+> `http://192.168.1.20:8000`), đặt `API_HOST=0.0.0.0` để hai tuyến chỉ-đọc
+> `/documents/{id}/view` và `/file` mở được từ LAN, và GIỮ `ADMIN_PASSWORD` để
+> chức năng nạp/xoá vẫn được bảo vệ. Khi giá trị này là loopback, API ghi một
+> cảnh báo lúc khởi động. Để nguyên nếu chấp nhận trích dẫn chỉ dùng trên máy chủ.
+
+> **Giao diện thương hiệu Bảo Việt:** logo, màu xanh/vàng thương hiệu và các
+> câu hỏi gợi ý (thuật ngữ định phí, quy trình nội bộ…) được tự động áp dụng
+> bởi `scripts/open_webui/apply_branding.py` — chạy sẵn trong `setup_native.sh`
+> và mỗi lần `run_native.sh` khởi động Open WebUI. Lưu ý: gợi ý câu hỏi tiếng
+> Việt xuất hiện từ **lần khởi động thứ hai** trở đi (lần đầu Open WebUI mới
+> tạo cơ sở dữ liệu cấu hình). Nếu nâng cấp `open-webui` bằng pip, chỉ cần
+> khởi động lại bằng `run_native.sh` là thương hiệu được áp dụng lại.
+
+> **Trợ lý tư vấn / so sánh sản phẩm:** với câu hỏi mang tính so sánh hoặc
+> khuyến nghị ("so sánh quyền lợi A và B", "khách hàng nên chọn sản phẩm nào?"),
+> trợ lý được phép **đối chiếu và tổng hợp trên các dữ kiện đã trích dẫn** thay
+> vì từ chối. Mọi số liệu vẫn phải lấy từ tài liệu, vẫn từ chối nếu hỏi về sản
+> phẩm không có trong kho, và phần gợi ý luôn kèm ghi chú "không phải tư vấn
+> sản phẩm chính thức". Tắt bằng `ADVISORY_MODE_ENABLED=false` trong `.env`.
+> Trợ lý cũng có thể thêm một mục **"Kiến thức chung (ngoài tài liệu)"** ở cuối
+> câu trả lời (kiến thức bảo hiểm tổng quát, có gắn nhãn rõ, không chứa số liệu
+> nội bộ) — tắt bằng `GENERAL_KNOWLEDGE_SUPPLEMENT_ENABLED=false`.
+
+> **Kho tài liệu tham khảo công khai (knowledge pack):** hệ thống **không** tra
+> cứu Internet — nó chạy hoàn toàn ngoại tuyến. Muốn trợ lý biết thêm luật,
+> thông tư hay brochure đã công bố, hãy **tải thủ công** các tệp công khai đó về
+> `data/knowledge_pack/`, sao chép `manifest.example.yaml` thành `manifest.yaml`,
+> ghi tiêu đề + địa chỉ gốc của từng tệp, rồi chạy:
+>
+> ```bash
+> bash scripts/stop_native.sh                          # Qdrant nhúng chỉ 1 tiến trình
+> # Windows Git Bash:
+> .venv/Scripts/python.exe scripts/ingest_knowledge_pack.py --dry-run
+> .venv/Scripts/python.exe scripts/ingest_knowledge_pack.py
+> # macOS/Linux:
+> .venv/bin/python scripts/ingest_knowledge_pack.py --dry-run
+> .venv/bin/python scripts/ingest_knowledge_pack.py
+> bash scripts/run_native.sh
+> ```
+>
+> Khi trợ lý dùng các tài liệu này, phần "Nguồn tham khảo" sẽ hiển thị **liên
+> kết tới địa chỉ công khai gốc** kèm nhãn "(nguồn công khai)", để nhân viên bấm
+> vào kiểm chứng. Ứng dụng không bao giờ tự truy cập địa chỉ đó. **Chỉ đặt tài
+> liệu CÔNG KHAI vào đây** — tài liệu nội bộ nạp qua Open WebUI như bình thường.
+> Cách khác cho một tệp lẻ: nạp qua trang quản trị và điền ô "Nguồn URL công khai".
+
+> Mọi giá trị đặc thù theo máy nằm trong `.env`, **không** nằm trong mã nguồn.
+
 ---
 
 ## English
@@ -138,6 +198,29 @@ single-process, so stop the API before running `eval/run_ragas.py`.
 - Network access is needed only while installing packages or downloading models;
   normal operation is local and offline.
 - Keep `WEBUI_AUTH=true` once Open WebUI user accounts exist.
+
+Common native commands:
+
+```bash
+bash scripts/setup_native.sh                # one-time native setup (venvs + all models)
+bash scripts/run_native.sh                  # start Ollama, FastAPI/Qdrant, and Open WebUI
+bash scripts/stop_native.sh                 # stop it
+bash scripts/setup_models.sh                # (re-)pull local models
+bash scripts/healthcheck.sh                 # smoke test
+```
+
+For Python commands, use `.venv/Scripts/python.exe` on Windows Git Bash or
+`.venv/bin/python` on macOS/Linux. For example, after stopping the API:
+
+```bash
+# Windows Git Bash
+.venv/Scripts/python.exe scripts/ingest_knowledge_pack.py --dry-run
+.venv/Scripts/python.exe eval/run_ragas.py
+
+# macOS/Linux
+.venv/bin/python scripts/ingest_knowledge_pack.py --dry-run
+.venv/bin/python eval/run_ragas.py
+```
 
 ### Project status
 

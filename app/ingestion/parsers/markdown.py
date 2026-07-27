@@ -31,8 +31,17 @@ class TitleResult(NamedTuple):
     title: str
     source: str  # "heading" | "heading+filename" | "filename"
 
+
 # ATX heading: "## Chương II: ..." -> (level=2, "Chương II: ...")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+# Marker the PDF parser asks Docling to insert at page boundaries
+# (export_to_markdown(page_break_placeholder=...)), consumed by
+# ``sections_from_markdown`` to stamp each section with its starting page.
+# It starts/ends with ``$`` so ``cleaning.strip_headers_footers`` (which exempts
+# ``$``-lines as math) leaves it intact until the sectionizer removes it; it is
+# never part of any section's text or of a non-PDF document.
+PAGE_BREAK_SENTINEL = "$DOCLING_PAGE_BREAK$"
 
 # Word tokenizer for title comparison (keeps Vietnamese letters, drops
 # punctuation/whitespace consistently for both the display and normalized forms).
@@ -57,9 +66,7 @@ def _heading_label(text: str) -> str:
 def _fold(word: str) -> str:
     """Diacritic- and case-insensitive form of a word (đ/Đ -> d)."""
     stripped = "".join(
-        c
-        for c in unicodedata.normalize("NFKD", word)
-        if not unicodedata.combining(c)
+        c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c)
     )
     return stripped.replace("đ", "d").replace("Đ", "d").lower()
 
@@ -120,18 +127,25 @@ def title_from_markdown(md: str, fallback: str) -> str:
 
 
 def sections_from_markdown(
-    md: str, *, doc_title: str | None = None
+    md: str, *, doc_title: str | None = None, track_pages: bool = False
 ) -> list[ParsedSection]:
     """Split Markdown into ordered sections keyed by their heading path.
 
     Text before the first heading (if any) becomes an untitled lead section.
     Empty sections (heading with no body) are dropped.
+
+    With ``track_pages`` (PDF only), ``PAGE_BREAK_SENTINEL`` markers left by the
+    Docling export are counted and removed, and each section is stamped with the
+    page it starts on so citations can deep-link to it. Without it (DOCX/MD have
+    no page structure), ``page`` stays ``None``.
     """
     lines = md.split("\n")
     # Stack of (level, label) building the current heading path.
     stack: list[tuple[int, str]] = []
     sections: list[ParsedSection] = []
     buf: list[str] = []
+    page = 1  # current page while walking; only meaningful when track_pages
+    start_page = 1  # page the section currently being buffered started on
 
     def current_path() -> str:
         labels = [label for _, label in stack]
@@ -140,10 +154,21 @@ def sections_from_markdown(
     def flush() -> None:
         body = "\n".join(buf).strip()
         if body:
-            sections.append(ParsedSection(section_path=current_path(), text=body))
+            sections.append(
+                ParsedSection(
+                    section_path=current_path(),
+                    text=body,
+                    page=start_page if track_pages else None,
+                )
+            )
         buf.clear()
 
     for line in lines:
+        if track_pages and PAGE_BREAK_SENTINEL in line:
+            page += line.count(PAGE_BREAK_SENTINEL)
+            line = line.replace(PAGE_BREAK_SENTINEL, "")
+            if not line.strip():
+                continue
         m = _HEADING_RE.match(line)
         if not m:
             buf.append(line)
@@ -156,6 +181,8 @@ def sections_from_markdown(
         while stack and stack[-1][0] >= level:
             stack.pop()
         stack.append((level, label))
+        # The new section begins on whatever page this heading sits on.
+        start_page = page
 
     flush()
     return sections
