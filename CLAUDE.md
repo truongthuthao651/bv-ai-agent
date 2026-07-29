@@ -91,10 +91,20 @@ bv-ai-agent/
 │   │   ├── retriever.py       # Hybrid search top-20, RRF fusion, metadata filters
 │   │   ├── reranker.py        # bge-reranker-v2-m3 → top-5
 │   │   ├── query_expansion.py # Glossary-based synonym expansion (no LLM call)
-│   │   └── query_rewrite.py   # Standalone-question rewriting from chat history
+│   │   ├── query_rewrite.py   # Standalone-question rewriting from chat history
+│   │   ├── spellcheck.py      # Typo gate: confirm a misspelt term before answering
+│   │   ├── product_scope.py   # Refuse when a named product is absent from the docs
+│   │   ├── conversation_scope.py # Sticky product across follow-up turns
+│   │   ├── comparison.py      # Multi-product turns: per-product retrieval quota
+│   │   ├── metric_guard.py    # Drop table metrics the question didn't ask for
+│   │   └── coverage.py        # "Có được chi trả?": benefit terms in the query,
+│   │                          #   backfill the payout clause, put benefits first
 │   ├── generation/
 │   │   ├── prompts.py         # Vietnamese system prompts, citation format, math rules
 │   │   ├── advisory.py        # Detect comparison/recommendation turns → advisory prompt
+│   │   ├── coverage_gate.py   # Post-generation: a coverage verdict citing no
+│   │   │                      #   benefit clause is regenerated, then replaced
+│   │   ├── history.py         # Strip our appended suffixes before replaying a turn
 │   │   └── generator.py       # Ollama call, streaming, context assembly
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
@@ -179,6 +189,17 @@ bv-ai-agent/
   needed to decide, and say plainly which parts the documents do not cover.
   A single flat "được" / "không được" on an underdetermined question is a
   DEFECT even when it happens to land on the right side.
+- **An exclusion list is not a coverage list.** "Loại trừ trách nhiệm bảo hiểm"
+  enumerates only what is NOT paid. An event's absence from it means the event
+  is NOT EXCLUDED — never that it is not covered. The inference "X không có
+  trong mục loại trừ ⇒ X không được chi trả" is exactly backwards and is banned
+  in prompt rule 6(c). Coverage is decided from the benefit clauses ("Quyền lợi
+  tử vong", "Công ty chi trả ..."), which must be cited when present. Real-doc
+  failure, 2026-07-27: asked whether death was covered, the model answered
+  "không được chi trả" because death "không được liệt kê ... trong mục Loại
+  trừ" — while the death-benefit clause sat at rank 3 of its own context,
+  uncited. Rank 1 was the exclusions page; the model cites what it reads first,
+  so coverage answers put benefit clauses first (`coverage.payout_clauses_first`).
 - **Insufficient context is never evidence of exclusion.** When the retrieved
   context contains ONLY exclusion clauses and no benefit / scope clause, the
   model has not found grounds to deny — it has failed to retrieve the coverage
@@ -191,9 +212,34 @@ bv-ai-agent/
   6(b) already forbade this in as many words, so treat prompt text as
   insufficient on its own: an exclusion-only context needs a retrieval fix
   (pull the benefit/scope clause too) and/or a deterministic guard.
+- **A coverage verdict must cite a benefit clause, or it does not ship.**
+  Retrieval-side fixes proved insufficient: in a 4-turn conversation on a real
+  policy (2026-07-27), with the benefit clause backfilled into context AND
+  moved to rank 1 by `coverage.payout_clauses_first`, the answer denied the
+  claim in all four turns citing only the exclusions page — "QUYỀN LỢI TỬ
+  VONG" sat uncited at [1]/[2] every time, including on "tai nạn xe tử vong",
+  which that clause answers outright. On pushback it flipped to "Có được
+  claim" on the same evidence, still uncited: absence-reasoning landing the
+  other way. So `app/generation/coverage_gate.py` checks the FINISHED answer —
+  a "được/không được chi trả" verdict that cites no benefit clause present in
+  its own context is regenerated once with a corrective turn, then replaced by
+  a deterministic enumeration of the branches. Coverage turns therefore answer
+  in one block instead of streaming (the verdict is only checkable when
+  complete). Never trust a prompt block alone to prevent a verdict; the model
+  reached the banned conclusion twice *with* a block forbidding it verbatim.
 - **The "Kiến thức chung" block may never contradict the grounded answer.** If
   it says the case cannot be determined, the grounded part must not have
   asserted a verdict.
+- **Never replay our own appended suffixes back to the model.** Open WebUI
+  returns the rendered answer, so the sources block, the disclaimers and the
+  "⏱ Thời gian trả lời" footer all come back as assistant content.
+  `generation/history.py` strips them in `build_messages`; the raw turns stay
+  intact for `conversation_scope` / `comparison`, which deliberately parse the
+  sources block to recover a chat's products. Real-doc failure, 2026-07-27:
+  replaying them taught the model to write its own "Nguồn tham khảo" block
+  under its own numbering — three source blocks in one answer by turn 4, the
+  model's [1] and ours naming different sections, so no citation resolved.
+  A model-written block is also truncated on the way out (`SourcesTruncator`).
 - **Answer modes:** `prompts.system_prompt()` assembles one grounded prompt from
   shared rule blocks. *Strict* (default) answers only from context. *Advisory*
   (comparison / "KH nên chọn sản phẩm nào?" — routed by

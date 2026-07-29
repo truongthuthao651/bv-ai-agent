@@ -19,6 +19,22 @@ from collections.abc import AsyncIterator, Callable
 import httpx
 
 from app.config.settings import settings
+from app.generation.coverage_gate import (
+    VerdictProblem,
+    check_verdict,
+    correction_messages,
+    fallback_answer,
+    strip_leaked_instructions,
+)
+from app.generation.verify import (
+    averify_answer,
+    verification_messages,
+    verify_answer,
+)
+from app.generation.history import (
+    strip_appended_artifacts,
+    truncate_at_sources_heading,
+)
 from app.generation.prompts import (
     ADVISORY_DISCLAIMER,
     CALC_DISCLAIMER,
@@ -27,6 +43,7 @@ from app.generation.prompts import (
     HYBRID_DISCLAIMER,
     HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
+    SOURCES_HEADING,
     build_user_prompt,
     format_sources,
     system_prompt,
@@ -108,21 +125,83 @@ class ThinkStripper:
         return out
 
 
+class SourcesTruncator:
+    """Drop everything from a model-written "Nguồn tham khảo" heading onward.
+
+    Sanitizing history removes the model's *reason* to write one, but a stray
+    imitation must never reach the user: it carries the model's own numbering,
+    which contradicts the canonical block ``_sources_suffix`` appends right
+    underneath it (observed: the model's [1] and ours naming different
+    sections in the same answer). Buffers a partial tail the same way
+    ``ThinkStripper`` does, so a heading split across two token deltas is
+    still caught.
+    """
+
+    def __init__(self, marker: str = SOURCES_HEADING) -> None:
+        self._marker = marker
+        self._buf = ""
+        self._truncated = False
+
+    def feed(self, text: str) -> str:
+        if self._truncated:
+            return ""
+        self._buf += text
+        idx = self._buf.find(self._marker)
+        if idx != -1:
+            out, self._buf, self._truncated = self._buf[:idx], "", True
+            return out
+        keep = _partial_tail_len(self._buf, self._marker)
+        out = self._buf[: len(self._buf) - keep]
+        self._buf = self._buf[len(self._buf) - keep :]
+        return out
+
+    def flush(self) -> str:
+        """Emit the buffered tail (empty once a heading has been seen)."""
+        if self._truncated:
+            return ""
+        out, self._buf = self._buf, ""
+        return out
+
+
 def build_messages(
     query: str,
     hits: list[Hit],
     history: list[ChatMessage] | None = None,
     *,
     advisory: bool = False,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
 ) -> list[dict[str, str]]:
     """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn.
 
     ``advisory`` selects the synthesis-permitting variant of the grounded system
     prompt (comparison / "which should the customer pick?" turns).
+    ``coverage`` / ``coverage_undetermined`` add the "có được chi trả không"
+    answer shape and, when the context is exclusion-only, the block forbidding a
+    denial (see ``app/retrieval/coverage.py``).
+
+    Assistant turns are replayed WITHOUT the suffixes we appended to them (see
+    ``generation/history.py``): Open WebUI returns the rendered answer, and
+    feeding our own sources block back taught the model to emit imitations of
+    it under conflicting numbering.
     """
-    messages = [{"role": "system", "content": system_prompt(advisory=advisory)}]
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt(
+                advisory=advisory,
+                coverage=coverage,
+                coverage_undetermined=coverage_undetermined,
+            ),
+        }
+    ]
     for turn in (history or [])[-settings.max_history_turns :]:
-        messages.append({"role": turn.role, "content": turn.content})
+        content = turn.content
+        if turn.role == "assistant":
+            content = strip_appended_artifacts(content)
+            if not content:
+                continue
+        messages.append({"role": turn.role, "content": content})
     messages.append({"role": "user", "content": build_user_prompt(query, hits)})
     return messages
 
@@ -337,6 +416,7 @@ async def _stream_chat(
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
 
     stripper = ThinkStripper()
+    truncator = SourcesTruncator()
     answer_parts: list[str] = []
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -353,7 +433,7 @@ async def _stream_chat(
                         continue
                     content, done = parse_ollama_line(line)
                     if content:
-                        visible = stripper.feed(content)
+                        visible = truncator.feed(stripper.feed(content))
                         if visible:
                             if first_token_at is None:
                                 first_token_at = time.perf_counter()
@@ -363,7 +443,7 @@ async def _stream_chat(
                             )
                     if done:
                         break
-        tail = stripper.flush()
+        tail = truncator.feed(stripper.flush()) + truncator.flush()
         if tail:
             answer_parts.append(tail)
             yield _sse_chunk(completion_id, model, {"content": tail}, None)
@@ -424,14 +504,72 @@ async def stream_answer(
     history: list[ChatMessage] | None = None,
     *,
     advisory: bool = False,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
     timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
-    """Stream the assistant's grounded answer as SSE lines."""
-    messages = build_messages(query, hits, history, advisory=advisory)
-    async for chunk in _stream_chat(
-        messages, _grounded_suffix_fn(hits, advisory), timing=timing
-    ):
+    """Stream the assistant's grounded answer as SSE lines.
+
+    Coverage turns take the gated path instead, which emits the answer in one
+    block: its verdict can only be checked once complete, and streaming
+    "Không được claim." before checking means the employee has already read a
+    verdict we are about to reject.
+    """
+    messages = build_messages(
+        query,
+        hits,
+        history,
+        advisory=advisory,
+        coverage=coverage,
+        coverage_undetermined=coverage_undetermined,
+    )
+    suffix_fn = _grounded_suffix_fn(hits, advisory)
+    if coverage and settings.coverage_verdict_gate_enabled:
+        async for chunk in _stream_gated_coverage(
+            messages, hits, suffix_fn, question=query, timing=timing
+        ):
+            yield chunk
+        return
+    async for chunk in _stream_chat(messages, suffix_fn, timing=timing):
         yield chunk
+
+
+async def _stream_gated_coverage(
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    suffix_fn: Callable[[str], str],
+    *,
+    question: str,
+    timing: TimingContext | None = None,
+) -> AsyncIterator[str]:
+    """Emit a verdict-checked coverage answer as one SSE content chunk.
+
+    Token streaming is traded for the check. These turns already run about a
+    minute on CPU, so a regeneration lengthens an existing wait rather than
+    introducing a new kind of one — and an employee reading a wrong "không
+    được chi trả" is the failure this whole path exists to prevent.
+    """
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    model = settings.chat_model
+    yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
+
+    failed = False
+    try:
+        answer = await _agated_coverage_answer(messages, hits, question)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.error("Generation failed: %s", exc)
+        answer, failed = _CONNECTION_ERROR_MESSAGE, True
+
+    yield _sse_chunk(completion_id, model, {"content": answer}, None)
+    suffix = "" if failed else suffix_fn(answer)
+    if suffix:
+        yield _sse_chunk(completion_id, model, {"content": suffix}, None)
+    footer = response_time_footer(timing)
+    if footer:
+        yield _sse_chunk(completion_id, model, {"content": footer}, None)
+    log_query_timing(timing, answer_chars=len(answer) + len(suffix))
+    yield _sse_chunk(completion_id, model, {}, "stop")
+    yield "data: [DONE]\n\n"
 
 
 async def stream_hybrid_answer(
@@ -496,19 +634,142 @@ def generate_plain(prompt: str) -> str:
         return ""
 
 
+def _chat_raw(messages: list[dict[str, str]]) -> str:
+    """One non-streaming Ollama call: the model's answer, no suffixes.
+
+    Split out of ``_generate_chat`` so the coverage gate can inspect a bare
+    answer and ask for another one before any suffix is computed.
+    """
+    resp = httpx.post(
+        f"{settings.ollama_base_url}/api/chat",
+        json=_ollama_payload(messages, stream=False),
+        timeout=settings.ollama_timeout,
+    )
+    resp.raise_for_status()
+    content = resp.json().get("message", {}).get("content", "")
+    return truncate_at_sources_heading(strip_think(content))
+
+
+async def _achat_raw(messages: list[dict[str, str]]) -> str:
+    """Async twin of ``_chat_raw`` — the streaming path's gate needs it too."""
+    async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
+        resp = await client.post(
+            f"{settings.ollama_base_url}/api/chat",
+            json=_ollama_payload(messages, stream=False),
+        )
+        resp.raise_for_status()
+        content = resp.json().get("message", {}).get("content", "")
+    return truncate_at_sources_heading(strip_think(content))
+
+
+def _resolve_verdict(answer: str, hits: list[Hit]) -> VerdictProblem | None:
+    """Log and return whatever the coverage gate found wrong with ``answer``."""
+    problem = check_verdict(answer, hits)
+    if problem is not None:
+        logger.info(
+            "coverage gate: %s verdict ignored benefit clause(s) %s; regenerating",
+            problem.kind,
+            list(problem.uncited_benefits),
+        )
+    return problem
+
+
+def _settle(retry: str, hits: list[Hit], question: str) -> str:
+    """Accept the regenerated answer, or fall back to the enumeration.
+
+    BOTH checks run here. The first version returned straight out of the
+    deterministic path, so a regeneration triggered by the verdict gate was
+    never seen by the semantic verifier — and that is exactly the path that
+    shipped a wrong denial in testing: the retry dutifully cited [1] and [2],
+    satisfying the verdict gate, then read the EXCLUSION list as the list of
+    covered cases and denied anyway. Citing a clause is not reading it.
+
+    The regeneration budget stays at one: a retry that fails either check is
+    replaced by the deterministic enumeration rather than generated again.
+    """
+    retry = strip_leaked_instructions(retry)
+    if check_verdict(retry, hits) is not None:
+        logger.warning(
+            "coverage gate: regeneration still ungrounded; "
+            "using deterministic enumeration"
+        )
+        return fallback_answer(hits)
+    if verify_answer(question, retry) is not None:
+        logger.warning(
+            "coverage gate: regeneration failed verification; "
+            "using deterministic enumeration"
+        )
+        return fallback_answer(hits)
+    return retry
+
+
+async def _asettle(retry: str, hits: list[Hit], question: str) -> str:
+    """Async twin of ``_settle``."""
+    retry = strip_leaked_instructions(retry)
+    if check_verdict(retry, hits) is not None:
+        logger.warning(
+            "coverage gate: regeneration still ungrounded; "
+            "using deterministic enumeration"
+        )
+        return fallback_answer(hits)
+    if await averify_answer(question, retry) is not None:
+        logger.warning(
+            "coverage gate: regeneration failed verification; "
+            "using deterministic enumeration"
+        )
+        return fallback_answer(hits)
+    return retry
+
+
+def _gated_coverage_answer(
+    messages: list[dict[str, str]], hits: list[Hit], question: str
+) -> str:
+    """Generate a coverage answer whose verdict engaged with the payout side.
+
+    Two checks, at most ONE regeneration between them: the deterministic gate
+    (did the verdict cite a benefit clause at all) and, when that passes, the
+    semantic verifier (did it invent the customer's facts, or conclude against
+    the clause it quoted — see ``generation/verify.py``).
+    """
+    # Strip BEFORE checking: a leaked "…kết thúc bằng những gì còn cần kiểm tra
+    # để kết luận" heading is the last "kết luận" in the text, so it captures
+    # ``verdict_region`` and hides the real conclusion underneath it.
+    answer = strip_leaked_instructions(_chat_raw(messages))
+    problem = _resolve_verdict(answer, hits)
+    if problem is not None:
+        retry = _chat_raw(correction_messages(messages, answer, problem))
+        return _settle(retry, hits, question)
+    reason = verify_answer(question, answer)
+    if reason is not None:
+        retry = _chat_raw(verification_messages(messages, answer, reason))
+        return _settle(retry, hits, question)
+    # Strip on the clean path too: a leak from an earlier turn comes back in
+    # the history and gets copied forward even when no gate fires.
+    return strip_leaked_instructions(answer)
+
+
+async def _agated_coverage_answer(
+    messages: list[dict[str, str]], hits: list[Hit], question: str
+) -> str:
+    """Async twin of ``_gated_coverage_answer``."""
+    answer = strip_leaked_instructions(await _achat_raw(messages))
+    problem = _resolve_verdict(answer, hits)
+    if problem is not None:
+        retry = await _achat_raw(correction_messages(messages, answer, problem))
+        return await _asettle(retry, hits, question)
+    reason = await averify_answer(question, answer)
+    if reason is not None:
+        retry = await _achat_raw(verification_messages(messages, answer, reason))
+        return await _asettle(retry, hits, question)
+    return strip_leaked_instructions(answer)
+
+
 def _generate_chat(
     messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
 ) -> str:
     """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``)."""
     try:
-        resp = httpx.post(
-            f"{settings.ollama_base_url}/api/chat",
-            json=_ollama_payload(messages, stream=False),
-            timeout=settings.ollama_timeout,
-        )
-        resp.raise_for_status()
-        content = resp.json().get("message", {}).get("content", "")
-        answer = strip_think(content)
+        answer = _chat_raw(messages)
         return answer + suffix_fn(answer)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
@@ -533,13 +794,28 @@ def generate_answer(
     history: list[ChatMessage] | None = None,
     advisory: bool = False,
     *,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
     timing: TimingContext | None = None,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
-    messages = build_messages(query, hits, history, advisory=advisory)
-    return _with_timing(
-        _generate_chat(messages, _grounded_suffix_fn(hits, advisory)), timing
+    messages = build_messages(
+        query,
+        hits,
+        history,
+        advisory=advisory,
+        coverage=coverage,
+        coverage_undetermined=coverage_undetermined,
     )
+    suffix_fn = _grounded_suffix_fn(hits, advisory)
+    if coverage and settings.coverage_verdict_gate_enabled:
+        try:
+            answer = _gated_coverage_answer(messages, hits, query)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.error("Generation failed: %s", exc)
+            return _with_timing(_CONNECTION_ERROR_MESSAGE, timing)
+        return _with_timing(answer + suffix_fn(answer), timing)
+    return _with_timing(_generate_chat(messages, suffix_fn), timing)
 
 
 def generate_hybrid_answer(

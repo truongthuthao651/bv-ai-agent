@@ -214,6 +214,27 @@ cảnh không áp dụng cho tình huống này (nêu rõ điều kiện loại 
 và nếu ngữ cảnh cũng không nêu mức chi trả/quyền lợi cụ thể cho sự kiện đó, \
 nói rõ "tài liệu không nêu mức chi trả cụ thể cho trường hợp này" — KHÔNG \
 tự khẳng định là ĐƯỢC hay KHÔNG ĐƯỢC bồi thường.
+
+   Đặc biệt chú ý các điều loại trừ liệt kê theo NHÓM: điều kiện nằm ở câu \
+dẫn đầu ("các hoạt động thể thao, giải trí nguy hiểm như: ..."), còn phía sau \
+chỉ là ví dụ. Chỉ được áp dụng khi tình huống thuộc đúng NHÓM đó, không phải \
+khi trùng vài chữ. VÍ DỤ SAI (bị CẤM): "đua xe ô tô, mô tô" là hoạt động thể \
+thao nguy hiểm — một vụ TAI NẠN GIAO THÔNG thông thường (kể cả khi đang đi du \
+lịch, hoặc bị xe khác đâm) KHÔNG phải là "đua xe", nên điều loại trừ đó KHÔNG \
+áp dụng và KHÔNG được dùng để từ chối chi trả.
+
+   (c) MỤC LOẠI TRỪ KHÔNG PHẢI LÀ DANH SÁCH RỦI RO ĐƯỢC BẢO HIỂM. Mục "Loại \
+trừ trách nhiệm bảo hiểm" chỉ liệt kê những trường hợp KHÔNG được chi trả; nó \
+KHÔNG BAO GIỜ là danh sách các trường hợp được chi trả. Vì vậy, việc một sự \
+kiện (tử vong, tai nạn xe...) KHÔNG xuất hiện trong mục loại trừ có nghĩa là \
+sự kiện đó KHÔNG BỊ LOẠI TRỪ — tức là theo hướng ĐƯỢC chi trả, chứ TUYỆT ĐỐI \
+không phải ngược lại. Câu suy luận sau đây là SAI và bị CẤM: "sự kiện X không \
+được liệt kê trong mục loại trừ, do đó X không thuộc phạm vi bảo hiểm / không \
+được chi trả". Muốn biết một sự kiện CÓ được chi trả hay không, phải căn cứ \
+vào các đoạn ngữ cảnh nêu QUYỀN LỢI (ví dụ "Quyền lợi tử vong", "Quyền lợi \
+thương tật", "Công ty chi trả...") — nếu ngữ cảnh có đoạn quyền lợi áp dụng \
+cho sự kiện đó thì PHẢI trích dẫn và trả lời dựa trên đoạn đó, không được chỉ \
+đọc mục loại trừ rồi kết luận.
 7. Không ĐỔI LOẠI CHỈ SỐ của bảng/số liệu trong ngữ cảnh. Lãi suất cam kết \
 tối thiểu / lãi suất quỹ / phí ban đầu / phí quản lý ≠ tỷ lệ bồi thường ≠ \
 % Số tiền bảo hiểm. Khi câu hỏi hỏi "claim bao nhiêu %" / mức bồi thường / \
@@ -261,18 +282,110 @@ _FOOTER = """
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """
 
+# The footer is the LAST thing the model reads, and a small model weights it
+# accordingly: on the reported conversation every coverage answer collapsed to
+# one line ("Không được claim.") despite the shape rule above demanding
+# branches. CLAUDE.md already warns that "ngắn gọn" must not be read as licence
+# to collapse a multi-branch answer — so on coverage turns it is not said.
+_FOOTER_COVERAGE = """
+Trả lời bằng tiếng Việt, chính xác, đúng trọng tâm câu hỏi. Trình bày ĐẦY ĐỦ \
+theo từng trường hợp như hướng dẫn ở trên — KHÔNG rút gọn thành một câu kết \
+luận.\
+"""
+
+
+# Coverage questions ("tôi bị X thì có được chi trả không?"). The documents
+# almost never determine these outright: the outcome depends on which benefit
+# the event triggers, on riders, and on facts the employee has not stated. A
+# flat "được"/"không được" is wrong even when it lands on the right side, so the
+# answer is shaped as branches + what to check (CLAUDE.md answering rules).
+_COVERAGE_SHAPE_RULE = """\
+DẠNG CÂU HỎI "CÓ ĐƯỢC CHI TRẢ KHÔNG":
+Câu hỏi này hầu như không bao giờ được tài liệu trả lời bằng một chữ "có" hoặc \
+"không". Hãy trình bày theo CÁC TRƯỜNG HỢP mà ngữ cảnh thực sự nêu, ví dụ: sự \
+kiện dẫn đến tử vong → quyền lợi nào; dẫn đến thương tật toàn bộ vĩnh viễn → \
+quyền lợi nào; chỉ bị thương/nằm viện → tài liệu có nêu quyền lợi hay không. \
+Mỗi trường hợp phải kèm trích dẫn [n]. Sau đó nêu rõ ĐIỀU KIỆN còn phải kiểm \
+tra để kết luận (ví dụ: hợp đồng đang có hiệu lực, có tham gia sản phẩm bổ trợ \
+nào, Giấy chứng nhận bảo hiểm có ghi điểm loại trừ bổ sung riêng không). Nếu \
+ngữ cảnh không nêu quyền lợi cho một trường hợp, hãy nói thẳng là tài liệu \
+không nêu — KHÔNG suy ra là không được chi trả. Trả lời đầy đủ, hữu ích cho \
+nhân viên tư vấn khách hàng; không rút gọn thành một câu kết luận.
+
+TUYỆT ĐỐI KHÔNG THÊM TÌNH TIẾT NGƯỜI HỎI KHÔNG NÊU. Trước khi phân tích, hãy \
+nhắc lại đúng những dữ kiện có trong câu hỏi, không thêm không bớt. Không được \
+gán cho khách hàng một hành vi nào đó chỉ vì hành vi đó có trong mục loại trừ. \
+VÍ DỤ SAI (bị CẤM): người hỏi nói "bị tai nạn xe khi đi du lịch" mà câu trả \
+lời viết "người bị tai nạn là đua xe" rồi loại trừ theo điều khoản đua xe — \
+câu hỏi KHÔNG hề nói tới đua xe. Nếu thiếu dữ kiện để biết một điều loại trừ \
+có áp dụng hay không, hãy ĐƯA NÓ VÀO phần "cần kiểm tra thêm", chứ không được \
+tự giả định là có.
+
+Trình bày theo đúng bố cục sau (bỏ trường hợp nào ngữ cảnh không nêu):
+
+**Trường hợp 1 — Nếu sự kiện dẫn đến TỬ VONG:** ... [n]
+**Trường hợp 2 — Nếu dẫn đến THƯƠNG TẬT TOÀN BỘ VĨNH VIỄN:** ... [n]
+**Trường hợp 3 — Nếu chỉ bị thương / nằm viện:** ... [n]
+**Các điều loại trừ cần đối chiếu:** điều nào, áp dụng khi nào, tình huống \
+này có thỏa điều kiện đó không [n]
+**Cần kiểm tra thêm để kết luận:** ...\
+"""
+
+# Fires only when EVERY retrieved chunk is exclusion material (see
+# retrieval/coverage.py). Real-doc failure 2026-07-27: an exclusion-only context
+# produced "Không được claim" by applying a substandard-health underwriting
+# clause to a car accident. Rule 6(b) already forbade that and did not hold, so
+# this block is added by code exactly in the state where the mistake happens.
+_COVERAGE_UNDETERMINED_RULE = """\
+CẢNH BÁO VỀ NGỮ CẢNH HIỆN TẠI:
+KHÔNG có đoạn ngữ cảnh nào nêu trường hợp Công ty CHI TRẢ — những đoạn lấy được \
+chỉ gồm điều khoản loại trừ, thời gian chờ, quyền lợi không thuộc sản phẩm \
+chính, hoặc thủ tục hồ sơ. Điều đó có nghĩa là hệ thống CHƯA tìm được phần \
+quyền lợi của tài liệu — KHÔNG có nghĩa là khách hàng không được chi trả. \
+Trong tình huống này TUYỆT ĐỐI KHÔNG kết luận "không được chi trả", "không \
+được bảo hiểm" hay "không được claim". Thay vào đó: nêu rõ các điều loại trừ \
+lấy được là gì và ĐIỀU KIỆN áp dụng của từng điều; nói rõ tình huống người hỏi \
+có thỏa điều kiện đó hay không; và nói rõ rằng phần quyền lợi/phạm vi bảo hiểm \
+chưa có trong ngữ cảnh nên cần tra thêm trong tài liệu gốc trước khi kết luận. \
+Một điều loại trừ chỉ áp dụng khi tình huống thỏa ĐÚNG điều kiện ghi trong \
+chính điều đó — điều kiện dành cho hợp đồng có thẩm định dưới chuẩn KHÔNG áp \
+dụng cho một tai nạn thông thường.\
+"""
+
 
 def system_prompt(
-    *, advisory: bool = False, general_knowledge: bool | None = None
+    *,
+    advisory: bool = False,
+    general_knowledge: bool | None = None,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
 ) -> str:
     """Assemble the grounded system prompt for one answer mode.
 
     ``advisory`` swaps rules 1/3 for their synthesis-permitting variants and
     adds rule 8; ``general_knowledge`` appends the optional supplement section
     (defaults to ``settings.general_knowledge_supplement_enabled``).
+
+    ``coverage`` adds the answer-shape block for "có được chi trả không"
+    questions (enumerate the cases, then what to check) and SUPPRESSES the
+    general-knowledge supplement outright.
+    ``coverage_undetermined`` additionally forbids a denial, and is set by the
+    caller only when every retrieved chunk turned out to be exclusion material
+    — a state in which no denial can be grounded.
     """
     if general_knowledge is None:
         general_knowledge = settings.general_knowledge_supplement_enabled
+    if coverage or coverage_undetermined:
+        # Whether an event is covered is a documents question, never a textbook
+        # one, and on the reported conversation (2026-07-27) the supplement did
+        # real damage: it stated rule 6(c) correctly ("mục loại trừ không phải
+        # là danh sách được bảo hiểm... nếu không thuộc loại trừ thì có thể
+        # được chi trả") and then concluded "nên không được chi trả" two lines
+        # later — contradicting itself, and lending unearned authority to a
+        # denial the grounded part had no basis for. Suppression is
+        # unconditional: an explicit general_knowledge=True must not reopen it
+        # on the one question shape where it produces ungrounded verdicts.
+        general_knowledge = False
     parts = [
         _PERSONA,
         _RULE_1_ADVISORY if advisory else _RULE_1_STRICT,
@@ -282,9 +395,15 @@ def system_prompt(
     ]
     if advisory:
         parts.append(_RULE_8_ADVISORY)
+    if coverage or coverage_undetermined:
+        parts.append(_COVERAGE_SHAPE_RULE)
+    # Last of the rule blocks: it describes the context the model is about to
+    # read, and it must not be buried above the general-knowledge section.
+    if coverage_undetermined:
+        parts.append(_COVERAGE_UNDETERMINED_RULE)
     if general_knowledge:
         parts.append(_GENERAL_KNOWLEDGE_RULE)
-    parts.append(_FOOTER)
+    parts.append(_FOOTER_COVERAGE if (coverage or coverage_undetermined) else _FOOTER)
     return "\n".join(parts)
 
 
@@ -295,6 +414,12 @@ ADVISORY_SYSTEM_PROMPT = system_prompt(advisory=True, general_knowledge=False)
 
 # Fixed heading the supplement section must open with (see _GENERAL_KNOWLEDGE_RULE).
 GENERAL_KNOWLEDGE_HEADING = "**Kiến thức chung (ngoài tài liệu):**"
+
+# Heading of the deterministic sources block (``format_sources``). Named because
+# two other places key on it: ``conversation_scope`` parses it back out of
+# history to recover which products a chat is about, and
+# ``generation/history.py`` cuts it off before replaying a turn to the model.
+SOURCES_HEADING = "**Nguồn tham khảo:**"
 
 # Deterministic labels appended by the generator (the prompt asks, the code
 # enforces — a small local model forgets instructions).
@@ -412,7 +537,7 @@ def format_sources(hits: list[Hit]) -> str:
     if not hits:
         return ""
     base = settings.api_public_base_url
-    lines = ["**Nguồn tham khảo:**"]
+    lines = [SOURCES_HEADING]
     seen: set[tuple[str, str]] = set()
     for i, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload

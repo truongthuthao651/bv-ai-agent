@@ -221,6 +221,30 @@ class Settings(BaseSettings):
     # (app/retrieval/metric_guard.py) so a "claim bao nhiêu%?" question cannot
     # be answered from a lãi suất cam kết table. False disables the filter.
     metric_guard_enabled: bool = True
+    # Coverage questions ("tôi bị X thì có được chi trả không?"): mix benefit /
+    # scope terms into the search text so an exclusion article is never the
+    # whole context, and when it is anyway, forbid a denial and answer as
+    # enumerated cases (app/retrieval/coverage.py). Observed real-doc failure:
+    # a car-accident question retrieved one exclusion section and the answer
+    # denied the claim using a substandard-health underwriting clause.
+    coverage_guard_enabled: bool = True
+    # Post-generation gate on coverage verdicts: a "được/không được chi trả"
+    # conclusion that never cites a benefit clause sitting in its own context is
+    # regenerated once, then replaced by a deterministic enumeration
+    # (app/generation/coverage_gate.py). Measured need: with the benefit clause
+    # backfilled AND ranked first, a real 4-turn conversation still denied the
+    # claim citing only the exclusions page, 4 times out of 4. Coverage turns
+    # give up token streaming while this is on — the verdict can only be checked
+    # once the answer is complete.
+    coverage_verdict_gate_enabled: bool = True
+    # Second LLM pass over a finished coverage answer: did it invent facts about
+    # the customer, or conclude against the clause it quoted? Both are semantic,
+    # so the deterministic gate cannot see them (app/generation/verify.py).
+    # DEFENCE IN DEPTH, NOT A GUARANTEE: eval/run_ragas.py records this repo's
+    # own local judge scoring 1.0 on every category of every run, including one
+    # where the model denied a covered death. It fails open, and costs one extra
+    # model call per coverage turn. A/B it before trusting it.
+    coverage_llm_verify_enabled: bool = True
 
     # ---- Chunking ----
     chunk_min_tokens: int = 500

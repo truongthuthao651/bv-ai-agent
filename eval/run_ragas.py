@@ -61,6 +61,7 @@ from app.api.ingest import doc_id_for_filename  # noqa: E402
 from app.config.settings import settings  # noqa: E402
 from app.generation import generator  # noqa: E402
 from app.generation.prompts import REFUSAL_MESSAGE  # noqa: E402
+from app.models.schemas import ChatMessage  # noqa: E402
 
 _GOLDEN_PATH = Path(__file__).resolve().parent / "golden_set.jsonl"
 _RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -119,6 +120,13 @@ class GoldenItem:
     # unsafe on — exclusion polarity above all — not for phrasing.
     must_say: list[str] = field(default_factory=list)
     must_not_say: list[str] = field(default_factory=list)
+    # Prior turns replayed before ``question``, as ``{"role", "content"}`` dicts.
+    # Without this the set could only express opening questions, and the whole
+    # 2026-07-27 coverage failure lived in the FOLLOW-UPS: a bare "tai nạn xe tử
+    # vong cơ mà" carries no coverage marker of its own, so the guards that
+    # depend on conversation state (``coverage.is_coverage_thread``,
+    # ``conversation_scope``) were untested by construction.
+    history: list[dict[str, str]] = field(default_factory=list)
 
 
 def load_golden(path: Path = _GOLDEN_PATH) -> list[GoldenItem]:
@@ -283,10 +291,11 @@ def evaluate_item(
 ) -> Row:
     """Run one golden question through the REAL pipeline (+ generation + judge).
 
-    The golden set has no chat history, so ``plan_response`` runs the exact
-    production decision tree for a fresh question: glossary expansion, hybrid
-    search, rerank, metric guard, the product-scope guard, and the
-    hybrid/refusal/advisory routing. ``plan.kind`` records which branch fired.
+    ``plan_response`` runs the exact production decision tree: glossary
+    expansion, hybrid search, rerank, metric guard, the product-scope guard,
+    and the hybrid/refusal/advisory routing. ``plan.kind`` records which branch
+    fired. Items carrying ``history`` replay those turns first, so a golden
+    case can assert on a FOLLOW-UP — the shape the coverage failure took.
     """
     row = Row(id=item.id, category=item.category)
     expected_doc_id = (
@@ -296,7 +305,7 @@ def evaluate_item(
     )
 
     t0 = time.perf_counter()
-    plan = plan_response(item.question, [])
+    plan = plan_response(item.question, [ChatMessage(**turn) for turn in item.history])
     row.retrieval_ms = (time.perf_counter() - t0) * 1000
     row.plan_kind = plan.kind
     hits = plan.hits
