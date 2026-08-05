@@ -6,6 +6,14 @@ target stays the Docker-free company laptop. Every day ends with a green
 `pytest tests/ -x -q` and a non-regressing `python eval/run_ragas.py --strict`
 (native mode: stop the API first — embedded Qdrant is single-process).
 
+**Cost correction, learned end of Day 1**: a full `--strict` run over the
+66-item golden set took **2h21m** on this machine (CPU, `qwen3:8b`), not a
+quick check. "Every day ends with a green `--strict`" as originally written
+is not achievable at that cost on a normal work day. See the Day 1 postscript
+below for the adjusted per-day testing strategy (fast `pytest` + targeted
+`--category`/`--limit` runs day-to-day; full `--strict` reserved for Day 5 and
+Day 7 checkpoints).
+
 This plan is sequenced by risk and dependency: security holes and safety
 regressions before features (Days 1-3), instrumentation before any dashboard
 (Day 2 before Day 4's report view), and the frontend decision is made and
@@ -68,6 +76,103 @@ the header against `/v1/chat/completions`.
 **Rollback**: every change here is additive (new warning text, a new
 `.gitignore` line, new try/except wrappers, an optional new setting
 defaulting to today's behavior) — revert the single commit if anything breaks.
+
+**Actual Day 1 result (2026-08-05, executed same-day as this plan was
+written)**: all 5 MUST/SHOULD tasks shipped, committed as `d36b625`. `pytest
+tests/ -x -q` is green (392/392, +7 new regression tests). `ruff check app/`
+clean. **`python eval/run_ragas.py --strict` was run and FAILED** — this is
+reported here rather than silently treated as passing; see the new finding
+below for the full gate output, root-cause investigation, and why it was not
+a blocker for committing Day 1's changes.
+
+---
+
+## New finding (NEW1): the full golden-set `--strict` gate was already
+## failing before Day 1's changes — not caused by them, but now blocking
+## every day's stated acceptance test until fixed
+
+**Severity: high. Area: agent-quality / process.** Discovered running Day 1's
+own acceptance test, not by a dedicated audit phase — logged here rather than
+`2026-08-05-audit.md` because it changes THIS document's plan, not just the
+inventory.
+
+**Evidence** — `python eval/run_ragas.py --strict`, full 66-item golden set,
+same code as Day 1's commit, run 2026-08-05 20:11-22:33 (`eval/results/
+run-20260805-201156.json`):
+
+```
+== GATE ==
+  false refusals (answerable not answered): 4/62
+    - q08, q35, fr06, q52
+  leaked refusals (should refuse, answered): 2/4
+    - q58, q59
+  failed assertions: 8/13
+    - q35, fr06, fr07, q48, q50, q51, q52, q56
+  dangling citations: 0/58
+GATE FAILED
+```
+Overall `assertion_pass_rate 0.385`, `judge_correct_rate 0.897`. Full
+per-category breakdown in the run JSON above.
+
+**Root-cause investigation** (done before committing Day 1, so as not to ship
+a masked regression):
+1. `git diff eval/golden_set.jsonl` at the start of this audit showed a
+   20-item uncommitted addition, `q40`-`q59` — confirmed by re-diffing that
+   every one of those IDs is a pure addition. **This was the first `--strict`
+   run these 20 questions had ever been gated against.** Most of the failing
+   IDs (`q48, q50, q51, q52, q56, q58, q59`) are in that new set.
+2. `q08` is the sole `calculation`-category item; that category alone shows
+   `assertion_pass_rate 0.0`, consistent with CLAUDE.md's own documented
+   position that a local 7-8B model's arithmetic is not trustworthy — reads
+   as a pre-existing, known-shape weakness, not a new one.
+3. `fr06`/`fr07` are a leading-question, multi-turn "was this excluded"
+   scenario (a car-accident death after the model already discussed a
+   racing-related exclusion) — structurally the same
+   over-application-of-an-exclusion risk CLAUDE.md documents as a live,
+   unresolved incident category, on a different scenario than the documented
+   ones.
+4. Because Day 1's own `AGENT1` fix touches `product_scope.py`'s `_GENERIC`
+   set, and `app/retrieval/conversation_scope.py` imports that same
+   `_GENERIC` directly (a real cross-module coupling not scoped for at design
+   time — see `MAINT1`/`MAINT2` in the audit for the general pattern), it was
+   directly suspected as the cause. Verified with `git stash` on just
+   `product_scope.py` plus a direct call to `query_names_absent_product`/
+   `named_product_labels` on `q35`, `q48`, `fr06`, `fr07` (no LLM call
+   needed — these are pure functions): **the refusal decision was identical
+   with and without the fix** for all four. The fix's only measured effect
+   was correctly resolving `fr07`'s product-title label (previously `[]`,
+   now the correct title) — a strict improvement, not a new gap.
+
+**Conclusion**: this is a pre-existing gap the first full `--strict` run
+surfaced, not a Day 1 regression — but it is real, and it means the
+roadmap's own daily acceptance-test bar ("green `pytest` + non-regressing
+`--strict`") has been unmet since before this plan was written. **Not a
+reason to have delayed Day 1's security fixes; it IS a reason to change how
+the rest of this week tests.**
+
+**Impact on this plan**:
+- Days 2-4's acceptance tests below say `pytest ... green` and (Day 3, Day 4)
+  `ragas --strict non-regressing`. Read "non-regressing" for those days as:
+  run `python eval/run_ragas.py --category <the categories that day's change
+  could plausibly affect> --strict` (minutes, not hours) as the day's gate,
+  and defer the full 66-item run to Day 5 and Day 7 where it was already
+  planned as a checkpoint.
+- **Day 5's task 3** ("re-run `--strict` on the grown set; investigate and
+  fix any new failure") is now a *known*, *quantified* task, not a
+  discovery step: fix `q08`'s calculation framing (or accept and document
+  the category as `must_say`-exempt), fix or re-scope `q35`/`fr06`/`fr07`'s
+  exclusion-application gap, and triage the 7 new `q40`-`q59` failures
+  (`q48, q50, q51, q52, q56, q58, q59`) — this is materially larger than
+  "land the in-progress golden-set work" as originally scoped and may not
+  fully fit Day 5; Day 6's buffer should assume it will be needed.
+- Added to `docs/audit/2026-08-05-audit.md`'s Phase 7 table would be:
+  `NEW1 | full-corpus --strict gate failing pre-Day-1 | agent-quality |
+  high | eval/results/run-20260805-201156.json | a manager relying on
+  "the eval passes" has no accurate signal today | triage per-category,
+  fix or re-scope each failing golden item | M | Low (data/prompt fixes,
+  re-run golden set after each) |` — not re-added there today to keep this
+  update scoped to the roadmap as asked; fold in when `audit.md` is next
+  touched.
 
 ---
 
@@ -157,15 +262,18 @@ sitting uncommitted at the start of the audit.
 
 | # | Task | Files | Priority |
 |---|---|---|---|
-| 1 | Commit the already-written `q40`-`q59` golden-set additions (found uncommitted at audit start) — review once for consistency, then commit | `eval/golden_set.jsonl` | MUST |
-| 2 | Add the 6 adversarial failure-mode questions used in this audit's Phase 5 stress test (one per historical failure mode: exclusion-as-coverage inversion, exclusion-only-context denial, verdict-with-no-citation, general-knowledge contradiction, model-authored-sources-block, flat-verdict-not-enumerated) as permanent `must_say`/`must_not_say` golden items | `eval/golden_set.jsonl` | MUST |
-| 3 | Re-run `python eval/run_ragas.py --strict` on the grown set; investigate and fix any new failure before moving on (do not let this slip to Day 6-7) | — | MUST |
-| 4 | STRETCH: FE1 partial fix — have `run_native.sh` detect the machine's LAN IP and prompt/suggest setting `API_PUBLIC_BASE_URL` to it instead of silently defaulting to loopback | `scripts/run_native.sh` | STRETCH |
+| 1 | Fix NEW1's already-known failures before adding anything new: `q08` (calculation framing/exemption), `q35`/`fr06`/`fr07` (exclusion over-application on a car-accident-death scenario), and the 7 already-failing new items `q48, q50, q51, q52, q56, q58, q59` — triage each as retrieval/prompt/guard, per `roadmap.md`'s NEW1 section | `eval/golden_set.jsonl` plus whichever of `app/retrieval/`, `app/generation/prompts.py` each triage points to | MUST |
+| 2 | Commit the `q40`-`q59` golden-set additions (found uncommitted at audit start; item 1 above is triaging their failures first, this commits the reviewed set) | `eval/golden_set.jsonl` | MUST |
+| 3 | Add the 6 adversarial failure-mode questions used in this audit's Phase 5 stress test (one per historical failure mode: exclusion-as-coverage inversion, exclusion-only-context denial, verdict-with-no-citation, general-knowledge contradiction, model-authored-sources-block, flat-verdict-not-enumerated) as permanent `must_say`/`must_not_say` golden items | `eval/golden_set.jsonl` | MUST |
+| 4 | Re-run `python eval/run_ragas.py --strict` on the grown set (budget the full ~2.5h — start this early in the day, not at the end); investigate and fix any failure still standing before moving on (do not let this slip to Day 6-7) | — | MUST |
+| 5 | STRETCH: FE1 partial fix — have `run_native.sh` detect the machine's LAN IP and prompt/suggest setting `API_PUBLIC_BASE_URL` to it instead of silently defaulting to loopback | `scripts/run_native.sh` | STRETCH |
 
 **Acceptance test**: `pytest tests/ -x -q` green; `python eval/run_ragas.py
 --strict` green on the now-larger golden set (this IS the acceptance test for
-items 1-2 — a new item failing the gate is a real bug to fix, not a reason to
-skip it).
+items 1-3 — a failing item is a real bug to fix, not a reason to skip it).
+Known baseline going into this day: 8/13 assertions, 2/4 leaked refusals,
+4/62 false refusals failing (`eval/results/run-20260805-201156.json`) — Day 5
+is done when that count is 0, not when it's merely "not worse."
 
 **Rollback**: golden-set additions are data, not code — trivially revertible;
 if item 3 uncovers a real regression, that fix is scoped and committed
@@ -215,7 +323,7 @@ Day-6-vs-Day-3 interaction regressions.
 
 ## What will demonstrably be better on Day 7 than today
 
-Five measurable before/after metrics, drawn from this audit's Phase 5
+Six measurable before/after metrics, drawn from this audit's Phase 5
 baseline (see `2026-08-05-metrics.md`) and re-measured the same way on Day 7:
 
 1. **Runtime dangling-citation rate**: baseline measured in Phase 5/
@@ -236,6 +344,10 @@ baseline (see `2026-08-05-metrics.md`) and re-measured the same way on Day 7:
    confirmed code paths (Qdrant client, `hybrid_search`, `reranker.rerank`)
    produce a raw English 500 → Day 1 makes it **0/3** (all wrapped with the
    existing graceful-Vietnamese-message pattern).
+6. **Full golden-set `--strict` gate (NEW1)**: today (2026-08-05,
+   `run-20260805-201156.json`) **FAILING** — 8/13 failed assertions, 2/4
+   leaked refusals, 4/62 false refusals → Day 5 target: **PASSING**, 0/0/0,
+   re-confirmed on Day 7.
 
 *(This section's exact before-numbers for consistency/flip-rate and latency
 percentiles are filled in from the live Phase 5 measurements once complete —
