@@ -75,6 +75,16 @@ _GENERIC: frozenset[str] = frozenset(
         "loai",
         "gom",
         "bao_gom",
+        # document-title boilerplate (AGENT1, 2026-08-05 audit): every indexed
+        # policy title starts "Quy tắc, Điều khoản Sản phẩm ...", so without
+        # these, _distinctive_title_tokens() counted them as product-distinctive
+        # and inflated `needed` past what an informal mention (which never says
+        # "quy tắc điều khoản") could reach — live-reproduced 3/3 near-refusal
+        # on "so sánh An Vui Toàn Diện và An Bình Trọn Đời".
+        "quy",
+        "tac",
+        "dieu",
+        "khoan",
         # question / filler / verb words
         "la",
         "gi",

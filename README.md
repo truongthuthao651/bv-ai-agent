@@ -110,6 +110,18 @@ Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm tron
 > `/documents/{id}/view` và `/file` mở được từ LAN, và GIỮ `ADMIN_PASSWORD` để
 > chức năng nạp/xoá vẫn được bảo vệ. Khi giá trị này là loopback, API ghi một
 > cảnh báo lúc khởi động. Để nguyên nếu chấp nhận trích dẫn chỉ dùng trên máy chủ.
+>
+> ⚠️ **Quan trọng — `API_HOST=0.0.0.0` cũng mở `/v1/chat/completions` ra cả
+> mạng LAN, KHÔNG cần đăng nhập.** `ADMIN_PASSWORD` chỉ bảo vệ trang quản trị
+> (nạp/xoá tài liệu) và đăng nhập Open WebUI (`WEBUI_AUTH`) chỉ bảo vệ trình
+> duyệt Open WebUI — cả hai đều KHÔNG bảo vệ việc gọi thẳng
+> `/v1/chat/completions` bằng một request HTTP thông thường từ bất kỳ máy nào
+> trong mạng. Trước khi đặt `API_HOST=0.0.0.0`, hãy làm MỘT trong hai việc:
+> đặt `API_SHARED_SECRET` thành một chuỗi ngẫu nhiên và đặt `OPENAI_API_KEY`
+> của Open WebUI thành đúng giá trị đó (xem `.env.example`), hoặc giới hạn
+> quyền truy cập cổng 8000 bằng tường lửa/router chỉ cho các máy trong công ty.
+> API ghi một cảnh báo lúc khởi động nếu `API_HOST=0.0.0.0` mà chưa đặt
+> `API_SHARED_SECRET`.
 
 > **Giao diện thương hiệu Bảo Việt:** logo, màu xanh/vàng thương hiệu và các
 > câu hỏi gợi ý (thuật ngữ định phí, quy trình nội bộ…) được tự động áp dụng

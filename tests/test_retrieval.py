@@ -673,6 +673,37 @@ def test_informal_nicknames_resolve_via_indexed_titles() -> None:
     assert is_multi_product_query(q, titles=titles)
 
 
+def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
+    # AGENT1 (2026-08-05 audit, live-reproduced 3/3): every real indexed policy
+    # title starts "Quy tắc, Điều khoản Sản phẩm Bảo hiểm ...", so before "quy",
+    # "tac", "dieu", "khoan" were added to _GENERIC, those shared words counted
+    # as product-distinctive and inflated the required-overlap threshold past
+    # what an informal comparison mention (which never repeats "quy tắc điều
+    # khoản") could reach. "An Vui Toàn Diện" is this exact live repro: its
+    # distinctive set was {quy,tac,dieu,khoan,vui,toan,dien} (needed=4) before
+    # the fix — an informal mention supplies only {vui,toan,dien}=3 and always
+    # failed; now the set is just {vui,toan,dien} (needed=2) and it resolves.
+    #
+    # NOT fixed by this change, and out of scope for this isolated fix: "An
+    # Bình Trọn Đời" resolves to a single distinctive token ({"binh"}) because
+    # "trọn"/"đời" were already in _GENERIC beforehand as whole-life
+    # policy-type vocabulary (shared by other "trọn đời" products), and a
+    # single token never clears the >=2-token floor. That is a different
+    # failure mode (a brand name built from words that are legitimately
+    # generic elsewhere) needing the roadmap's "more robust" dynamic
+    # distinctiveness option, not a boilerplate-list fix — tracked as a
+    # follow-up, not claimed as fixed here.
+    from app.retrieval.product_scope import mentioned_doc_titles
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+    ]
+    q = "So sánh sản phẩm An Vui Toàn Diện và An Bình Trọn Đời cho khách hàng"
+    mentioned = mentioned_doc_titles(q, titles)
+    assert 'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
+
+
 def test_product_guard_allows_partial_comparison_hit() -> None:
     # Comparison names A and B; only A was retrieved → do NOT refuse (generation
     # can still answer A and say B is missing). Refuse only when neither hits.

@@ -61,5 +61,9 @@ data/assets/
 
 # ---- Eval outputs (per-run JSON reports; compare locally, don't commit) ----
 /eval/results/
+# Local reference material for golden-set authoring; not read by any code path
+# (eval/run_ragas.py doesn't import it) and has held real-company-name content
+# in the past (SEC5, 2026-08-05 audit) — never force-add it.
+/eval/golden_set_reference.json
 .webui_secret_key
 .venv-webui/

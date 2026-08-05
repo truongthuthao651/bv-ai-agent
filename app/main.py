@@ -93,6 +93,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "protected). See README (Liên kết trích dẫn cho người dùng trong mạng LAN).",
             settings.api_public_base_url,
         )
+    if settings.api_host == "0.0.0.0" and not settings.api_shared_secret:
+        logger.warning(
+            "API_HOST=0.0.0.0 with API_SHARED_SECRET unset: /v1/chat/completions "
+            "is reachable and UNAUTHENTICATED from anywhere on the LAN — it is not "
+            "protected by ADMIN_PASSWORD or by Open WebUI's WEBUI_AUTH (that only "
+            "gates the Open WebUI browser login, not this API called directly). Set "
+            "API_SHARED_SECRET to a random value (and the same value as Open WebUI's "
+            "OPENAI_API_KEY) or restrict LAN access with a firewall rule until you do. "
+            "See README (Liên kết trích dẫn cho người dùng trong mạng LAN)."
+        )
     if settings.warmup_on_startup:
         await _warmup()
     yield
@@ -118,11 +128,21 @@ app.add_middleware(
 async def admin_session_gate(request: Request, call_next):
     """Require a valid admin session for everything except the public surface.
 
-    Public surface (app/auth.py PUBLIC_PREFIXES): /health, /v1 (Open WebUI's
-    server-to-server calls, gated by its own WEBUI_AUTH instead), and the
+    Public surface (app/auth.py PUBLIC_PREFIXES): /health, /v1, and the
     /login,/logout flow itself. A no-op when ADMIN_PASSWORD is unset.
+
+    /v1 is never subject to the admin-session cookie (Open WebUI calls it
+    server-to-server, with no session) but IS subject to its own, independent
+    check: check_shared_secret(), opt-in via API_SHARED_SECRET (SEC1 — see
+    app/auth.py and README "Liên kết trích dẫn cho người dùng trong mạng LAN").
     """
     path = request.url.path
+    if path == "/v1" or path.startswith("/v1/"):
+        if not auth.check_shared_secret(request.headers.get("authorization")):
+            return JSONResponse(
+                status_code=401, content={"detail": "Missing or invalid API key."}
+            )
+        return await call_next(request)
     if not auth.auth_enabled() or auth.is_public_path(path):
         return await call_next(request)
     if auth.is_valid_session(request.cookies.get(auth.COOKIE_NAME)):

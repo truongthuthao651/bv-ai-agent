@@ -33,12 +33,18 @@ logger = logging.getLogger(__name__)
 COOKIE_NAME = "bv_admin_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12  # 12h — re-login roughly once a working day
 
-# Paths reachable without a session:
+# Paths reachable without a session (the admin-cookie gate, i.e. auth_enabled()
+# below):
 #  - /login, /logout: the auth flow itself (can't require auth to log in)
 #  - /health: polled unauthenticated by scripts/run_native.sh and
 #    scripts/healthcheck.sh (no cookie jar there)
-#  - /v1: the OpenAI-compatible surface Open WebUI calls server-to-server,
-#    gated instead by Open WebUI's own WEBUI_AUTH on the employee side
+#  - /v1: the OpenAI-compatible surface Open WebUI calls server-to-server.
+#    NOT gated by the admin cookie (Open WebUI has no session for it) — instead
+#    gated separately by check_shared_secret() below, opt-in via
+#    API_SHARED_SECRET. Relying on WEBUI_AUTH alone is NOT enough: WEBUI_AUTH
+#    protects the Open WebUI *browser* login, but /v1/chat/completions itself
+#    has no independent check, so anyone who can reach the API host on the
+#    network can call it directly, bypassing Open WebUI entirely (SEC1).
 PUBLIC_PREFIXES = ("/login", "/logout", "/health", "/v1")
 
 # Read-only, per-document source views (citation link targets). Employees reach
@@ -82,6 +88,24 @@ def is_valid_session(token: str | None) -> bool:
         return int(expiry_str) > time.time()
     except ValueError:
         return False
+
+
+def check_shared_secret(authorization_header: str | None) -> bool:
+    """True when a request to /v1/* may proceed.
+
+    No secret configured (``API_SHARED_SECRET`` empty, the default) means
+    today's behavior: always true, unchanged. When a secret IS configured, the
+    request must carry it as ``Authorization: Bearer <secret>`` — the header
+    shape Open WebUI already sends its configured ``OPENAI_API_KEY`` as, so
+    setting both to the same value is the entire migration (see README).
+    """
+    secret = settings.api_shared_secret
+    if not secret:
+        return True
+    if not authorization_header or not authorization_header.startswith("Bearer "):
+        return False
+    token = authorization_header.removeprefix("Bearer ").strip()
+    return hmac.compare_digest(token, secret)
 
 
 def is_public_path(path: str) -> bool:

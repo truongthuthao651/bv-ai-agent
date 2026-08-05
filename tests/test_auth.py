@@ -6,6 +6,7 @@ Ollama/Qdrant/model loads) and a test admin password injected via monkeypatch.
 
 from __future__ import annotations
 
+import app.auth as auth_module
 import app.main as main_module
 from app.config.settings import settings
 
@@ -77,3 +78,57 @@ def test_logout_clears_session(monkeypatch) -> None:
         client.post("/logout")
         resp = client.get("/", headers={"accept": "text/html"}, follow_redirects=False)
         assert resp.status_code == 303
+
+
+# ---- SEC1 (2026-08-05 audit): /v1/* shared-secret gate ----
+# /v1 bypasses the admin-session cookie entirely (Open WebUI calls it
+# server-to-server), so under shipped defaults it was reachable, unauthenticated,
+# from anywhere the API host is reachable -- including the whole LAN once an
+# operator follows README's own guidance to set API_HOST=0.0.0.0. These pin
+# check_shared_secret() and the /v1 gate in the middleware itself.
+
+
+def test_shared_secret_empty_means_unchanged_default_behavior(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "api_shared_secret", "")
+    assert auth_module.check_shared_secret(None) is True
+    assert auth_module.check_shared_secret("Bearer anything") is True
+
+
+def test_shared_secret_rejects_missing_or_wrong_header(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "api_shared_secret", "s3cr3t")
+    assert auth_module.check_shared_secret(None) is False
+    assert auth_module.check_shared_secret("Bearer wrong") is False
+    assert auth_module.check_shared_secret("s3cr3t") is False  # missing "Bearer "
+
+
+def test_shared_secret_accepts_matching_bearer_header(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "api_shared_secret", "s3cr3t")
+    assert auth_module.check_shared_secret("Bearer s3cr3t") is True
+
+
+def test_v1_route_rejects_request_without_shared_secret_when_configured(
+    monkeypatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(settings, "warmup_on_startup", False)
+    monkeypatch.setattr(settings, "admin_password", "")  # admin gate irrelevant here
+    monkeypatch.setattr(settings, "api_shared_secret", "s3cr3t")
+    with TestClient(main_module.app) as client:
+        resp = client.get("/v1/models")
+        assert resp.status_code == 401
+
+        resp2 = client.get(
+            "/v1/models", headers={"authorization": "Bearer s3cr3t"}
+        )
+        assert resp2.status_code == 200
+
+
+def test_v1_route_stays_public_when_shared_secret_unset(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(settings, "warmup_on_startup", False)
+    monkeypatch.setattr(settings, "admin_password", "")
+    monkeypatch.setattr(settings, "api_shared_secret", "")
+    with TestClient(main_module.app) as client:
+        assert client.get("/v1/models").status_code == 200

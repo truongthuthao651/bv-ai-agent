@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # (today's default: open on loopback). Not the employee-facing login —
     # that's Open WebUI's own WEBUI_AUTH.
     admin_password: str = ""
+    # Shared secret gating /v1/* (the OpenAI-compatible surface Open WebUI calls
+    # server-to-server). Empty = today's behavior, unchanged: /v1 is public,
+    # relying only on network placement (loopback by default) and Open WebUI's
+    # own WEBUI_AUTH on the employee side. When API_HOST is opened to the LAN
+    # (see API_PUBLIC_BASE_URL), set this to a random value and configure the
+    # same value as Open WebUI's OPENAI_API_KEY so only Open WebUI (and anyone
+    # else who has the secret) can call /v1/chat/completions directly — see
+    # README "Liên kết trích dẫn cho người dùng trong mạng LAN" (SEC1).
+    api_shared_secret: str = ""
     # Warm the heavy, lazily-loaded pieces at startup (bge-m3 + reranker weights,
     # the Qdrant collection, and the Ollama chat model) so the first user request
     # doesn't pay their cold-load latency — significant on CPU-only hosts. Each

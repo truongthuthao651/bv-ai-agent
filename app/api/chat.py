@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config.settings import settings
@@ -66,6 +67,27 @@ from app.retrieval.spellcheck import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["chat"])
+
+# S2 (2026-08-05 audit): retrieval (Qdrant + the reranker) had no exception
+# handling anywhere, so a lock-contention error, a dropped embedded-storage
+# connection, or an OOM during rerank surfaced as a raw English 500 — the one
+# gap in an otherwise careful Vietnamese-first error posture (compare
+# generator._CONNECTION_ERROR_MESSAGE for the equivalent Ollama-side message).
+_RETRIEVAL_ERROR_MESSAGE = (
+    "Xin lỗi, hiện không thể truy xuất tài liệu để trả lời. "
+    "Vui lòng thử lại sau."
+)
+# RuntimeError: embedded Qdrant's storage-lock contention (two processes
+# opening QDRANT_LOCAL_PATH at once) and FlagEmbedding/FlagReranker's
+# CPU-OOM failure both surface as this. MemoryError: a harder OOM.
+# UnexpectedResponse/ResponseHandlingException: Qdrant server-mode failures
+# (Docker dev stack only; embedded mode never raises these).
+_RETRIEVAL_EXCEPTIONS = (
+    RuntimeError,
+    MemoryError,
+    UnexpectedResponse,
+    ResponseHandlingException,
+)
 
 
 @router.get("/models", response_model=ModelList)
@@ -505,7 +527,11 @@ async def chat_completions(request: ChatCompletionRequest):
     # log reflect the real answer latency, not just token generation.
     started_at = time.perf_counter()
     query, history = _split_request(request)
-    plan = await run_in_threadpool(plan_response, query, history)
+    try:
+        plan = await run_in_threadpool(plan_response, query, history)
+    except _RETRIEVAL_EXCEPTIONS as exc:
+        logger.error("Retrieval failed: %s", exc)
+        return _static_response(request, _RETRIEVAL_ERROR_MESSAGE)
 
     if plan.kind == "meta":
         answer = await run_in_threadpool(generator.generate_plain, plan.query)
