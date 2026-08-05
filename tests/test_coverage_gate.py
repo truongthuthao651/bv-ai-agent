@@ -22,6 +22,7 @@ from app.generation.coverage_gate import (
     strip_leaked_instructions,
 )
 from app.models.schemas import DocType, Hit, QdrantPayload
+from app.query_timing import TimingContext
 
 _EXCLUSION = "LOẠI TRỪ TRÁCH NHIỆM BẢO HIỂM"
 _DEATH_BENEFIT = "QUYỀN LỢI TỬ VONG LÊN ĐẾN 25 TỶ ĐỒNG"
@@ -239,6 +240,12 @@ def _no_llm_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(generator, "verify_answer", lambda q, a: None)
 
 
+def _timing() -> TimingContext:
+    import time
+
+    return TimingContext(started_at=time.perf_counter(), mode="grounded")
+
+
 class TestGatedGeneration:
     """The retry loop around the model, with the Ollama call stubbed out."""
 
@@ -253,11 +260,15 @@ class TestGatedGeneration:
             return grounded
 
         monkeypatch.setattr(generator, "_chat_raw", fake)
+        timing = _timing()
         out = generator._gated_coverage_answer(
-            [], _reported_context(), "tai nạn xe tử vong"
+            [], _reported_context(), "tai nạn xe tử vong", timing=timing
         )
         assert out == grounded
         assert len(calls) == 1
+        # ADM1 (Day 2): a clean verdict (no gate/verifier correction) records
+        # "none", not left blank or defaulted to "regenerated".
+        assert timing.coverage_gate_outcome == "none"
 
     def test_regenerates_the_reported_denial_and_keeps_the_better_answer(
         self, monkeypatch: pytest.MonkeyPatch
@@ -277,10 +288,12 @@ class TestGatedGeneration:
             return next(answers)
 
         monkeypatch.setattr(generator, "_chat_raw", fake)
+        timing = _timing()
         out = generator._gated_coverage_answer(
             [{"role": "system", "content": "..."}],
             _reported_context(),
             "tai nạn xe tử vong",
+            timing=timing,
         )
         assert "[2]" in out
         assert not states_denial(out)
@@ -289,6 +302,7 @@ class TestGatedGeneration:
         assert seen[1][-2]["role"] == "assistant"
         assert "Không được claim" in seen[1][-2]["content"]
         assert seen[1][-1]["role"] == "user"
+        assert timing.coverage_gate_outcome == "regenerated"
 
     def test_a_gate_triggered_retry_is_still_sent_to_the_verifier(
         self, monkeypatch: pytest.MonkeyPatch
@@ -310,10 +324,14 @@ class TestGatedGeneration:
         monkeypatch.setattr(
             generator, "verify_answer", lambda q, a: "đã thêm tình tiết"
         )
-        out = generator._gated_coverage_answer([], _reported_context(), "tai nạn xe")
+        timing = _timing()
+        out = generator._gated_coverage_answer(
+            [], _reported_context(), "tai nạn xe", timing=timing
+        )
         # The verifier rejected the retry, so the enumeration ships instead.
         assert "Cần kiểm tra thêm" in out
         assert _DEATH_BENEFIT in out
+        assert timing.coverage_gate_outcome == "fallback"
 
     def test_falls_back_when_the_model_repeats_the_ungrounded_denial(
         self, monkeypatch: pytest.MonkeyPatch
@@ -328,9 +346,11 @@ class TestGatedGeneration:
             "_chat_raw",
             lambda messages: "Không được claim. Theo [3] LOẠI TRỪ.",
         )
+        timing = _timing()
         out = generator._gated_coverage_answer(
-            [], _reported_context(), "tai nạn xe tử vong"
+            [], _reported_context(), "tai nạn xe tử vong", timing=timing
         )
         assert not states_denial(out)
         assert _DEATH_BENEFIT in out
         assert "Cần kiểm tra thêm" in out
+        assert timing.coverage_gate_outcome == "fallback"

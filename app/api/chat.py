@@ -388,6 +388,12 @@ class ResponsePlan:
     # ...and every retrieved chunk is an exclusion clause, so no denial can be
     # grounded (app/retrieval/coverage.py).
     coverage_undetermined: bool = False
+    # Product/document labels carried into retrieval from conversation_scope
+    # (sticky product across follow-up turns) or comparison's per-product
+    # split. Empty when the turn named its own scope from scratch. Logged
+    # (query_timing.py) so an operator can tell whether a wrong answer traces
+    # to a scope-carry decision, without logging the query/answer text itself.
+    scope_labels: list[str] = field(default_factory=list)
 
 
 def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
@@ -437,6 +443,7 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
             text=REFUSAL_MESSAGE,
             hits=hits,
             fused=fused,
+            scope_labels=carried_labels,
         )
 
     # No hit survived the reranker's floor: fall back to a clearly-labeled
@@ -457,12 +464,14 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
                 standalone_query=standalone_query,
                 text=REFUSAL_MESSAGE,
                 fused=fused,
+                scope_labels=carried_labels,
             )
         return ResponsePlan(
             kind="hybrid",
             query=query,
             history=history,
             standalone_query=standalone_query,
+            scope_labels=carried_labels,
             fused=fused,
         )
 
@@ -516,6 +525,7 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
         advisory=advisory,
         coverage=coverage,
         coverage_undetermined=coverage_undetermined,
+        scope_labels=carried_labels,
     )
 
 
@@ -548,6 +558,8 @@ async def chat_completions(request: ChatCompletionRequest):
                 n_hits=len(plan.hits),
                 query_chars=len(plan.standalone_query),
                 stream=request.stream,
+                hits=plan.hits,
+                scope_labels=plan.scope_labels,
             ),
         )
 
@@ -558,6 +570,7 @@ async def chat_completions(request: ChatCompletionRequest):
             n_hits=0,
             query_chars=len(plan.standalone_query),
             stream=request.stream,
+            scope_labels=plan.scope_labels,
         )
         if request.stream:
             return StreamingResponse(
@@ -579,6 +592,10 @@ async def chat_completions(request: ChatCompletionRequest):
             n_hits=len(plan.hits),
             query_chars=len(plan.standalone_query),
             stream=request.stream,
+            hits=plan.hits,
+            advisory=plan.advisory,
+            coverage=plan.coverage,
+            scope_labels=plan.scope_labels,
         )
         if request.stream:
             return StreamingResponse(

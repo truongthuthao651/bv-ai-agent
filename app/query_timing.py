@@ -25,10 +25,11 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from app.config.settings import settings
+from app.models.schemas import Hit
 
 logger = logging.getLogger("bv-ai-agent.query_timing")
 
@@ -53,6 +54,21 @@ class TimingContext:
     n_hits: int = 0
     query_chars: int = 0
     stream: bool = True
+    # ADM1 (2026-08-05 audit): enough to reconstruct what a bad answer saw,
+    # without ever logging the query/answer text itself. ``hits`` holds only
+    # doc_id/section_path/score (never chunk text) per Hit, taken as-is from
+    # ResponsePlan.hits — see log_query_timing for the compact record shape.
+    hits: list[Hit] = field(default_factory=list)
+    advisory: bool = False
+    coverage: bool = False
+    scope_labels: list[str] = field(default_factory=list)
+    # Set by generator.py mid-generation (this object is threaded by
+    # reference into generation) when a coverage turn goes through
+    # coverage_gate.py's correction path: "none" (verdict was fine as
+    # generated), "regenerated" (a corrected retry was accepted), or
+    # "fallback" (the retry also failed and the deterministic enumeration
+    # was used instead). None for non-coverage turns.
+    coverage_gate_outcome: str | None = None
 
     def elapsed_s(self) -> float:
         """Seconds since the request arrived (never negative)."""
@@ -94,6 +110,18 @@ def log_query_timing(
         "n_hits": ctx.n_hits,
         "query_chars": ctx.query_chars,
         "answer_chars": answer_chars,
+        "advisory": ctx.advisory,
+        "coverage": ctx.coverage,
+        "coverage_gate": ctx.coverage_gate_outcome,
+        "scope_labels": ctx.scope_labels,
+        "hits": [
+            {
+                "doc_id": hit.payload.doc_id,
+                "section_path": hit.payload.section_path,
+                "score": round(hit.score, 4),
+            }
+            for hit in ctx.hits
+        ],
     }
     logger.info("query timing: %s", record)
     try:

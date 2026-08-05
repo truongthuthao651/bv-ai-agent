@@ -555,7 +555,7 @@ async def _stream_gated_coverage(
 
     failed = False
     try:
-        answer = await _agated_coverage_answer(messages, hits, question)
+        answer = await _agated_coverage_answer(messages, hits, question, timing=timing)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
         answer, failed = _CONNECTION_ERROR_MESSAGE, True
@@ -674,7 +674,9 @@ def _resolve_verdict(answer: str, hits: list[Hit]) -> VerdictProblem | None:
     return problem
 
 
-def _settle(retry: str, hits: list[Hit], question: str) -> str:
+def _settle(
+    retry: str, hits: list[Hit], question: str, *, timing: TimingContext | None = None
+) -> str:
     """Accept the regenerated answer, or fall back to the enumeration.
 
     BOTH checks run here. The first version returned straight out of the
@@ -686,6 +688,8 @@ def _settle(retry: str, hits: list[Hit], question: str) -> str:
 
     The regeneration budget stays at one: a retry that fails either check is
     replaced by the deterministic enumeration rather than generated again.
+    ``timing`` (ADM1) is written in place, not returned: it's the same object
+    the caller already threads into log_query_timing.
     """
     retry = strip_leaked_instructions(retry)
     if check_verdict(retry, hits) is not None:
@@ -693,17 +697,25 @@ def _settle(retry: str, hits: list[Hit], question: str) -> str:
             "coverage gate: regeneration still ungrounded; "
             "using deterministic enumeration"
         )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
         return fallback_answer(hits)
     if verify_answer(question, retry) is not None:
         logger.warning(
             "coverage gate: regeneration failed verification; "
             "using deterministic enumeration"
         )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
         return fallback_answer(hits)
+    if timing is not None:
+        timing.coverage_gate_outcome = "regenerated"
     return retry
 
 
-async def _asettle(retry: str, hits: list[Hit], question: str) -> str:
+async def _asettle(
+    retry: str, hits: list[Hit], question: str, *, timing: TimingContext | None = None
+) -> str:
     """Async twin of ``_settle``."""
     retry = strip_leaked_instructions(retry)
     if check_verdict(retry, hits) is not None:
@@ -711,25 +723,36 @@ async def _asettle(retry: str, hits: list[Hit], question: str) -> str:
             "coverage gate: regeneration still ungrounded; "
             "using deterministic enumeration"
         )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
         return fallback_answer(hits)
     if await averify_answer(question, retry) is not None:
         logger.warning(
             "coverage gate: regeneration failed verification; "
             "using deterministic enumeration"
         )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
         return fallback_answer(hits)
+    if timing is not None:
+        timing.coverage_gate_outcome = "regenerated"
     return retry
 
 
 def _gated_coverage_answer(
-    messages: list[dict[str, str]], hits: list[Hit], question: str
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    question: str,
+    *,
+    timing: TimingContext | None = None,
 ) -> str:
     """Generate a coverage answer whose verdict engaged with the payout side.
 
     Two checks, at most ONE regeneration between them: the deterministic gate
     (did the verdict cite a benefit clause at all) and, when that passes, the
     semantic verifier (did it invent the customer's facts, or conclude against
-    the clause it quoted — see ``generation/verify.py``).
+    the clause it quoted — see ``generation/verify.py``). ``timing`` records
+    which of none/regenerated/fallback happened (ADM1) — see TimingContext.
     """
     # Strip BEFORE checking: a leaked "…kết thúc bằng những gì còn cần kiểm tra
     # để kết luận" heading is the last "kết luận" in the text, so it captures
@@ -738,29 +761,37 @@ def _gated_coverage_answer(
     problem = _resolve_verdict(answer, hits)
     if problem is not None:
         retry = _chat_raw(correction_messages(messages, answer, problem))
-        return _settle(retry, hits, question)
+        return _settle(retry, hits, question, timing=timing)
     reason = verify_answer(question, answer)
     if reason is not None:
         retry = _chat_raw(verification_messages(messages, answer, reason))
-        return _settle(retry, hits, question)
+        return _settle(retry, hits, question, timing=timing)
+    if timing is not None:
+        timing.coverage_gate_outcome = "none"
     # Strip on the clean path too: a leak from an earlier turn comes back in
     # the history and gets copied forward even when no gate fires.
     return strip_leaked_instructions(answer)
 
 
 async def _agated_coverage_answer(
-    messages: list[dict[str, str]], hits: list[Hit], question: str
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    question: str,
+    *,
+    timing: TimingContext | None = None,
 ) -> str:
     """Async twin of ``_gated_coverage_answer``."""
     answer = strip_leaked_instructions(await _achat_raw(messages))
     problem = _resolve_verdict(answer, hits)
     if problem is not None:
         retry = await _achat_raw(correction_messages(messages, answer, problem))
-        return await _asettle(retry, hits, question)
+        return await _asettle(retry, hits, question, timing=timing)
     reason = await averify_answer(question, answer)
     if reason is not None:
         retry = await _achat_raw(verification_messages(messages, answer, reason))
-        return await _asettle(retry, hits, question)
+        return await _asettle(retry, hits, question, timing=timing)
+    if timing is not None:
+        timing.coverage_gate_outcome = "none"
     return strip_leaked_instructions(answer)
 
 
@@ -810,7 +841,7 @@ def generate_answer(
     suffix_fn = _grounded_suffix_fn(hits, advisory)
     if coverage and settings.coverage_verdict_gate_enabled:
         try:
-            answer = _gated_coverage_answer(messages, hits, query)
+            answer = _gated_coverage_answer(messages, hits, query, timing=timing)
         except (httpx.HTTPError, ValueError) as exc:
             logger.error("Generation failed: %s", exc)
             return _with_timing(_CONNECTION_ERROR_MESSAGE, timing)
