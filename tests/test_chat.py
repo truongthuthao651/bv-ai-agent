@@ -157,7 +157,7 @@ def _post(monkeypatch, query: str, history: list[ChatMessage]) -> bool:
     )
     seen: dict[str, str] = {}
 
-    def fake_generate_chat(messages, suffix_fn):
+    def fake_generate_chat(messages, suffix_fn, **kwargs):
         seen["system"] = messages[0]["content"]
         return "Câu trả lời."
 
@@ -208,7 +208,7 @@ def test_company_self_reference_is_not_refused_by_the_product_guard(
         chat_module, "_retrieve", lambda q, h: (q, [_stub_hit()], [], [], False)
     )
     monkeypatch.setattr(
-        generator, "_generate_chat", lambda messages, suffix_fn: "Câu trả lời."
+        generator, "_generate_chat", lambda messages, suffix_fn, **kwargs: "Câu trả lời."
     )
     body = {
         "messages": [

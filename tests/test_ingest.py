@@ -348,3 +348,105 @@ def test_patch_invalid_department_is_400(monkeypatch) -> None:
     monkeypatch.setattr(indexer, "get_document_meta", lambda doc_id: _meta())
     resp = _client().patch("/documents/abc", json={"department": "KHONG-CO"})
     assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# SEC4 (2026-08-05 audit): upload size cap + no orphaned files on failure
+# --------------------------------------------------------------------------- #
+
+
+def test_oversized_upload_is_rejected_with_413_and_leaves_no_file(
+    tmp_path, monkeypatch
+) -> None:
+    from app.api import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(ingest_module.settings, "max_upload_mb", 1)
+
+    oversized = b"x" * (2 * 1024 * 1024)  # 2 MiB > the 1 MiB cap
+    resp = _client().post(
+        "/ingest",
+        files={"file": ("large.md", oversized, "text/markdown")},
+    )
+    assert resp.status_code == 413
+    assert "1 MB" in resp.json()["detail"]
+    assert list((tmp_path / "uploads").iterdir()) == []  # nothing orphaned
+
+
+def test_upload_within_cap_is_written_and_reaches_the_pipeline(
+    tmp_path, monkeypatch
+) -> None:
+    from app.api import ingest as ingest_module
+    from app.models.schemas import DocType, IngestResponse
+
+    monkeypatch.setattr(ingest_module.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(ingest_module.settings, "max_upload_mb", 1)
+
+    seen_paths: list[str] = []
+
+    def fake_run_pipeline(path, doc_type, doc_title, department, source_url):
+        seen_paths.append(path.read_bytes().decode())
+        return IngestResponse(
+            doc_id="d1", doc_title="T", doc_type=DocType.OTHER, n_chunks=1
+        )
+
+    monkeypatch.setattr(ingest_module, "_run_pipeline", fake_run_pipeline)
+
+    resp = _client().post(
+        "/ingest",
+        files={"file": ("small.md", b"noi dung nho", "text/markdown")},
+    )
+    assert resp.status_code == 200
+    assert seen_paths == ["noi dung nho"]
+    # A successful ingest keeps the uploaded file (needed for citation links).
+    assert (tmp_path / "uploads" / "small.md").exists()
+
+
+def test_parse_failure_cleans_up_the_uploaded_file(tmp_path, monkeypatch) -> None:
+    # SEC4: previously the file stayed on disk forever, unindexed, on every
+    # parse-format failure (NotImplementedError/ValueError from _run_pipeline).
+    from app.api import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module.settings, "data_dir", tmp_path)
+
+    def boom(path, doc_type, doc_title, department, source_url):
+        raise ValueError("định dạng không hỗ trợ")
+
+    monkeypatch.setattr(ingest_module, "_run_pipeline", boom)
+
+    resp = _client().post(
+        "/ingest",
+        files={"file": ("bad.xyz", b"noi dung", "application/octet-stream")},
+    )
+    assert resp.status_code == 415
+    assert list((tmp_path / "uploads").iterdir()) == []
+
+
+def test_unexpected_pipeline_error_also_cleans_up_the_uploaded_file(
+    tmp_path, monkeypatch
+) -> None:
+    # SEC4: cleanup must not be scoped to only the two expected exception
+    # types -- an OOM/corrupt-file surprise must not orphan the file either.
+    from app.api import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module.settings, "data_dir", tmp_path)
+
+    def boom(path, doc_type, doc_title, department, source_url):
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(ingest_module, "_run_pipeline", boom)
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    # raise_server_exceptions=False: an unhandled RuntimeError is exactly what
+    # this test is exercising -- assert the resulting 500, not pytest's own
+    # propagation of it, and that cleanup ran before FastAPI's error handling.
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/ingest",
+        files={"file": ("bad.md", b"noi dung", "text/markdown")},
+    )
+    assert resp.status_code == 500
+    assert list((tmp_path / "uploads").iterdir()) == []

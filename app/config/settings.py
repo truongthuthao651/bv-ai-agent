@@ -288,6 +288,13 @@ class Settings(BaseSettings):
     # that env var and hard-fails at convert time if the dir doesn't exist.
     docling_models_path: Path = Path("./models/docling")
 
+    # ---- Upload limits (SEC4, 2026-08-05 audit) ----
+    # POST /ingest rejects a file once its streamed byte count exceeds this,
+    # before the whole thing is buffered in memory (app/api/ingest.py). 50 MB
+    # comfortably covers a full-length scanned policy PDF; raise per-deployment
+    # if real documents run larger.
+    max_upload_mb: int = 50
+
     # ---- Paths ----
     # Relative to the working directory: the repo root natively, /app in Docker.
     data_dir: Path = Path("./data")

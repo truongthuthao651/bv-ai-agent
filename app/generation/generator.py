@@ -19,6 +19,11 @@ from collections.abc import AsyncIterator, Callable
 import httpx
 
 from app.config.settings import settings
+from app.generation.citations import (
+    DANGLING_CITATION_NOTICE,
+    has_dangling_citation,
+    strip_dangling_citations,
+)
 from app.generation.coverage_gate import (
     VerdictProblem,
     check_verdict,
@@ -484,8 +489,16 @@ def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]
     """Suffixes appended after a grounded answer, in reading order.
 
     Calculation disclaimer, then the advisory label, then the general-knowledge
-    label, then the sources block — the sources stay last so the numbered
-    citations remain the final thing on screen.
+    label, then a dangling-citation notice (ADM2) if needed, then the sources
+    block — the sources stay last so the numbered citations remain the final
+    thing on screen.
+
+    ADM2 (2026-08-05 audit): this is the STREAMING path, where ``body`` has
+    already been sent to the client token-by-token by the time ``suffix_fn``
+    runs — an already-displayed ``[n]`` can't be un-sent, so a dangling one is
+    flagged here rather than stripped. The non-streaming path
+    (``_generate_chat``) strips instead, since nothing has reached the client
+    yet there.
     """
 
     def suffix_fn(body: str) -> str:
@@ -493,6 +506,9 @@ def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]
         if advisory:
             out += _advisory_disclaimer_suffix(body)
         out += _general_knowledge_suffix(body)
+        if hits and has_dangling_citation(body, hits):
+            logger.warning("dangling citation in streamed answer; flagging")
+            out += f"\n\n{DANGLING_CITATION_NOTICE}"
         return out + _sources_suffix(body, hits)
 
     return suffix_fn
@@ -689,7 +705,9 @@ def _settle(
     The regeneration budget stays at one: a retry that fails either check is
     replaced by the deterministic enumeration rather than generated again.
     ``timing`` (ADM1) is written in place, not returned: it's the same object
-    the caller already threads into log_query_timing.
+    the caller already threads into log_query_timing. Every return path is
+    stripped of dangling citations (ADM2) — nothing here has reached the
+    client yet, coverage answers are always emitted as one buffered block.
     """
     retry = strip_leaked_instructions(retry)
     if check_verdict(retry, hits) is not None:
@@ -699,7 +717,7 @@ def _settle(
         )
         if timing is not None:
             timing.coverage_gate_outcome = "fallback"
-        return fallback_answer(hits)
+        return strip_dangling_citations(fallback_answer(hits), hits)
     if verify_answer(question, retry) is not None:
         logger.warning(
             "coverage gate: regeneration failed verification; "
@@ -707,10 +725,10 @@ def _settle(
         )
         if timing is not None:
             timing.coverage_gate_outcome = "fallback"
-        return fallback_answer(hits)
+        return strip_dangling_citations(fallback_answer(hits), hits)
     if timing is not None:
         timing.coverage_gate_outcome = "regenerated"
-    return retry
+    return strip_dangling_citations(retry, hits)
 
 
 async def _asettle(
@@ -725,7 +743,7 @@ async def _asettle(
         )
         if timing is not None:
             timing.coverage_gate_outcome = "fallback"
-        return fallback_answer(hits)
+        return strip_dangling_citations(fallback_answer(hits), hits)
     if await averify_answer(question, retry) is not None:
         logger.warning(
             "coverage gate: regeneration failed verification; "
@@ -733,10 +751,10 @@ async def _asettle(
         )
         if timing is not None:
             timing.coverage_gate_outcome = "fallback"
-        return fallback_answer(hits)
+        return strip_dangling_citations(fallback_answer(hits), hits)
     if timing is not None:
         timing.coverage_gate_outcome = "regenerated"
-    return retry
+    return strip_dangling_citations(retry, hits)
 
 
 def _gated_coverage_answer(
@@ -770,7 +788,7 @@ def _gated_coverage_answer(
         timing.coverage_gate_outcome = "none"
     # Strip on the clean path too: a leak from an earlier turn comes back in
     # the history and gets copied forward even when no gate fires.
-    return strip_leaked_instructions(answer)
+    return strip_dangling_citations(strip_leaked_instructions(answer), hits)
 
 
 async def _agated_coverage_answer(
@@ -792,15 +810,26 @@ async def _agated_coverage_answer(
         return await _asettle(retry, hits, question, timing=timing)
     if timing is not None:
         timing.coverage_gate_outcome = "none"
-    return strip_leaked_instructions(answer)
+    return strip_dangling_citations(strip_leaked_instructions(answer), hits)
 
 
 def _generate_chat(
-    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
+    messages: list[dict[str, str]],
+    suffix_fn: Callable[[str], str],
+    *,
+    hits: list[Hit] | None = None,
 ) -> str:
-    """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``)."""
+    """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``).
+
+    ADM2: unlike the streaming path, nothing has reached the client yet here,
+    so a dangling ``[n]`` citation is silently stripped rather than flagged —
+    ``hits`` is optional (hybrid/other non-grounded callers pass none, so no
+    stripping runs; there's no citation concept to check there).
+    """
     try:
         answer = _chat_raw(messages)
+        if hits:
+            answer = strip_dangling_citations(answer, hits)
         return answer + suffix_fn(answer)
     except (httpx.HTTPError, ValueError) as exc:
         logger.error("Generation failed: %s", exc)
@@ -846,7 +875,7 @@ def generate_answer(
             logger.error("Generation failed: %s", exc)
             return _with_timing(_CONNECTION_ERROR_MESSAGE, timing)
         return _with_timing(answer + suffix_fn(answer), timing)
-    return _with_timing(_generate_chat(messages, suffix_fn), timing)
+    return _with_timing(_generate_chat(messages, suffix_fn, hits=hits), timing)
 
 
 def generate_hybrid_answer(

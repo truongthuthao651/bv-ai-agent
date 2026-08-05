@@ -599,3 +599,90 @@ def test_think_stripper_unclosed_think_is_dropped() -> None:
     # If generation ends mid-reasoning, emit nothing rather than raw thoughts.
     deltas = ["<think>đang nghĩ dở"]
     assert _feed_all(ThinkStripper(), deltas) == ""
+
+
+# --------------------------------------------------------------------------- #
+# ADM2 (2026-08-05 audit): dangling citations, runtime-enforced not just
+# eval-measured (app/generation/citations.py)
+# --------------------------------------------------------------------------- #
+
+
+def test_strip_dangling_citations_removes_unresolvable_marker() -> None:
+    from app.generation.citations import strip_dangling_citations
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]  # only [1] resolves
+    answer = "Theo [1] và [7], sự kiện này được chi trả."
+    assert strip_dangling_citations(answer, hits) == "Theo [1] và , sự kiện này được chi trả."
+
+
+def test_strip_dangling_citations_leaves_valid_markers_untouched() -> None:
+    from app.generation.citations import strip_dangling_citations
+
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "A"),
+        _hit("Hướng dẫn dự phòng", "Điều 2", "B"),
+    ]
+    answer = "Theo [1], quyền lợi tử vong được chi trả. Điều 6 loại trừ nêu tại [2]."
+    assert strip_dangling_citations(answer, hits) == answer
+
+
+def test_has_dangling_citation_true_only_when_unresolvable() -> None:
+    from app.generation.citations import has_dangling_citation
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    assert has_dangling_citation("Theo [1] và [9].", hits) is True
+    assert has_dangling_citation("Theo [1].", hits) is False
+    assert has_dangling_citation("Không có trích dẫn.", hits) is False
+
+
+def test_grounded_suffix_flags_dangling_citation_in_streamed_body() -> None:
+    # The streaming path can't un-send an already-displayed [n], so it flags
+    # instead of stripping (generator._grounded_suffix_fn).
+    from app.generation.citations import DANGLING_CITATION_NOTICE
+    from app.generation.generator import _grounded_suffix_fn
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    suffix_fn = _grounded_suffix_fn(hits, advisory=False)
+    suffix = suffix_fn("Theo [1] và [9], sự kiện này được chi trả.")
+    assert DANGLING_CITATION_NOTICE in suffix
+    assert "**Nguồn tham khảo:**" in suffix  # sources block still appended after
+
+
+def test_grounded_suffix_no_notice_when_all_citations_resolve() -> None:
+    from app.generation.citations import DANGLING_CITATION_NOTICE
+    from app.generation.generator import _grounded_suffix_fn
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    suffix_fn = _grounded_suffix_fn(hits, advisory=False)
+    suffix = suffix_fn("Theo [1], sự kiện này được chi trả.")
+    assert DANGLING_CITATION_NOTICE not in suffix
+
+
+def test_generate_chat_strips_dangling_citation_before_client_sees_it(
+    monkeypatch,
+) -> None:
+    # Non-streaming path: nothing has reached the client yet, so silently
+    # strip rather than flag (generator._generate_chat's hits= param).
+    from app.generation import generator
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    monkeypatch.setattr(
+        generator,
+        "_chat_raw",
+        lambda messages: "Theo [1] và [9], sự kiện này được chi trả.",
+    )
+    out = generator._generate_chat(
+        [], generator._grounded_suffix_fn(hits, advisory=False), hits=hits
+    )
+    assert "[9]" not in out.split("**Nguồn tham khảo:**")[0]
+    assert "[1]" in out
+
+
+def test_generate_chat_without_hits_does_not_strip(monkeypatch) -> None:
+    # Hybrid/other non-grounded callers pass no hits: no citation concept to
+    # check, so bracketed text (however unlikely) is left alone.
+    from app.generation import generator
+
+    monkeypatch.setattr(generator, "_chat_raw", lambda messages: "Xem thêm [9].")
+    out = generator._generate_chat([], lambda body: "")
+    assert out == "Xem thêm [9]."
