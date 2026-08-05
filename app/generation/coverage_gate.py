@@ -33,6 +33,7 @@ from typing import Literal
 from app.generation.prompts import citation_numbers
 from app.models.schemas import Hit
 from app.retrieval.coverage import grants_a_benefit
+from app.text_utils import fold_text as _fold
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 
@@ -81,12 +82,6 @@ _CONCLUSION_HEADING_RE = re.compile(
     r"^[\s*_#>-]*(?:kết luận|tóm lại)\b", re.IGNORECASE | re.MULTILINE
 )
 _LEDE_LINES = 2
-
-
-def _fold(text: str) -> str:
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def cited_numbers(answer: str) -> set[int]:

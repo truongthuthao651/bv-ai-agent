@@ -12,9 +12,9 @@ Pure and offline — unit-tested without Qdrant or an LLM.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from app.models.schemas import Hit
+from app.text_utils import fold_text as _fold
 
 # Benefit-payout intent: event + asking for amount/%/claim (diacritic-folded).
 _PAYOUT_MARKERS: tuple[str, ...] = (
@@ -46,12 +46,6 @@ _FEE_INTEREST_MARKERS: tuple[str, ...] = (
     "phi rut tien",
     "phi dinh ky",
 )
-
-
-def _fold(text: str) -> str:
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def is_benefit_payout_query(query: str) -> bool:

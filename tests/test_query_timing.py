@@ -104,7 +104,9 @@ def _stub_hit(doc_id: str = "d1", section_path: str = "Điều 5", score: float 
     )
 
 
-def test_log_records_hits_and_plan_flags_without_chunk_text(tmp_path, monkeypatch) -> None:
+def test_log_records_hits_and_plan_flags_without_chunk_text(
+    tmp_path, monkeypatch
+) -> None:
     # ADM1 (2026-08-05 audit / Day 2): enough to reconstruct what a bad answer
     # saw (doc_id, section_path, score, and the guard flags that decided the
     # answer path) -- but the confidentiality bar from the original metadata-

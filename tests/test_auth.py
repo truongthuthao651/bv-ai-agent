@@ -118,9 +118,7 @@ def test_v1_route_rejects_request_without_shared_secret_when_configured(
         resp = client.get("/v1/models")
         assert resp.status_code == 401
 
-        resp2 = client.get(
-            "/v1/models", headers={"authorization": "Bearer s3cr3t"}
-        )
+        resp2 = client.get("/v1/models", headers={"authorization": "Bearer s3cr3t"})
         assert resp2.status_code == 200
 
 

@@ -163,9 +163,7 @@ async def _write_upload_capped(file: UploadFile, dest: Path) -> None:
         dest.unlink(missing_ok=True)
         raise HTTPException(
             status_code=413,
-            detail=(
-                f"Tệp vượt quá giới hạn {settings.max_upload_mb} MB cho phép."
-            ),
+            detail=(f"Tệp vượt quá giới hạn {settings.max_upload_mb} MB cho phép."),
         )
 
 

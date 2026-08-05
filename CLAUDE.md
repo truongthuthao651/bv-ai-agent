@@ -279,6 +279,7 @@ pytest tests/ -x -q                                         # unit tests (no ser
 python eval/run_ragas.py                                    # RAG quality metrics (native: stop the API first — embedded Qdrant is single-process)
 python eval/run_ragas.py --strict                            # same, but exit non-zero on a gate failure (CI / pre-merge)
 ruff check app/ && ruff format app/                         # lint + format
+bash scripts/check.sh                                        # local CI-equivalent: ruff check + format --check + pytest
 docker compose up -d                                        # optional Docker dev stack (CPU)
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GPU
 ```

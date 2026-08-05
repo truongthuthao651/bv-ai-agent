@@ -612,7 +612,10 @@ def test_strip_dangling_citations_removes_unresolvable_marker() -> None:
 
     hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]  # only [1] resolves
     answer = "Theo [1] và [7], sự kiện này được chi trả."
-    assert strip_dangling_citations(answer, hits) == "Theo [1] và , sự kiện này được chi trả."
+    assert (
+        strip_dangling_citations(answer, hits)
+        == "Theo [1] và , sự kiện này được chi trả."
+    )
 
 
 def test_strip_dangling_citations_leaves_valid_markers_untouched() -> None:

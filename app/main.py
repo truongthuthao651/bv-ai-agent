@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app import auth
-from app.api import chat, health, ingest, login
+from app.api import chat, health, ingest, login, metrics
 from app.config.settings import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -156,6 +156,7 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(ingest.router)
 app.include_router(login.router)
+app.include_router(metrics.router)
 
 # Mounted last so it only catches paths not matched by an API route above
 # (e.g. "/", "/index.html") and doesn't shadow /health, /ingest, etc.

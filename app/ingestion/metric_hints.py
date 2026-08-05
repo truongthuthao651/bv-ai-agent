@@ -10,7 +10,8 @@ generation prompt can refuse remapping when the wrong type is all that remains.
 from __future__ import annotations
 
 import re
-import unicodedata
+
+from app.text_utils import fold_text as _fold
 
 # Markdown table row (at least one pipe after stripping).
 _TABLE_LINE_RE = re.compile(r"^\s*\|", re.MULTILINE)
@@ -45,12 +46,6 @@ _HINTS: tuple[tuple[str, str], ...] = (
     ("so tien bao hiem", "bảng / mục số tiền bảo hiểm / quyền lợi"),
     ("quyen loi tu vong", "bảng / mục quyền lợi tử vong"),
 )
-
-
-def _fold(text: str) -> str:
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def has_markdown_table(text: str) -> bool:

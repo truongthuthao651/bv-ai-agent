@@ -74,8 +74,7 @@ router = APIRouter(prefix="/v1", tags=["chat"])
 # gap in an otherwise careful Vietnamese-first error posture (compare
 # generator._CONNECTION_ERROR_MESSAGE for the equivalent Ollama-side message).
 _RETRIEVAL_ERROR_MESSAGE = (
-    "Xin lỗi, hiện không thể truy xuất tài liệu để trả lời. "
-    "Vui lòng thử lại sau."
+    "Xin lỗi, hiện không thể truy xuất tài liệu để trả lời. Vui lòng thử lại sau."
 )
 # RuntimeError: embedded Qdrant's storage-lock contention (two processes
 # opening QDRANT_LOCAL_PATH at once) and FlagEmbedding/FlagReranker's

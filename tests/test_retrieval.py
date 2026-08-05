@@ -701,7 +701,9 @@ def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
     ]
     q = "So sánh sản phẩm An Vui Toàn Diện và An Bình Trọn Đời cho khách hàng"
     mentioned = mentioned_doc_titles(q, titles)
-    assert 'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
+    )
 
 
 def test_product_guard_allows_partial_comparison_hit() -> None:

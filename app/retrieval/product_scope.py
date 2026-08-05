@@ -33,7 +33,8 @@ Pure and offline — unit-tested without Qdrant or an LLM.
 from __future__ import annotations
 
 import re
-import unicodedata
+
+from app.text_utils import fold_text as _fold
 
 # Product cue phrases (diacritic-folded); the product name is whatever noun
 # phrase follows one of these in the query.
@@ -179,13 +180,6 @@ def _strip_company_self_reference(tokens: list[str]) -> list[str]:
             out.append(tokens[i])
             i += 1
     return out
-
-
-def _fold(text: str) -> str:
-    """Lowercase + strip Vietnamese diacritics (so no-diacritics typing matches)."""
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def _fold_tokens(text: str) -> list[str]:

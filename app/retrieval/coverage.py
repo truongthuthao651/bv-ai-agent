@@ -25,6 +25,7 @@ import unicodedata
 from collections.abc import Callable
 
 from app.models.schemas import ChatMessage, Hit
+from app.text_utils import fold_text as _fold
 
 # How far back a coverage question keeps colouring its follow-ups.
 _HISTORY_TURNS = 6
@@ -113,12 +114,6 @@ _NON_PAYOUT_HEADING_MARKERS: tuple[str, ...] = (
     "loai tru",
     "thoi gian cho",
 )
-
-
-def _fold(text: str) -> str:
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
 
 
 def is_coverage_question(query: str) -> bool:
