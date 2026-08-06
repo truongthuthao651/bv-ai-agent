@@ -99,26 +99,31 @@ def _scope_from_citations(history: list[ChatMessage]) -> str | None:
 
 
 def _scope_from_user_turns(history: list[ChatMessage]) -> str | None:
-    """Best-effort product phrase from recent user messages (pre-citation turns)."""
+    """Best-effort product phrase from recent user messages (pre-citation turns).
+
+    NEW1/fr06 (2026-08-05 audit, Day 5 triage): reuses ``named_product_labels``
+    (informal indexed-title matching, AGENT1's fix, plus its own cue-phrase
+    fallback) instead of the narrower cue-phrase-only ``_product_span``. A
+    turn like "tôi tham gia An Vui Toàn Diện và bị tai nạn..." names no
+    ``bảo hiểm``/``sản phẩm`` cue, so the old cue-phrase-only extraction found
+    nothing — ``active_scope`` returned None, and a later pushback follow-up
+    ("nhưng tôi đi đường bị người khác đâm mà") fell through to the
+    general-knowledge hybrid fallback instead of staying grounded in the
+    already-cited policy (an ungrounded answer, even one that reaches the
+    right verdict, is exactly the failure class CLAUDE.md's coverage_gate
+    exists to prevent). ``named_product_labels`` still prefers a cue-phrase
+    match when one exists, so already-working cases are unaffected.
+    """
+    from app.retrieval.product_scope import _load_indexed_titles, named_product_labels
+
+    known_titles = _load_indexed_titles()
     # Walk newest-first so the latest named product wins.
     for msg in reversed(history[-_MAX_HISTORY_TURNS:]):
         if msg.role != "user":
             continue
-        tokens = _fold_tokens(msg.content)
-        span = _product_span(tokens)
-        if not span:
-            continue
-        # Recover the original surface form: locate the span in the folded
-        # token list and slice the matching words from the raw message.
-        folded_msg = _fold_tokens(msg.content)
-        # Find where the span starts in the full token list.
-        for i in range(len(folded_msg) - len(span) + 1):
-            if folded_msg[i : i + len(span)] == span:
-                raw_words = re.findall(r"\w+", msg.content, flags=re.UNICODE)
-                if len(raw_words) == len(folded_msg):
-                    return " ".join(raw_words[i : i + len(span)])
-                return " ".join(span)
-        return " ".join(span)
+        labels = named_product_labels(msg.content, titles=known_titles)
+        if labels:
+            return labels[0]
     return None
 
 

@@ -107,8 +107,23 @@ def _payload(question: str, answer: str) -> dict[str, object]:
         "prompt": _VERIFY_PROMPT.format(question=question, answer=answer),
         "stream": False,
         "format": "json",
+        "keep_alive": settings.ollama_keep_alive,
         # Deterministic and short: this is a classification, not prose.
-        "options": {"temperature": 0.0, "num_predict": 64},
+        # num_ctx MUST match generator._ollama_payload's: a coverage turn
+        # calls generate (num_ctx=llm_context_window) then this verifier
+        # immediately after, on the SAME loaded llama.cpp instance. A
+        # mismatched context size forces Ollama to fully reload the model
+        # for the size change, not a no-op — found live, 2026-08-06, via
+        # ~/.ollama/logs/server.log showing n_ctx_slot flip-flopping between
+        # requests and correlating with intermittent 500s. Every coverage
+        # turn already pays this twice (verify, then possibly re-verify
+        # after a correction) even outside eval, so this was silently
+        # inflating coverage-turn latency in production too.
+        "options": {
+            "temperature": 0.0,
+            "num_predict": 64,
+            "num_ctx": settings.llm_context_window,
+        },
     }
 
 

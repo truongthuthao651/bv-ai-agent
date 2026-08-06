@@ -103,7 +103,20 @@ def _ollama_rewrite(prompt: str) -> str:
                 "stream": False,
                 "think": False,  # qwen3: skip chain-of-thought for this fast utility call
                 "keep_alive": settings.ollama_keep_alive,
-                "options": {"temperature": 0.0},
+                # num_ctx MUST match generator._ollama_payload's: this call
+                # runs on EVERY turn, immediately before generation on the
+                # same loaded llama.cpp instance. A mismatched context size
+                # forces a full model reload for the size change, not a
+                # no-op — found live, 2026-08-06, via
+                # ~/.ollama/logs/server.log showing n_ctx_slot flip-flopping
+                # between requests and correlating with intermittent Ollama
+                # 500s. Since this runs before generation on every request,
+                # it was the single biggest unnecessary latency cost in the
+                # whole pipeline, not just an eval-time issue.
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": settings.llm_context_window,
+                },
             },
             timeout=settings.ollama_timeout,
         )

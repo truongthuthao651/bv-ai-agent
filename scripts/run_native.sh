@@ -27,6 +27,32 @@ OPENAI_API_KEY="$(env_get OPENAI_API_KEY)";   OPENAI_API_KEY="${OPENAI_API_KEY:-
 WEBUI_AUTH="$(env_get WEBUI_AUTH)";           WEBUI_AUTH="${WEBUI_AUTH:-false}"
 WEBUI_NAME="$(env_get WEBUI_NAME)";           WEBUI_NAME="${WEBUI_NAME:-Trợ lý AI Bảo Việt Life}"
 DEFAULT_MODELS="$(env_get DEFAULT_MODELS)";   DEFAULT_MODELS="${DEFAULT_MODELS:-bao-viet-life}"
+API_PUBLIC_BASE_URL="$(env_get API_PUBLIC_BASE_URL)"
+API_PUBLIC_BASE_URL="${API_PUBLIC_BASE_URL:-http://localhost:${API_PORT}}"
+
+# FE1 (2026-08-05 audit) partial fix: citation links silently only open on
+# THIS machine for any employee elsewhere on the LAN when API_HOST is opened
+# up but API_PUBLIC_BASE_URL is left at its loopback default. Detect the
+# LAN IP and print an actionable suggestion -- never auto-edit .env, since
+# opening the LAN also needs API_SHARED_SECRET set (see SEC1, README).
+if [[ "$API_HOST" == "0.0.0.0" \
+   && ( "$API_PUBLIC_BASE_URL" == http://localhost* || "$API_PUBLIC_BASE_URL" == http://127.0.0.1* ) ]]; then
+  lan_ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+  fi
+  if [[ -z "$lan_ip" ]] && command -v hostname >/dev/null 2>&1; then
+    lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -n "$lan_ip" ]]; then
+    echo "==> NOTE: API_HOST=0.0.0.0 (LAN-reachable) but API_PUBLIC_BASE_URL is still" >&2
+    echo "    loopback (${API_PUBLIC_BASE_URL}) -- citation links in answers will only" >&2
+    echo "    open on THIS machine for employees elsewhere on the LAN. Suggested fix:" >&2
+    echo "    set API_PUBLIC_BASE_URL=http://${lan_ip}:${API_PORT} in .env, and set" >&2
+    echo "    API_SHARED_SECRET (see .env.example) before doing so -- see README" >&2
+    echo "    (\"Liên kết trích dẫn cho người dùng trong mạng LAN\")." >&2
+  fi
+fi
 
 for venv in .venv .venv-webui; do
   if [[ ! -d "$venv" ]]; then

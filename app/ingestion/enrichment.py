@@ -56,7 +56,16 @@ def _ollama_verbalize(content: str) -> str:
                 "prompt": _VERBALIZE_PROMPT.format(content=content),
                 "stream": False,
                 "think": False,  # qwen3: skip chain-of-thought for batch enrichment
-                "options": {"temperature": 0.0},
+                "keep_alive": settings.ollama_keep_alive,
+                # num_ctx MUST match generator._ollama_payload's, else a
+                # reload is forced any time this call and a live chat
+                # generation hit the same Ollama instance back-to-back
+                # (ingestion running alongside a live server) — see
+                # query_rewrite.py's/verify.py's identical fix, 2026-08-06.
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": settings.llm_context_window,
+                },
             },
             timeout=settings.ollama_timeout,
         )

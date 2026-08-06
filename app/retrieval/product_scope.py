@@ -86,6 +86,20 @@ _GENERIC: frozenset[str] = frozenset(
         "tac",
         "dieu",
         "khoan",
+        # NEW1/q08 (2026-08-05 audit, Day 5 triage): "gia" is the folded form
+        # of "gia", "giá" (price/value — "giá trị"), AND "giả" ("giả định" =
+        # assumed/hypothetical) all at once (unicodedata strips the acute AND
+        # hook-above accents identically); "dinh" folds "định"/"đình". Every
+        # internal-guide doc in this corpus is suffixed "(tài liệu nội bộ giả
+        # định)"/"(bản giả định)", so an ordinary calculation question phrased
+        # "lãi suất giả định" (an assumed rate — routine actuarial phrasing,
+        # q08) picked up {gia, dinh} as a false >=2-token match against an
+        # UNRELATED title ("Quy trình Giải quyết... (bản giả định)"), and the
+        # product-scope guard refused a fully-answerable, correctly-retrieved
+        # (rank 1, score 0.999) question. Neither token is a plausible
+        # standalone product-name component in this corpus (see AGENT1).
+        "gia",
+        "dinh",
         # question / filler / verb words
         "la",
         "gi",

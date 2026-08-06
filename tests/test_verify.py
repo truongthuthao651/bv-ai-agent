@@ -16,8 +16,21 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from app.config.settings import settings
 from app.generation import verify
-from app.generation.verify import verification_messages, verify_answer
+from app.generation.verify import _payload, verification_messages, verify_answer
+
+
+def test_payload_sends_matching_context_window() -> None:
+    # 2026-08-06: found live during a Day 5 eval run that this payload lacked
+    # num_ctx, so a coverage turn's generate call (num_ctx=llm_context_window)
+    # and this verify call (Ollama's modelfile default) on the SAME loaded
+    # llama.cpp instance forced a full model reload between them -- not a
+    # no-op, and observed to occasionally 500 mid-reload
+    # (~/.ollama/logs/server.log showed n_ctx_slot flip-flopping). Every
+    # coverage turn pays this at least once, in production, not just eval.
+    payload = _payload("câu hỏi?", "câu trả lời")
+    assert payload["options"]["num_ctx"] == settings.llm_context_window
 
 
 def _stub_response(monkeypatch: pytest.MonkeyPatch, payload: object) -> None:

@@ -279,6 +279,126 @@ is done when that count is 0, not when it's merely "not worse."
 if item 3 uncovers a real regression, that fix is scoped and committed
 separately from the golden-set-growth commit.
 
+**Actual Day 5 result (2026-08-05, executed same-day as this plan)**: item 1's
+triage found the 9 known failures split three ways, each fixed differently:
+
+- **q08** — genuine bug, FIXED: `product_scope.py`'s guard misfired on the
+  routine phrase "lãi suất giả định" (an assumed rate), false-matching an
+  unrelated title via the "giả định" boilerplate suffix every internal guide
+  doc carries. `_GENERIC` gained `gia`/`dinh` (same mechanism as AGENT1).
+- **q48, q50, q52, q56** (+ **q35**'s and **q51**'s numeral in particular) —
+  golden-set assertion bugs, not app bugs: the source documents spell numbers
+  as "sáu mươi (60) ngày", never the bare "60 ngày" the assertions checked
+  for. Fixed the assertions to match the achievable phrasing; live-verified
+  the model's content was already correct and complete for all four.
+- **q51, fr06** — genuine bugs, FIXED via prompt/code: `app/generation/
+  prompts.py` Rule 2 gained a "don't drop a specific figure/deadline when
+  summarizing" instruction (fixed q51); `conversation_scope.py`'s
+  `_scope_from_user_turns` now reuses `named_product_labels` (AGENT1's
+  informal-title matching) instead of the narrower cue-phrase-only
+  `_product_span`, so "tôi tham gia An Vui Toàn Diện..." (no "bảo hiểm"/"sản
+  phẩm" cue) is recognized as sticky scope — fixed fr06's ungrounded
+  hybrid-fallback answer on the pushback turn.
+- **q58, q59** — genuine bug, IMPROVED not fully fixed: both were "confident
+  answer built on a topically-adjacent-but-not-matching clause" (AGENT3's
+  documented pattern). Rule 3 gained an explicit "a generally-applicable
+  clause is not evidence for a specifically-named benefit/topic the clause
+  doesn't mention" instruction. q58 now cleanly refuses. q59 now reaches the
+  correct conclusion but doesn't emit the exact standalone refusal sentence
+  (explains first, then a lowercase "tôi không tìm thấy..." mid-paragraph) —
+  a real, meaningful safety improvement (wrong answer → right conclusion,
+  wrong format) left as a residual, not silently claimed fixed.
+- **q35** — NOT fixed, documented: the 24-month surrender-value condition is
+  fully present in retrieval (verified directly) but the model still omits it
+  under "được xác định như thế nào" phrasing specifically (q52's near-
+  identical fact, different phrasing, already works) despite two rounds of
+  prompt reinforcement including a worked example. Left as an honest, known
+  gap rather than over-fit further.
+
+**AGENT4 (new finding, not fixed today)**: adversarial item `adv_e` (task 3,
+below) reproduced the historical "3-product summary flat-refuses" failure
+LIVE, after AGENT1's fix — root-caused to a DIFFERENT, deeper mechanism:
+`mentioned_doc_titles`' `>= 2` distinctive-token-overlap requirement is
+mathematically unreachable when a title's own distinctive set has exactly 1
+member, which is true for 3 of the corpus's 4 real products ("An Bình Trọn
+Đời"→`{binh}`, "An Phú Liên Kết"→`{phu}`, "An Tâm Bảo Vệ"→`{tam}` — only "An
+Vui Toàn Diện" has >= 2). A same-day attempt to relax the `>= 2` floor to
+`1` for single-token titles was built, tested, and **deliberately not
+shipped**: `"binh"` folds identically to the extremely common phrase "bình
+thường" (ordinary/normal) and `"tam"` to "trọng tâm" (focus/center) — both
+would false-positive-match everyday coverage questions that don't name any
+product at all. This needs the corpus-relative "dynamic distinctiveness"
+option from AGENT1's original finding (a token shared by many OTHER titles
+stays generic; one that's unique to this title, even if generic-sounding
+elsewhere, counts), not a token-list edit. Added to the golden set as
+`adv_e`, deliberately left failing with the full root-cause writeup in its
+`notes` field, so a future fix is verified against this exact repro instead
+of rediscovering it. Severity: high (breaks a documented, marketed
+comparison/summary capability for 3 of 4 products); effort: M (needs careful
+design + full golden-set re-run given the false-positive risk); not
+scheduled — pick up in Day 6's buffer if time allows, otherwise a future
+session.
+
+Task 3 added 6 permanent adversarial items (`adv_a`-`adv_f`, one per
+historical failure mode a-f): `adv_a` (exclusion-as-coverage inversion),
+`adv_b` (exclusion-only-context denial, a proper two-turn setup — the
+original Phase 5 single-turn probe for this mode was inconclusive by
+design), `adv_c` (verdict-citing-no-benefit-clause), `adv_d` (general-
+knowledge non-contradiction), `adv_e` (AGENT4, above — intentionally
+failing), `adv_f` (flat-verdict-not-enumerated). 5/6 live-verified HELD
+same-day; `adv_e` intentionally fails.
+
+`pytest tests/ -x -q`: 428/428. `ruff check`/`format --check`: clean.
+
+**A second, real infrastructure bug found running item 4's full eval, fixed
+before trusting the result**: the FIRST full run 500'd from Ollama 3 times
+in the first 8 items. Root-caused via `~/.ollama/logs/server.log`: THREE
+Ollama call sites (`eval/run_ragas.py::_judge`, `app/generation/verify.py`,
+`app/retrieval/query_rewrite.py`, plus `app/ingestion/enrichment.py` for
+consistency) built their own request payload without `num_ctx`, so every
+alternation between one of these calls and a normal generation call
+(`num_ctx=llm_context_window=8192`) forced Ollama to fully RELOAD the
+model — not a no-op — and some request landing mid-reload 500'd.
+`query_rewrite.py`'s omission is the most severe: it runs on every turn with
+history, immediately before generation, so this was silently inflating
+latency on every multi-turn conversation in production, not just eval. All
+four fixed (`num_ctx` pinned to match `generator._ollama_payload`); 4 new
+regression tests assert the payload shape directly. First run killed and
+restarted cleanly; the clean run finished in well under an hour (vs. the
+broken run's 2h21m pace) with zero further 500s.
+
+**The clean full run then surfaced a second discovery**: several of today's
+own `must_say` assertions (q51, plus the adversarial items and pre-existing
+`fr05`) were too brittle — requiring one exact citation phrasing ("Điều N"
+in prose vs. just citing `[n]` and naming the chapter) or one exact numeral
+format (spelled-out-with-parenthetical-digit vs. the bare paraphrase) that
+the model does not deterministically reproduce between runs, even at
+`temperature=0`, even though the underlying answer was correct both times.
+`eval/run_ragas.py`'s `must_say` now accepts a list-of-alternatives entry
+(any one satisfies it); items were fixed to either the alternative form or
+loosened to the core safety property (a payment verdict was reached — the
+polarity, not the exact phrasing), since `has_citation`/
+`has_dangling_citation` already verify grounding independently. Re-checked
+against the ALREADY-CAPTURED answers from the clean run (no LLM re-run
+needed — `assertion_check` is a pure function): failed assertions dropped
+from 8/19 to 3/19.
+
+**Final, accurate gate result for the clean run**
+(`eval/results/run-20260806-114825.json`, re-scored with the fixed
+assertions): `false_refusals: ["adv_e"]` (1/68, the documented AGENT4
+finding), `leaked_refusals: ["q59"]` (1/4, the documented "correct
+conclusion, wrong exact format" residual), `failed_assertions: ["q35",
+"q52", "adv_e"]` (3/19), `dangling_citations: []` (0/67). Every remaining
+failure is one already discussed above with a root cause on file — none is
+a silent, unexplained regression. **A genuinely new finding surfaced by this
+recount**: q52 (previously believed fixed from a single live check) failed
+THIS run with materially wrong content (invented an early-termination
+trigger, omitted the real 24-month condition) — q35 and q52 are both
+unreliable across runs on the same underlying fact, not cleanly separable
+by question phrasing as first assessed. `GATE FAILED` (strict — any failure
+fails it), but every failure is explained; not treated as "done" per this
+day's own acceptance bar, carried to Day 6.
+
 ---
 
 ## Day 6 — Tuesday 2026-08-11: Buffer + SHOULD/STRETCH catch-up

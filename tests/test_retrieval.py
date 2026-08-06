@@ -126,6 +126,37 @@ def test_rewrite_uses_llm_when_enabled_with_history() -> None:
     assert out == "Phí gộp của sản phẩm An Tâm Bảo Vệ là gì?"
 
 
+def test_ollama_rewrite_sends_matching_context_window(monkeypatch) -> None:
+    # 2026-08-06: found live during a Day 5 eval run that this payload lacked
+    # num_ctx, so this call (Ollama's modelfile default context) and the
+    # generation call right after it (num_ctx=llm_context_window) on the
+    # SAME loaded llama.cpp instance forced a full model reload between them
+    # every single turn -- not a no-op, and observed to occasionally 500
+    # mid-reload (~/.ollama/logs/server.log showed n_ctx_slot flip-flopping).
+    # This runs on every request with history, so it was the single biggest
+    # unnecessary latency cost in the whole pipeline.
+    import app.retrieval.query_rewrite as query_rewrite_module
+    from app.config.settings import settings
+
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"response": "câu hỏi đầy đủ"}
+
+    def fake_post(url, json, **kwargs):
+        captured.update(json)
+        return _Resp()
+
+    monkeypatch.setattr(query_rewrite_module.httpx, "post", fake_post)
+    out = query_rewrite_module._ollama_rewrite("prompt bất kỳ")
+    assert out == "câu hỏi đầy đủ"
+    assert captured["options"]["num_ctx"] == settings.llm_context_window
+
+
 def test_rewrite_falls_back_to_original_on_empty_llm_output() -> None:
     history = [ChatMessage(role="user", content="Phí thuần là gì?")]
     out = rewrite_standalone(
@@ -249,6 +280,44 @@ def test_active_scope_falls_back_to_user_product_phrase() -> None:
     assert scope is not None
     # product_span skips the generic leading "an"; distinctive tokens remain.
     assert query_covers_scope("An Khang Như Ý", scope)
+
+
+def test_active_scope_recognizes_informal_mention_without_cue_phrase(
+    monkeypatch,
+) -> None:
+    # NEW1/fr06 (2026-08-05 audit, Day 5 triage), live-reproduced: "tôi tham
+    # gia An Vui Toàn Diện..." names the product with no "bảo hiểm"/"sản
+    # phẩm" cue, so the old cue-phrase-only _product_span found nothing and
+    # active_scope() returned None. A later pushback follow-up then fell
+    # through to the general-knowledge hybrid fallback instead of staying
+    # grounded in the already-established policy.
+    import app.retrieval.product_scope as product_scope_module
+
+    monkeypatch.setattr(
+        product_scope_module,
+        "_load_indexed_titles",
+        lambda: ['Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"'],
+    )
+    history = [
+        ChatMessage(
+            role="user",
+            content=(
+                "tôi tham gia An Vui Toàn Diện và bị tai nạn xe khi đi du "
+                "lịch thì có được claim không?"
+            ),
+        ),
+        ChatMessage(
+            role="assistant",
+            content=(
+                "Không được claim. Theo mục Loại trừ trách nhiệm bảo hiểm, "
+                "Người được bảo hiểm tham gia đua xe ô tô, mô tô thuộc loại "
+                "trừ, nên không được chi trả."
+            ),
+        ),
+    ]
+    scope = active_scope(history)
+    assert scope is not None
+    assert "An Vui Toàn Diện" in scope
 
 
 def test_ensure_scope_injects_when_follow_up_drops_name() -> None:
@@ -704,6 +773,45 @@ def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
     assert (
         'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
     )
+
+
+def test_product_guard_does_not_refuse_routine_calc_phrasing_with_gia_dinh() -> None:
+    # NEW1/q08 (2026-08-05 audit, Day 5 triage), live-reproduced: every
+    # internal-guide doc in this corpus is suffixed "(tài liệu nội bộ giả
+    # định)"/"(bản giả định)", so "giả định" (gia+dinh folded) was
+    # product-distinctive on THOSE titles. An ordinary calculation question
+    # using the routine phrase "lãi suất giả định" (an assumed rate) then
+    # false-matched >=2 tokens against an UNRELATED title ("Quy trình Giải
+    # quyết... (bản giả định)") and the guard refused a fully-answerable,
+    # correctly-retrieved (rank 1, score 0.999) question.
+    from app.retrieval.product_scope import (
+        query_names_absent_product,
+        named_product_labels,
+    )
+
+    all_titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        "Từ điển thuật ngữ định phí bảo hiểm",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm liên kết chung "An Phú Liên Kết"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+        "Hướng dẫn Tính Niên kim Nhân thọ và Sử dụng Bảng Tỷ lệ Tử vong (tài liệu nội bộ giả định)",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+        "Quy trình Giải quyết Quyền lợi Bảo hiểm (bản giả định)",
+        "Hướng dẫn Thẩm định Sơ bộ Hợp đồng (bản giả định)",
+        "Danh sách chi trả quyền lợi bảo hiểm Quý 1/2025",
+        "Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)",
+    ]
+    q = (
+        "Với lãi suất kỹ thuật giả định $i = 0,05$, hệ số chiết khấu $v$ "
+        "xấp xỉ bằng bao nhiêu theo tài liệu?"
+    )
+    hit_titles = [
+        "Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)",
+        "Từ điển thuật ngữ định phí bảo hiểm",
+        "Hướng dẫn Tính Niên kim Nhân thọ và Sử dụng Bảng Tỷ lệ Tử vong (tài liệu nội bộ giả định)",
+    ]
+    assert named_product_labels(q, titles=all_titles) == []
+    assert query_names_absent_product(q, hit_titles, known_titles=all_titles) is False
 
 
 def test_product_guard_allows_partial_comparison_hit() -> None:

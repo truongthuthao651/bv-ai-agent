@@ -117,8 +117,14 @@ class GoldenItem:
     notes: str | None = None
     # Deterministic content assertions, checked against the answer prose (see
     # ``assertion_check``). Use them for the properties a wrong answer would be
-    # unsafe on — exclusion polarity above all — not for phrasing.
-    must_say: list[str] = field(default_factory=list)
+    # unsafe on — exclusion polarity above all — not for phrasing. An entry
+    # may be a plain string (must appear) or a list of strings (at least ONE
+    # of them must appear) — for a fact the source spells one way ("hai mươi
+    # mốt (21) ngày") that the model sometimes faithfully quotes and
+    # sometimes paraphrases to the bare numeral ("21 ngày"); both are
+    # correct, neither is a fixed output of greedy decoding across different
+    # runs (2026-08-06: q51 flipped phrasing between two same-day runs).
+    must_say: list[str | list[str]] = field(default_factory=list)
     must_not_say: list[str] = field(default_factory=list)
     # Prior turns replayed before ``question``, as ``{"role", "content"}`` dicts.
     # Without this the set could only express opening questions, and the whole
@@ -200,12 +206,19 @@ def assertion_check(item: GoldenItem, answer: str) -> bool | None:
     inverted exclusion polarity and told an employee a covered death was
     "không chi trả". ``must_say`` / ``must_not_say`` are matched
     case-insensitively against the model's prose with the sources block
-    stripped (source titles must not satisfy an assertion).
+    stripped (source titles must not satisfy an assertion). A ``must_say``
+    entry that is itself a list is satisfied by ANY of its alternatives —
+    see ``GoldenItem.must_say``'s docstring.
     """
     if not item.must_say and not item.must_not_say:
         return None
     body = strip_sources(answer).casefold()
-    return all(s.casefold() in body for s in item.must_say) and not any(
+
+    def _one_satisfied(entry: str | list[str]) -> bool:
+        alternatives = entry if isinstance(entry, list) else [entry]
+        return any(alt.casefold() in body for alt in alternatives)
+
+    return all(_one_satisfied(s) for s in item.must_say) and not any(
         s.casefold() in body for s in item.must_not_say
     )
 
@@ -263,7 +276,19 @@ class Row:
 
 
 def _judge(prompt: str, key: str) -> bool | None:
-    """Ask the local model for a binary JSON verdict; None when unavailable."""
+    """Ask the local model for a binary JSON verdict; None when unavailable.
+
+    ``num_ctx`` must match ``generator._ollama_payload``'s (both call the same
+    loaded llama.cpp instance): a mismatched context size forces Ollama to
+    fully reload the model on every alternation between a judge call and a
+    generation call, not just a slow no-op — a full eval run alternates
+    judge/generate every single item, so this was previously the single
+    biggest source of eval wall-clock time AND caused intermittent 500s from
+    requests landing mid-reload (found live, 2026-08-06, during the Day 5
+    full-corpus run: 3 failed generations in the first 8 items, root-caused
+    to this omission via ~/.ollama/logs/server.log showing n_ctx_slot
+    flipping 4096/8192 between consecutive requests).
+    """
     try:
         resp = httpx.post(
             f"{settings.ollama_base_url}/api/generate",
@@ -274,7 +299,10 @@ def _judge(prompt: str, key: str) -> bool | None:
                 "think": False,
                 "format": "json",
                 "keep_alive": settings.ollama_keep_alive,
-                "options": {"temperature": 0.0},
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": settings.llm_context_window,
+                },
             },
             timeout=settings.ollama_timeout,
         )
