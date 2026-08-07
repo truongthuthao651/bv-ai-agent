@@ -421,6 +421,50 @@ revert immediately if not.
 **Rollback**: doc-only change (item 3) is risk-free; MAINT2 is scoped as
 STRETCH specifically so a mid-attempt abort on Day 6 doesn't threaten Day 7.
 
+**Actual Day 6 result (2026-08-06/07, executed same-day as this plan)**:
+buffer item 1 went to AGENT4 (the highest-value item carried from Day 5, not
+originally itemized here since it was only discovered mid-Day-5) rather than
+a generic sweep — fixed with the "more robust" corpus-relative dynamic
+distinctiveness option flagged since Day 1: `_distinctive_title_tokens` now
+optionally takes the full indexed-title list, and a token (e.g. "trọn"/
+"đời"/"liên"/"kết") counts as distinctive for a title unless it's ALSO
+shared by other titles in the same corpus — self-correcting if the real
+catalog ever adds a second same-type product, and confirmed via a dedicated
+test. Query-side parsing (`_product_spans`, `conversation_scope`) is
+untouched; only title-matching (`mentioned_doc_titles`) uses the new,
+optional corpus-relative signal. `adv_e`'s golden-set entry updated from
+"known failing" to a normal `must_say` assertion (all 3 named products);
+live-verified end-to-end.
+
+Item 2 (MAINT2) was explicitly SKIPPED, per this table's own stated
+condition ("only attempt if Days 1-5 landed clean") — Day 5's gate still had
+3 documented-but-real failures (`q35`, `q52`, `adv_e`) going into today; not
+"clean" by the plan's own bar, so MAINT2's medium-risk marker-list merge was
+deferred rather than attempted on a shakier base. Item 3 (CLAUDE.md's
+structure tree) done as planned, extended slightly beyond the original
+15-file list to also cover Day 2-5's own new files
+(`text_utils.py`, `citations.py`, `api/metrics.py`, `scripts/check.sh`) so
+the tree doesn't immediately drift again.
+
+`pytest tests/ -x -q`: 429/429 (+2 from Day 5's 428: one new
+self-correction test for AGENT4's dynamic-distinctiveness fix, one existing
+AGENT1 test gained an assertion now that "An Bình Trọn Đời" also resolves).
+`ruff check`/`format --check`: clean.
+
+`python eval/run_ragas.py --strict` full 72-item run was NOT re-run today
+(the AGENT4 fix's blast radius is title-matching specifically, not the
+broader guard stack) — instead ran a targeted `--category false_refusal
+--category adversarial` (13 items, the categories most exercised by
+`product_scope.py`/`mentioned_doc_titles`) as a bounded regression check.
+**Result: clean pass** — 0/13 false refusals, 0/0 leaked refusals, 0/10
+failed assertions, 0/13 dangling citations
+(`eval/results/run-20260807-090707.json`). This confirms AGENT4 caused no
+regression AND that all of Day 5's fixes (fr05/fr06/fr07, adv_a/b/c/d/f)
+plus today's adv_e hold together cleanly in the same run. The full-corpus
+`--strict` gate (including `q35`/`q52`'s still-open completeness gap) is
+carried to Day 7's final pass, per this day's acceptance bar not requiring
+it today.
+
 ---
 
 ## Day 7 — Wednesday 2026-08-12: Wrap-up, demo prep, before/after report
