@@ -33,6 +33,7 @@ Pure and offline — unit-tested without Qdrant or an LLM.
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from app.text_utils import fold_text as _fold
 
@@ -363,14 +364,51 @@ def title_covers_product(title: str, product_label: str) -> bool:
     return bool(label_toks & title_toks)
 
 
-def _distinctive_title_tokens(title: str) -> set[str]:
-    """Non-generic tokens that identify a document title.
+# Product-TYPE connectors ("Trọn Đời" = whole life, "Liên Kết" = universal
+# life) that are ALWAYS generic when parsing a QUERY (_collect_name_run,
+# _product_spans, conversation_scope's query-side helpers all keep using the
+# full _GENERIC, unchanged) but that can double as a product's own
+# brand-defining words when scoring a document TITLE's distinctiveness. In
+# this corpus "Trọn Đời"/"Liên Kết" each occur only within their own single
+# product's title (once as category, once as brand) — never across a
+# DIFFERENT product. _distinctive_title_tokens' dynamic check (below)
+# restores them as candidates ONLY when they're not also shared by other
+# titles, so a future second "Trọn Đời" product correctly makes them
+# non-distinctive again for both, the same way AGENT1's static list already
+# handles corpus-wide boilerplate ("quy"/"tắc"/"điều"/"khoản").
+_TITLE_ONLY_CANDIDATES: frozenset[str] = frozenset({"tron", "doi", "lien", "ket"})
+
+
+def _distinctive_title_tokens(
+    title: str, *, other_titles: list[str] | None = None
+) -> set[str]:
+    """Non-generic, corpus-distinctive tokens that identify a document title.
 
     Keeps single-character tokens (e.g. ``ý``/``y`` in "An Khang Như Ý") —
     dropping them left some real product titles with only one usable token
     and made informal nickname matching fail.
+
+    ``other_titles`` (optional — pass the full indexed-title list to enable
+    this): a token shared by half or more of the OTHER titles is corpus-wide
+    boilerplate, not product-distinctive, even if it isn't in the static
+    ``_GENERIC``/``_TITLE_ONLY_CANDIDATES`` lists — this is what lets a
+    token like "trọn"/"đời" count as distinctive for the one product that
+    actually uses it as a brand word (NEW1/AGENT4, 2026-08-06 audit: "An
+    Bình Trọn Đời" and "An Phú Liên Kết" each reduced to a SINGLE static-only
+    distinctive token, {"binh"}/{"phu"}, below the ≥2-token floor
+    ``mentioned_doc_titles`` needs — live-reproduced as a flat refusal on a
+    3-product summary request naming both by name).
     """
-    return {t for t in _fold_tokens(title) if t not in _GENERIC}
+    base_generic = _GENERIC - _TITLE_ONLY_CANDIDATES
+    own = {t for t in _fold_tokens(title) if t not in base_generic}
+    others = [t for t in (other_titles or ()) if t != title]
+    if not others:
+        return own
+    threshold = max(1, (len(others) + 1) // 2)
+    shared_counts: Counter[str] = Counter()
+    for other in others:
+        shared_counts.update(set(_fold_tokens(other)) - base_generic)
+    return {t for t in own if shared_counts.get(t, 0) < threshold}
 
 
 def mentioned_doc_titles(query: str, titles: list[str]) -> list[str]:
@@ -388,7 +426,7 @@ def mentioned_doc_titles(query: str, titles: list[str]) -> list[str]:
     scored: list[tuple[int, str]] = []
     seen: set[str] = set()
     for title in titles:
-        dist = _distinctive_title_tokens(title)
+        dist = _distinctive_title_tokens(title, other_titles=titles)
         if len(dist) < 2:
             continue
         needed = max(2, (len(dist) + 1) // 2)

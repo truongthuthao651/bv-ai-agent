@@ -753,15 +753,15 @@ def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
     # the fix — an informal mention supplies only {vui,toan,dien}=3 and always
     # failed; now the set is just {vui,toan,dien} (needed=2) and it resolves.
     #
-    # NOT fixed by this change, and out of scope for this isolated fix: "An
-    # Bình Trọn Đời" resolves to a single distinctive token ({"binh"}) because
-    # "trọn"/"đời" were already in _GENERIC beforehand as whole-life
-    # policy-type vocabulary (shared by other "trọn đời" products), and a
-    # single token never clears the >=2-token floor. That is a different
-    # failure mode (a brand name built from words that are legitimately
-    # generic elsewhere) needing the roadmap's "more robust" dynamic
-    # distinctiveness option, not a boilerplate-list fix — tracked as a
-    # follow-up, not claimed as fixed here.
+    # "An Bình Trọn Đời" ALSO now resolves (AGENT4, 2026-08-06 audit, Day 6):
+    # it used to reduce to a single static-only distinctive token ({"binh"}),
+    # below the >=2-token floor, because "trọn"/"đời" were in the static
+    # _GENERIC as whole-life policy-type vocabulary. mentioned_doc_titles now
+    # passes the full title list to _distinctive_title_tokens, which restores
+    # "trọn"/"đời" as distinctive for THIS title specifically because they
+    # aren't shared by any OTHER title in the given corpus — see
+    # _TITLE_ONLY_CANDIDATES' docstring for why this is safe (self-corrects
+    # if a second "Trọn Đời" product is ever indexed).
     from app.retrieval.product_scope import mentioned_doc_titles
 
     titles = [
@@ -773,6 +773,30 @@ def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
     assert (
         'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
     )
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"'
+        in mentioned
+    )
+
+
+def test_distinctive_title_tokens_self_corrects_for_a_second_same_type_product() -> (
+    None
+):
+    # The safety property that makes restoring "trọn"/"đời" as candidates
+    # sound: if a SECOND "Trọn Đời" product is ever indexed, both titles
+    # share "trọn"/"đời" and neither counts them as distinctive anymore —
+    # same corpus-frequency mechanism AGENT1 already relies on for
+    # "quy"/"tắc"/"điều"/"khoản".
+    from app.retrieval.product_scope import _distinctive_title_tokens
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Phúc Trọn Đời"',
+    ]
+    for title in titles:
+        dist = _distinctive_title_tokens(title, other_titles=titles)
+        assert "tron" not in dist
+        assert "doi" not in dist
 
 
 def test_product_guard_does_not_refuse_routine_calc_phrasing_with_gia_dinh() -> None:
