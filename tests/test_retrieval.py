@@ -799,6 +799,34 @@ def test_distinctive_title_tokens_self_corrects_for_a_second_same_type_product()
         assert "doi" not in dist
 
 
+def test_mentioned_doc_titles_requires_a_hard_token_not_just_promoted_ones() -> None:
+    # Day 7 full-gate rerun (2026-08-07), live-reproduced: q12/q15 (annuity
+    # formula questions naming no product) both false-refused after AGENT4's
+    # fix, because "trọn đời" alone ("niên kim nhân thọ trọn đời" = whole-life
+    # annuity, ordinary actuarial terminology) matched >=2 tokens against "An
+    # Bình Trọn Đời" purely via the promoted _TITLE_ONLY_CANDIDATES tokens
+    # ("tron", "doi") with no brand-unique token ("binh") present anywhere in
+    # the query. mentioned_doc_titles must not treat an all-promoted overlap
+    # as a real product mention.
+    from app.retrieval.product_scope import mentioned_doc_titles
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+    ]
+    q = r"Niên kim nhân thọ trọn đời trả đầu kỳ $\ddot{a}_x$ được tính theo công thức nào?"
+    assert mentioned_doc_titles(q, titles) == []
+
+    # A query that also carries the brand-unique token ("bình") still
+    # resolves — AGENT4's original 3-product-summary fix must still hold.
+    q2 = "So sánh sản phẩm An Vui Toàn Diện và An Bình Trọn Đời cho khách hàng"
+    mentioned = mentioned_doc_titles(q2, titles)
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"'
+        in mentioned
+    )
+
+
 def test_product_guard_does_not_refuse_routine_calc_phrasing_with_gia_dinh() -> None:
     # NEW1/q08 (2026-08-05 audit, Day 5 triage), live-reproduced: every
     # internal-guide doc in this corpus is suffixed "(tài liệu nội bộ giả

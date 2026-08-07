@@ -483,6 +483,74 @@ Day-6-vs-Day-3 interaction regressions.
 
 **Rollback**: n/a — read-only wrap-up day.
 
+**Actual Day 7 result (2026-08-07)**: task 2 (full `pytest`/`ruff`/`ragas
+--strict` pass) surfaced a genuine NEW regression, not scoped-out re-testing
+noise — fixed before anything else here could be trusted:
+
+**AGENT5 (new finding, found and fixed today)**: the first full 72-item
+`--strict` run (`eval/results/run-20260807-090707.json`'s successor,
+`run-20260807-103630.json`) came back with 2 NEW false refusals never seen
+failing on any prior day — `q12`/`q15`, two annuity-formula questions naming
+no product at all. Live repro (API stopped, direct call): both retrieved the
+correct document (`n_hits=5`, correct doc ranked first) but `plan_response`
+still returned the flat refusal. Root cause: `q12`/`q15` both use the
+ordinary actuarial phrase "niên kim nhân thọ **trọn đời**" (whole-life
+annuity); Day 6's AGENT4 fix restores "trọn"/"đời" as distinctive tokens for
+"An Bình Trọn Đời" specifically because no *other indexed title* shares them
+— but `mentioned_doc_titles` never checked whether the QUERY's overlap was
+made of anything besides those two promoted, normally-generic tokens. A
+query using the generic phrase with no brand-unique token ("bình") anywhere
+in it still hit the ≥2-token floor on "trọn"+"đời" alone and got treated as
+naming the product. Exactly the false-positive-collision risk Day 5's own
+notes warned about (`"binh"` colliding with `"bình thường"`) — this time via
+"trọn đời" colliding with generic annuity terminology instead of a second
+product title, so AGENT4's corpus-relative (title-vs-title) check didn't
+catch it.
+
+**Fix** (`app/retrieval/product_scope.py::mentioned_doc_titles`): an overlap
+made ENTIRELY of `_TITLE_ONLY_CANDIDATES` tokens (the promoted-but-normally-
+generic set — `tron`/`doi`/`lien`/`ket`) no longer counts as a product
+mention; the overlap must include at least one token that's distinctive even
+under the base `_GENERIC` list (e.g. `binh` for "An Bình Trọn Đời", `phu` for
+"An Phú Liên Kết"). Live-verified: `q12`/`q15` no longer match any title
+(`mentioned_doc_titles` → `[]`); Day 6's original AGENT4 repro ("So sánh sản
+phẩm An Vui Toàn Diện và An Bình Trọn Đời...", which does say "Bình") still
+resolves both products correctly. Added a permanent regression test
+(`tests/test_retrieval.py::test_mentioned_doc_titles_requires_a_hard_token_not_just_promoted_ones`)
+covering both the false-positive fix and the still-must-work AGENT4 case.
+
+**Verification, in order**:
+1. `pytest tests/ -x -q` → 430/430 (429 + 1 new AGENT5 regression test).
+2. `ruff check`/`format --check` → clean.
+3. Full 72-item `--strict` re-run after the fix
+   (`eval/results/run-20260807-142847.json`, API stopped, ~3.5h wall —
+   machine was also under intermittent unrelated load during this run,
+   visible as a mid-run slowdown; did not affect correctness, only wall
+   time): **false refusals 0/68** (was 2/68 pre-fix, confirming AGENT5 is
+   resolved and nothing else newly broke). Gate still **FAILS** overall —
+   the residual is exactly the 3 issues already known and documented, not
+   new: `q59` (leaked refusal — reaches the right conclusion, wrong exact
+   refusal sentence format, Day 5) and `q35`/`q52` (failed assertions — the
+   surrender-value completeness gap, Day 5/6, never claimed fixed).
+   `dangling_citation_rate`: 0/68.
+4. Reduced consistency re-check (5 golden items spanning table_lookup/
+   policy_qa/formula/refusal/adversarial × 3 reps each — the original Phase
+   5 run's exact 10-question transcripts were an uncommitted scratch
+   artifact, so this is a smaller, not identical, sample): 4/5 byte-identical
+   across all 3 reps; 1/5 (`adv_e`, the 3-product summary) showed the same
+   *class* of minor wording drift the Phase 5 baseline found (1/10 there) —
+   rep1 states the contract-effective-date condition, rep2/3 state the
+   free-look-period fact instead; both are true, sourced, and don't change
+   any citation or the overall conclusion.
+5. Stack restarted (`scripts/run_native.sh`), `GET /health` confirmed
+   `{"status":"ok", ...}`.
+
+**Net effect on the roadmap's own "6 measurable metrics" below**: 5/6 fully
+met; the 6th (full `--strict` gate PASSING 0/0/0) is NOT met — false refusals
+are 0/0 (met), but leaked refusals and failed assertions are not, honestly
+reported rather than the target quietly redefined. See the updated table
+below for exact numbers.
+
 ---
 
 ## What will demonstrably be better on Day 7 than today
@@ -491,31 +559,66 @@ Six measurable before/after metrics, drawn from this audit's Phase 5
 baseline (see `2026-08-05-metrics.md`) and re-measured the same way on Day 7:
 
 1. **Runtime dangling-citation rate**: baseline measured in Phase 5/
-   `2026-08-05-metrics.md` → target **0%** (Day 3's fix makes this
-   structurally enforced, not just eval-measured).
-2. **LAN-exposure warning accuracy**: today, the README/warning text says
-   nothing about `/v1` → Day 1 ships a warning (or a real header check) that
-   correctly describes the actual exposure.
-3. **Observability**: today, 0 of the fields needed to reconstruct a bad
-   answer are logged → Day 2 ships all of {doc_id, section_path, score,
-   plan_kind} per request, measured as "% of requests with a reconstructable
-   record" going from **0% → 100%**.
+   `2026-08-05-metrics.md` → target **0%**. **MET**: Day 3's
+   `strip_dangling_citations` makes this structurally enforced, not just
+   eval-measured; Day 7's full 72-item re-run confirms **0/68 (0%)**.
+2. **LAN-exposure warning accuracy**: baseline, the README/warning text said
+   nothing about `/v1` → target: a warning (or real header check) describing
+   the actual exposure. **MET**: `app/main.py`'s startup warning now names
+   `/v1/chat/completions` explicitly as LAN-reachable and unauthenticated
+   when `API_HOST=0.0.0.0` with no `API_SHARED_SECRET`, and a real
+   `check_shared_secret()` header check (`app/auth.py`) gates `/v1/*` when
+   `API_SHARED_SECRET` is set (opt-in; empty = unchanged prior behavior) —
+   confirmed present in the running code, not just documented.
+3. **Observability**: baseline, 0 of the fields needed to reconstruct a bad
+   answer were logged → target 0% → 100% of requests with a reconstructable
+   record. **MET**: `app/query_timing.py` logs {doc_id, section_path, score,
+   plan_kind} (plus hits/advisory/coverage/scope_labels/coverage_gate_outcome)
+   per request to `logs/query_timings.jsonl`; `GET /metrics/summary`
+   (Day 4) aggregates it into the admin dashboard.
 4. **Golden-set regression coverage for the 6 documented historical failure
-   modes**: today, 0 of them are permanent gated golden-set items (they live
-   only in CLAUDE.md prose + this audit's one-off test) → Day 5 makes it
-   **6/6**, gated by `--strict`.
-5. **Unhandled-exception surface in the retrieval/rerank path**: today, 3
-   confirmed code paths (Qdrant client, `hybrid_search`, `reranker.rerank`)
-   produce a raw English 500 → Day 1 makes it **0/3** (all wrapped with the
-   existing graceful-Vietnamese-message pattern).
-6. **Full golden-set `--strict` gate (NEW1)**: today (2026-08-05,
-   `run-20260805-201156.json`) **FAILING** — 8/13 failed assertions, 2/4
-   leaked refusals, 4/62 false refusals → Day 5 target: **PASSING**, 0/0/0,
-   re-confirmed on Day 7.
+   modes**: baseline, 0 permanent gated items → target 6/6. **MET**: `adv_a`
+   through `adv_f`, one per historical failure mode, all gated by `--strict`
+   under the `adversarial` category — Day 7's full re-run: `assertion_pass_rate
+   1.0`, `false_refusal_rate 0.0` for that category (n=6).
+5. **Unhandled-exception surface in the retrieval/rerank path**: baseline, 3
+   confirmed code paths produced a raw English 500 → target 0/3. **MET**:
+   `app/api/chat.py`'s `_RETRIEVAL_EXCEPTIONS`/`_RETRIEVAL_ERROR_MESSAGE`
+   wraps the Qdrant-client, `hybrid_search`, and `reranker.rerank` paths with
+   the existing graceful-Vietnamese-message pattern — confirmed present in
+   the running code.
+6. **Full golden-set `--strict` gate (NEW1)**: baseline (2026-08-05,
+   `run-20260805-201156.json`, 66 items) **FAILING** — 8/13 failed
+   assertions, 2/4 leaked refusals, 4/62 false refusals → target: PASSING,
+   0/0/0. **NOT MET, honestly reported**: Day 7's final re-run
+   (`run-20260807-142847.json`, 72 items — the set grew by 6 adversarial
+   items Day 5/6) shows **0/68 false refusals** (that sub-target IS met —
+   AGENT1/AGENT4/AGENT5's whole failure class is gone) but **1/4 leaked
+   refusals** (`q59`) and **2/19 failed assertions** (`q35`, `q52`) remain —
+   the same 3 items Day 5/6 already identified, root-caused, and deliberately
+   left open rather than over-fit further. `dangling_citation_rate`: 0/68.
 
-*(This section's exact before-numbers for consistency/flip-rate and latency
-percentiles are filled in from the live Phase 5 measurements once complete —
-see `2026-08-05-metrics.md`.)*
+**Consistency/determinism** (not one of the 6 numbered metrics above, but
+part of task 1): baseline (Phase 5, 10 questions × 3 reps) — 9/10
+byte-identical, 1/10 minor wording drift, no conclusion/citation changes.
+Day 7 (5 questions × 3 reps — a smaller, non-identical sample; the original
+10 questions' exact wording was an uncommitted scratch artifact and wasn't
+recoverable) — 4/5 byte-identical, 1/5 (`adv_e`) minor wording drift of the
+same class (different true supporting fact chosen, same conclusion/
+citations). Consistent with the baseline's own conclusion:
+`llm_temperature=0.0` is close to but not perfectly deterministic; not a
+regression.
+
+**Latency**: measured with a different harness than Phase 5's live-streaming-
+API measurement (Day 7 used `eval/run_ragas.py`'s direct pipeline calls, no
+HTTP/SSE layer, across all 72 items in one run rather than 30 calls across 10
+categories) — the two are **not directly comparable**, reported here as its
+own measurement rather than forced into a false "faster/slower" claim: overall
+`retrieval_ms` mean 40.2s / p50 39.9s / p95 63.5s; `generation_ms` mean 25.0s
+/ p50 22.7s / p95 52.7s (judge-model calls excluded from both). The run's
+wall-clock also included a real, unrelated mid-run slowdown (visible as a
+~2.5-hour gap between two 15-item stretches) attributable to other load on
+the machine, not the app — flagged rather than silently averaged away.
 
 ---
 

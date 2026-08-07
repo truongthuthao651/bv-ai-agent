@@ -418,6 +418,20 @@ def mentioned_doc_titles(query: str, titles: list[str]) -> list[str]:
     ("so sánh an khang như ý và an lộc vững bền"). Requires ≥2 distinctive
     token overlaps so a lone shared word cannot claim a title. Ordered by the
     earliest distinctive-token position in the query.
+
+    The overlap must also include at least one token outside
+    ``_TITLE_ONLY_CANDIDATES`` (a genuinely brand-unique word, e.g. "binh" for
+    "An Bình Trọn Đời") — not just promoted category words like "trọn"/"đời"
+    on their own. Those words are real, common Vietnamese insurance
+    terminology ("niên kim nhân thọ trọn đời" = whole-life annuity, a generic
+    actuarial phrase) that appears in unrelated formula/glossary content, not
+    only in this one product's brand name. Without this guard, Day 6's
+    corpus-relative fix for AGENT4 (which restores "trọn"/"đời" as
+    title-distinctive precisely because no OTHER indexed title shares them)
+    over-fires on any query using that generic phrase, regardless of whether
+    it names the product at all — live-reproduced 2026-08-07 (Day 7 full-gate
+    rerun): q12/q15 (annuity formula questions, no product named) both
+    false-refused because "trọn đời" alone matched "An Bình Trọn Đời".
     """
     if not query.strip() or not titles:
         return []
@@ -432,6 +446,8 @@ def mentioned_doc_titles(query: str, titles: list[str]) -> list[str]:
         needed = max(2, (len(dist) + 1) // 2)
         overlap = dist & q_set
         if len(overlap) < needed:
+            continue
+        if overlap <= _TITLE_ONLY_CANDIDATES:
             continue
         key = title.casefold()
         if key in seen:
