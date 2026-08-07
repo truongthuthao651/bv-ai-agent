@@ -63,23 +63,43 @@ bv-ai-agent/
 │       └── insurance-rag-pipeline/
 │           └── SKILL.md
 ├── app/
-│   ├── main.py                # FastAPI entrypoint, routers, lifespan (model warmup)
+│   ├── main.py                # FastAPI entrypoint, routers, lifespan (model warmup);
+│   │                          #   mounts app/static/ (admin UI) at "/"
+│   ├── auth.py                # Single-password session gate for the admin UI (ADMIN_PASSWORD);
+│   │                          #   opt-in API_SHARED_SECRET gate for /v1/* (SEC1)
+│   ├── query_timing.py        # "⏱ Thời gian trả lời" footer + logs/query_timings.jsonl
+│   │                          #   (metadata-only: doc_id/section_path/score/plan flags, ADM1)
+│   ├── text_utils.py          # fold_text: shared diacritic-fold used by every guard
 │   ├── config/
 │   │   └── settings.py        # pydantic-settings; ALL config flows through here
 │   ├── api/
 │   │   ├── chat.py            # POST /v1/chat/completions (OpenAI-compatible, SSE)
-│   │   ├── ingest.py          # POST /ingest (file upload), GET /documents
-│   │   └── health.py          # GET /health — pings ollama + qdrant
+│   │   ├── ingest.py          # POST /ingest (file upload, size-capped), GET/PATCH/DELETE /documents
+│   │   ├── health.py          # GET /health — pings ollama + qdrant
+│   │   ├── login.py           # GET/POST /login, POST /logout (admin session)
+│   │   ├── docview.py         # GET /documents/{id}/view — reconstructs a doc from its
+│   │   │                      #   indexed chunks so citation links always resolve
+│   │   └── metrics.py         # GET /metrics/summary — aggregates query_timings.jsonl
+│   │                          #   (refusal rate, latency percentiles, mode breakdown; ADM1)
+│   ├── static/
+│   │   └── index.html         # Dependency-free admin UI: upload/list/edit/delete docs,
+│   │                          #   quick-ask test, "Chất lượng & hiệu năng" metrics view
+│   ├── templates/
+│   │   └── login.html         # Branded admin login page
 │   ├── ingestion/
 │   │   ├── router.py          # File-type detection → correct parser
+│   │   ├── metric_hints.py    # Deterministic metric-type hint appended to embed_text
+│   │   │                      #   (lãi suất cam kết ≠ tỷ lệ bồi thường); no LLM
 │   │   ├── parsers/
 │   │   │   ├── pdf_parser.py      # Docling, do_formula_enrichment=True; OCR fallback
 │   │   │   ├── docx_parser.py     # pandoc → gfm+tex_math_dollars (preserves OMML equations)
 │   │   │   ├── xlsx_parser.py     # Sheet → Markdown table, header repeated per chunk
-│   │   │   ├── image_parser.py    # PaddleOCR + formula regions + optional VLM caption
-│   │   │   ├── formula_ocr.py     # PP-FormulaNet / Qwen2.5-VL region → LaTeX
-│   │   │   ├── figure_extract.py  # Pull figure images out of PDFs (Docling regions)
-│   │   │   └── ocr.py             # Shared PaddleOCR wrapper (lang="vi")
+│   │   │   ├── glossary_parser.py # .yaml/.yml → ParsedDocument(doc_type=GLOSSARY)
+│   │   │   ├── markdown.py        # Shared Điều/Khoản-aware sectionizer every parser uses
+│   │   │   ├── image_parser.py    # STUB — PaddleOCR + formula regions + optional VLM caption
+│   │   │   ├── formula_ocr.py     # STUB — PP-FormulaNet / Qwen2.5-VL region → LaTeX
+│   │   │   ├── figure_extract.py  # STUB — pull figure images out of PDFs (Docling regions)
+│   │   │   └── ocr.py             # STUB — shared PaddleOCR wrapper (lang="vi")
 │   │   ├── cleaning.py        # NFC Unicode normalization, header/footer strip
 │   │   ├── chunking.py        # Heading-aware split (Điều/Khoản/Điểm), 500–800 tok,
 │   │   │                      #   10–15% overlap; NEVER splits equations (see skill);
@@ -93,8 +113,12 @@ bv-ai-agent/
 │   │   ├── query_expansion.py # Glossary-based synonym expansion (no LLM call)
 │   │   ├── query_rewrite.py   # Standalone-question rewriting from chat history
 │   │   ├── spellcheck.py      # Typo gate: confirm a misspelt term before answering
-│   │   ├── product_scope.py   # Refuse when a named product is absent from the docs
-│   │   ├── conversation_scope.py # Sticky product across follow-up turns
+│   │   ├── product_scope.py   # Refuse when a named product is absent from the docs;
+│   │   │                      #   mentioned_doc_titles() = informal-mention + corpus-
+│   │   │                      #   relative dynamic title-distinctiveness matching
+│   │   ├── conversation_scope.py # Sticky product across follow-up turns (reuses
+│   │   │                      #   product_scope's informal-title matching, not just
+│   │   │                      #   cue-phrase parsing)
 │   │   ├── comparison.py      # Multi-product turns: per-product retrieval quota
 │   │   ├── metric_guard.py    # Drop table metrics the question didn't ask for
 │   │   └── coverage.py        # "Có được chi trả?": benefit terms in the query,
@@ -104,20 +128,27 @@ bv-ai-agent/
 │   │   ├── advisory.py        # Detect comparison/recommendation turns → advisory prompt
 │   │   ├── coverage_gate.py   # Post-generation: a coverage verdict citing no
 │   │   │                      #   benefit clause is regenerated, then replaced
+│   │   ├── verify.py          # Second LLM pass on a finished coverage answer: invented
+│   │   │                      #   facts, or a conclusion against its own cited clause
+│   │   ├── citations.py       # Dangling-[n] check: strip (non-streaming) or flag
+│   │   │                      #   (streaming) a citation that resolves to no source (ADM2)
 │   │   ├── history.py         # Strip our appended suffixes before replaying a turn
 │   │   └── generator.py       # Ollama call, streaming, context assembly
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
 ├── scripts/
 │   ├── setup_native.sh        # One-time no-Docker setup: venvs + models (deployment path)
-│   ├── run_native.sh          # Start ollama/API/Open WebUI natively (embedded Qdrant)
+│   ├── run_native.sh          # Start ollama/API/Open WebUI natively (embedded Qdrant);
+│   │                          #   suggests a LAN API_PUBLIC_BASE_URL when API_HOST=0.0.0.0
 │   ├── stop_native.sh         # Stop what run_native.sh started (pid files in run/)
 │   ├── setup_models.sh        # ollama pull + HF downloads (native/docker autodetect)
 │   ├── ingest.sh              # Batch-ingest a folder
 │   ├── ingest_knowledge_pack.py  # Index manually-downloaded PUBLIC refs + their URLs
 │   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
+│   ├── check.sh               # Local CI-equivalent: ruff check + format --check + pytest
 │   ├── chunk_stats.py         # Parent/child chunk sizes for a folder (budget tuning)
-│   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
+│   ├── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
+│   └── open_webui/            # Bảo Việt branding + the "Nạp tài liệu" ingest pipe for Open WebUI
 ├── data/                      # GITIGNORED except glossary/ + the pack manifest template
 │   ├── glossary/
 │   │   └── thuat_ngu.yaml     # Actuarial term glossary: term, synonyms, symbol, definition
@@ -126,9 +157,15 @@ bv-ai-agent/
 │   ├── synthetic/             # Fake docs — the ONLY data used in dev/tests
 │   └── real/                  # Exists only on the company machine — NEVER touch
 ├── eval/
-│   ├── golden_set.jsonl       # Q/A pairs incl. formula, notation, and figure questions;
-│   │                          #   must_say/must_not_say = the deterministic safety gate
+│   ├── golden_set.jsonl       # Q/A pairs incl. formula, notation, figure, and "adversarial"
+│   │                          #   (category) items, one per documented historical failure
+│   │                          #   mode; must_say/must_not_say = the deterministic safety
+│   │                          #   gate — an entry may be a list of accepted alternatives
 │   └── run_ragas.py           # Context precision/recall, rule compliance, --strict gate
+├── docs/
+│   ├── TEAMMATE_GUIDE.md      # Bilingual (VI-first) onboarding doc for a human teammate
+│   └── audit/                 # Dated audit reports + the one-week roadmap this file's
+│                              #   "Conventions"/rules above were partly born from
 └── tests/
     ├── test_parsers.py        # Incl. OMML→LaTeX and formula-OCR cases
     ├── test_chunking.py       # Incl. never-split-equation cases
