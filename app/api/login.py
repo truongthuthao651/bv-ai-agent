@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
 from app import accounts, auth
+from app.models.schemas import ChangePasswordRequest
 
 router = APIRouter(tags=["auth"])
 
@@ -71,6 +72,30 @@ async def me(request: Request) -> dict[str, str | None]:
     if account is None:
         return {"email": None, "role": None}
     return {"email": account.email, "role": account.role}
+
+
+@router.post("/change-password")
+async def change_password(
+    request: Request, body: ChangePasswordRequest
+) -> dict[str, bool]:
+    """Self-service password change (P2-J6, audit/REPORT.md) — the minimum
+    viable account-lifecycle surface: any signed-in account (not admin-only)
+    changes its OWN password, verified against its current one. Reachable by
+    any account because admin_session_gate already requires a session for
+    every non-public path; the target is always the caller's own session
+    account, never a client-supplied email, so one account can never change
+    another's password this way.
+    """
+    account = auth.current_account(request)
+    if account is None:
+        raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
+    try:
+        accounts.update_password(
+            account.email, body.current_password, body.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"ok": True}
 
 
 @router.get("/accounts", dependencies=[Depends(auth.require_admin)])

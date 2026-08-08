@@ -17,6 +17,7 @@ against; it keeps out typos and obviously-wrong addresses, nothing more.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -120,9 +121,46 @@ def authenticate(email: str, password: str) -> Account | None:
     if row is None:
         return None
     role, password_hash, salt_hex = row
-    if _hash_password(password, bytes.fromhex(salt_hex)) != password_hash:
+    # hmac.compare_digest, not == (ENG-2, audit/REPORT.md): a self-acknowledged
+    # minor timing side-channel — the PBKDF2 computation above dominates the
+    # timing in practice, but the fix is one line and removes the need to
+    # reason about "dominates in practice" at all.
+    if not hmac.compare_digest(
+        _hash_password(password, bytes.fromhex(salt_hex)), password_hash
+    ):
         return None
     return Account(email=email, role=role)  # type: ignore[arg-type]
+
+
+def update_password(email: str, current_password: str, new_password: str) -> None:
+    """Change an existing account's own password (P2-J6, audit/REPORT.md's
+    minimum viable self-service surface). Raises ``ValueError`` on a wrong
+    current password or an empty new one — never silently no-ops.
+
+    Deliberately separate from ``create_account(..., overwrite=True)``: that
+    rewrites role too and is the admin/seed-script path; this only ever
+    touches password_hash/salt for an account that already authenticated
+    with its OWN current password, and is reachable by any signed-in
+    account for itself (see the /change-password route), not just admins.
+    """
+    email = email.strip().lower()
+    if authenticate(email, current_password) is None:
+        raise ValueError("Mật khẩu hiện tại không đúng.")
+    if not new_password:
+        raise ValueError("Mật khẩu mới không được để trống.")
+    if len(new_password) < 8:
+        raise ValueError("Mật khẩu mới phải có ít nhất 8 ký tự.")
+    salt = os.urandom(_SALT_BYTES)
+    password_hash = _hash_password(new_password, salt)
+    con = _connect()
+    try:
+        con.execute(
+            "UPDATE accounts SET password_hash = ?, salt = ? WHERE email = ?",
+            (password_hash, salt.hex(), email),
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def any_accounts_exist() -> bool:

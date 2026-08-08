@@ -72,6 +72,21 @@ export async function logout() {
   await fetch("/logout", { method: "POST" }).catch(() => {});
 }
 
+/** P2-J6 (audit/REPORT.md): the minimum viable self-service surface — change
+ * the signed-in account's own password. The target account always comes
+ * from the session server-side; there is no email field to pass here. */
+export async function changePassword(currentPassword, newPassword) {
+  const resp = await fetch("/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!resp.ok) {
+    const data = await asJson(resp);
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+}
+
 /** Streams `/v1/chat/completions` (SSE) and calls `onDelta` with each text
  *  fragment as it arrives — the same parsing app/static/index.html did. */
 export async function askStreaming(query, onDelta) {

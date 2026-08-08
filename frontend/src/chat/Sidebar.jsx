@@ -1,5 +1,76 @@
-import { ThemeToggle } from "../components/index.js";
-import { logout } from "./api.js";
+import { useState } from "react";
+import { Button, Input, Modal, ThemeToggle } from "../components/index.js";
+import { changePassword, logout } from "./api.js";
+
+/** P2-J6 (audit/REPORT.md) — the minimum viable self-service surface: change
+ * the signed-in account's own password. Exactly two fields, matching the
+ * audit's own "minimum viable" framing rather than a full profile page. */
+function ChangePasswordModal({ onClose }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [status, setStatus] = useState({ text: "", tone: "" });
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!currentPassword || !newPassword) {
+      setStatus({ text: "Vui lòng nhập đủ cả hai mật khẩu.", tone: "bad" });
+      return;
+    }
+    setBusy(true);
+    setStatus({ text: "", tone: "" });
+    try {
+      await changePassword(currentPassword, newPassword);
+      setStatus({ text: "Đã đổi mật khẩu.", tone: "ok" });
+      setCurrentPassword("");
+      setNewPassword("");
+    } catch (err) {
+      setStatus({ text: err.message, tone: "bad" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const toneColor = { ok: "var(--success)", bad: "var(--danger)", "": "var(--text-secondary)" }[status.tone];
+
+  return (
+    <Modal
+      open
+      title="Đổi mật khẩu"
+      hint="Đổi mật khẩu cho tài khoản đang đăng nhập."
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Đóng
+          </Button>
+          <Button onClick={save} disabled={busy}>
+            Lưu
+          </Button>
+        </>
+      }
+    >
+      <div
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            if (!busy) save();
+          }
+        }}
+        style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+      >
+        <div>
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu hiện tại</label>
+          <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={{ width: "100%" }} />
+        </div>
+        <div>
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu mới (ít nhất 8 ký tự)</label>
+          <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ width: "100%" }} />
+        </div>
+        {status.text && <div style={{ fontSize: "var(--text-xs)", color: toneColor }}>{status.text}</div>}
+      </div>
+    </Modal>
+  );
+}
 
 /** Ported from ui_kits/chatbot/ChatParts.jsx's Sidebar, with the fabricated
  * "Pinned/Today/Yesterday" thread list and the dead "Search chats ⌘K" hint
@@ -7,6 +78,7 @@ import { logout } from "./api.js";
  * a thread list would either be empty forever or lie. The bottom user block
  * shows the real signed-in account instead of the kit's "Nguyễn Vân". */
 export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
+  const [showProfile, setShowProfile] = useState(false);
   return (
     <aside
       style={{
@@ -61,28 +133,35 @@ export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
         </div>
         {me?.email && (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                background: "var(--brand-navy)",
-                color: "#fff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "var(--text-xs)",
-                fontWeight: "var(--weight-bold)",
-                flexShrink: 0,
-              }}
+            <button
+              onClick={() => setShowProfile(true)}
+              title="Đổi mật khẩu"
+              aria-label="Tài khoản: đổi mật khẩu"
+              style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0, textAlign: "left" }}
             >
-              {me.email[0].toUpperCase()}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {me.email}
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  background: "var(--brand-navy)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: "var(--weight-bold)",
+                  flexShrink: 0,
+                }}
+              >
+                {me.email[0].toUpperCase()}
               </div>
-            </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {me.email}
+                </div>
+              </div>
+            </button>
             <button
               onClick={() => logout().then(() => (window.location.href = "/login"))}
               title="Đăng xuất"
@@ -99,6 +178,7 @@ export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
           </a>
         )}
       </div>
+      {showProfile && <ChangePasswordModal onClose={() => setShowProfile(false)} />}
     </aside>
   );
 }

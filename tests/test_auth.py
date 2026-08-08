@@ -306,3 +306,90 @@ def test_v1_route_still_rejects_sessionless_request_with_shared_secret_set(
     with client:
         resp = client.get("/v1/models")  # no cookie, no bearer token
         assert resp.status_code == 401
+
+
+# --- P2-J6: self-service password change (audit/REPORT.md) ---
+
+
+def test_change_password_requires_a_session(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/change-password",
+            json={"current_password": "s3cret", "new_password": "newpass123"},
+        )
+        assert resp.status_code == 401
+
+
+def test_employee_can_change_own_password_and_login_with_new_one(monkeypatch) -> None:
+    """Not admin-only — the whole point is any signed-in account can do this
+    for itself (require_admin would defeat that)."""
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        resp = client.post(
+            "/change-password",
+            json={"current_password": "s3cret", "new_password": "newpass123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+        # Old password no longer works, new one does.
+        client.post("/logout")
+        bad = client.post(
+            "/login", data={"email": "user@baoviet.com", "password": "s3cret"}
+        )
+        assert bad.status_code == 401
+        good = client.post(
+            "/login", data={"email": "user@baoviet.com", "password": "newpass123"}
+        )
+        assert good.status_code == 200
+
+
+def test_change_password_rejects_wrong_current_password(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        resp = client.post(
+            "/change-password",
+            json={"current_password": "wrong", "new_password": "newpass123"},
+        )
+        assert resp.status_code == 400
+
+
+def test_change_password_rejects_too_short_new_password(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        resp = client.post(
+            "/change-password",
+            json={"current_password": "s3cret", "new_password": "short"},
+        )
+        assert resp.status_code == 400
+
+
+def test_change_password_only_ever_targets_the_callers_own_account(monkeypatch) -> None:
+    """The request body has no email field at all — confirm an admin's
+    session can't be used to change a DIFFERENT account's password by some
+    other route of attack; the account always comes from the session."""
+    accounts.create_account("admin@baoviet.com", "adminpass", "admin")
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        client.post(
+            "/login", data={"email": "admin@baoviet.com", "password": "adminpass"}
+        )
+        client.post(
+            "/change-password",
+            json={"current_password": "adminpass", "new_password": "newadminpass"},
+        )
+        # The employee's password must be completely unaffected.
+        client.post("/logout")
+        still_works = client.post(
+            "/login", data={"email": "user@baoviet.com", "password": "s3cret"}
+        )
+        assert still_works.status_code == 200

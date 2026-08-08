@@ -314,8 +314,9 @@ class ChatCompletionResponse(BaseModel):
 class ModelCard(BaseModel):
     """One entry in the OpenAI-compatible ``GET /v1/models`` list.
 
-    ``name`` is a non-standard extra field that Open WebUI reads to show a
-    friendly label in its model dropdown; plain OpenAI clients ignore it.
+    ``name`` is a non-standard extra field for a friendly display label;
+    plain OpenAI clients ignore it. Kept for compatibility with any
+    OpenAI-compatible client — /chat itself doesn't call this endpoint.
     """
 
     id: str
@@ -330,3 +331,13 @@ class ModelList(BaseModel):
 
     object: Literal["list"] = "list"
     data: list[ModelCard]
+
+
+class ChangePasswordRequest(BaseModel):
+    """``POST /change-password`` (P2-J6, audit/REPORT.md — the minimum viable
+    self-service surface: any signed-in account changes its OWN password,
+    never someone else's — the target account always comes from the session,
+    never from this body)."""
+
+    current_password: str
+    new_password: str

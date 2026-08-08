@@ -21,6 +21,21 @@ export async function fetchPromptSuggestions() {
   return resp.json();
 }
 
+/** P2-J6 (audit/REPORT.md): the minimum viable self-service surface — change
+ * the signed-in account's own password. The target account always comes
+ * from the session server-side; there is no email field to pass here. */
+export async function changePassword(currentPassword, newPassword) {
+  const resp = await fetch("/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  if (!resp.ok) {
+    const data = await asJson(resp);
+    throw new Error(data.detail || `HTTP ${resp.status}`);
+  }
+}
+
 /** Streams one turn of POST /v1/chat/completions (SSE), calling `onDelta`
  *  with each text fragment as it arrives. `history` is the prior turns
  *  (in-memory only — see the Phase 4 gap list on persistence) so follow-up
