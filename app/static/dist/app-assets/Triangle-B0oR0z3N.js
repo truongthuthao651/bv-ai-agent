@@ -1,1 +1,0 @@
-import{r as e,t}from"./jsx-runtime-Dgo-PerU.js";e();var n=t();function r({size:e=14,color:t=`var(--gold)`}){return(0,n.jsx)(`span`,{style:{width:0,height:0,borderLeft:`${e*.58}px solid transparent`,borderRight:`${e*.58}px solid transparent`,borderBottom:`${e}px solid ${t}`,display:`block`}})}export{r as t};

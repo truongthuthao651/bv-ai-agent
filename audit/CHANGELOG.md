@@ -122,4 +122,15 @@ Bonus (found while touching the same button): added the missing `aria-label="Đ�
 copies of the icon-only logout button (`AdminShell.jsx` and `chat/Sidebar.jsx`) — this is F5-1,
 originally slated for Wave 4, but one line each while already in this exact code.
 
+### `<pending>` — fix: light-mode `--text-muted` contrast (F3-3)
+**Fixed.** `--text-muted` (light theme) was `#8CA0B3` — computed at 2.58:1 against `--bg`, well
+below WCAG AA's 4.5:1 for normal text (dark theme's `--text-muted` already passed at 5.54:1,
+untouched). Changed to `#5B7184`, computed at ~4.80:1 — real margin above the threshold, not a
+borderline value. Verified the new value is actually served (`getComputedStyle` on the live page
+returned `#5b7184`) and visually: composer placeholder text and suggestion-card labels are
+legibly darker in the screenshot. `frontend/src/tokens/colors.css` is nominally vendored/never-
+hand-edited per CLAUDE.md's design-system convention — added a comment flagging this specific
+line so a future re-vendor doesn't silently regress it back to the failing value.
+Screenshot: `audit/screenshots/after/chat-text-muted-contrast-fixed.png`.
+
 

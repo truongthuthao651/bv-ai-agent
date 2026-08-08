@@ -10,7 +10,15 @@
 --border:#E3E9F1;--border-strong:#CBD7E6;
 --hover:#F1F5FA;--active:#E7EEF7;
 
---text-primary:#0C2A45;--text-secondary:#5A6B7F;--text-muted:#8CA0B3;
+/* --text-muted was #8CA0B3 (2.58:1 against --bg — fails WCAG AA's 4.5:1 for
+   normal text) — audit/03-frontend.md finding F3-3, computed from the shipped
+   token values, not a guess. #5B7184 measures ~4.80:1 against --bg (and more
+   against --surface, which is lighter). Dark theme's --text-muted below
+   already passes (~5.54:1) and is untouched. Hand-adjusted despite this file
+   being vendored (CLAUDE.md) — flag this specific line if the design system
+   is ever re-vendored, so a re-sync doesn't silently regress it back to a
+   failing value. */
+--text-primary:#0C2A45;--text-secondary:#5A6B7F;--text-muted:#5B7184;
 --text-on-accent:#FFFFFF;--text-on-gold:#0C2A45;
 
 --accent:var(--brand-blue);--accent-hover:var(--brand-blue-hover);--accent-subtle:#EAF2FA;
