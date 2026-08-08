@@ -21,7 +21,7 @@ export function UsersView() {
           Người dùng
         </h1>
         <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>
-          Tài khoản đăng nhập trang quản trị (email @baoviet.com).
+          Tài khoản đăng nhập hệ thống (email @baoviet.com) — dùng cho trò chuyện, và cho trang quản trị nếu là quản trị viên.
         </p>
       </div>
 

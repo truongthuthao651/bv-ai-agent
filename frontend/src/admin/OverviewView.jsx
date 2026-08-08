@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { KpiCard, Input, Button } from "../components/index.js";
 import { fetchMetrics, askStreaming } from "./api.js";
+import { DOC_TYPE_LABEL } from "./DocumentsView.jsx";
 
 const MODE_LABELS = { grounded: "Có căn cứ", advisory: "Tư vấn", hybrid: "Kiến thức chung", refusal: "Từ chối", other: "Khác" };
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
@@ -473,7 +474,7 @@ export function OverviewView() {
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)" }}>{d.doc_title}</div>
                       <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)", marginTop: 2 }}>
-                        {d.doc_type} · {d.n_chunks} đoạn
+                        {DOC_TYPE_LABEL[d.doc_type] || d.doc_type} · {d.n_chunks} đoạn
                       </div>
                     </div>
                     <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>

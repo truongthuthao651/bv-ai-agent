@@ -27,6 +27,17 @@ const EDIT_DOC_TYPE_OPTIONS = [
   { value: "other", label: "other — Khác" },
 ];
 
+// P2-T2 (audit/REPORT.md): doc_type was shown as the raw English enum value
+// ("policy", "other", ...) in every table/chart, even though the upload and
+// edit dropdowns are already bilingual (EDIT_DOC_TYPE_OPTIONS above) — an
+// admin picks a Vietnamese-labeled option, then sees the bare English code
+// reflected back in every table and chart afterward. One shared lookup,
+// exported so OverviewView.jsx's recent-documents list uses the same labels
+// instead of its own copy drifting out of sync.
+export const DOC_TYPE_LABEL = Object.fromEntries(
+  EDIT_DOC_TYPE_OPTIONS.map((o) => [o.value, o.label.split(" — ")[1]]),
+);
+
 // Options mirror settings.departments (source of truth for validation).
 const DEPARTMENTS = ["PTSP", "DP", "DVA"];
 
@@ -312,7 +323,7 @@ export function DocumentsView({ canManage = true }) {
                 </a>
                 {d.source_url && <Tag tone="muted">nguồn công khai</Tag>}
               </div>,
-              <Tag key="type">{d.doc_type}</Tag>,
+              <Tag key="type">{DOC_TYPE_LABEL[d.doc_type] || d.doc_type}</Tag>,
               d.department || "—",
               d.n_chunks,
               d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—",
