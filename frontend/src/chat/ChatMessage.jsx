@@ -93,6 +93,41 @@ function NoAnswer() {
   );
 }
 
+/** Shown in the empty assistant bubble between send and the first streamed
+ * token — retrieval + rerank alone routinely takes 8-50s (audit/04-chatbot.md
+ * §4.2), during which the bubble previously showed nothing at all beyond the
+ * composer's send button greying out. Text label first (works even if
+ * animation is off); the dots are a secondary, reduced-motion-aware cue. */
+function ThinkingIndicator() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>
+      <span>Đang tìm trong tài liệu…</span>
+      <span style={{ display: "inline-flex", gap: 3 }}>
+        <span className="bv-thinking-dot" style={{ animationDelay: "0ms" }} />
+        <span className="bv-thinking-dot" style={{ animationDelay: "160ms" }} />
+        <span className="bv-thinking-dot" style={{ animationDelay: "320ms" }} />
+      </span>
+      <style>{`
+        .bv-thinking-dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: currentColor;
+          display: inline-block;
+          animation: bv-thinking-pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes bv-thinking-pulse {
+          0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .bv-thinking-dot { animation: none; opacity: 0.6; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerate }) {
   if (role === "user") {
     return (
@@ -130,6 +165,8 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
       <div style={{ minWidth: 0, flex: 1 }}>
         {isRefusal ? (
           <NoAnswer />
+        ) : streaming && !body ? (
+          <ThinkingIndicator />
         ) : (
           <>
             <div style={{ fontSize: "var(--text-md)", color: "var(--text-primary)" }}>{renderMarkdown(body || " ")}</div>
