@@ -239,6 +239,7 @@ export function DocumentsView({ canManage = true }) {
   const [deletingId, setDeletingId] = useState(null);
   const [confirmDeleteDoc, setConfirmDeleteDoc] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+  const [search, setSearch] = useState("");
 
   async function load() {
     try {
@@ -283,6 +284,23 @@ export function DocumentsView({ canManage = true }) {
 
   const totalChunks = docs.reduce((sum, d) => sum + d.n_chunks, 0);
 
+  // P2-F3 (audit/REPORT.md): no search/filter existed at all — fine at the
+  // handful of synthetic documents today, a real problem once a department's
+  // real corpus grows past a page. GET /documents already fetches the whole
+  // list in one call with no server-side pagination, so a client-side filter
+  // is the cheap fix that works up to a few hundred rows; server-side
+  // pagination is a separate, larger change to make only once the corpus
+  // actually approaches that scale (not yet).
+  const query = search.trim().toLowerCase();
+  const filteredDocs = query
+    ? docs.filter(
+        (d) =>
+          d.doc_title.toLowerCase().includes(query) ||
+          (DOC_TYPE_LABEL[d.doc_type] || d.doc_type).toLowerCase().includes(query) ||
+          (d.department || "").toLowerCase().includes(query),
+      )
+    : docs;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--gap-section)" }}>
       <div>
@@ -302,13 +320,27 @@ export function DocumentsView({ canManage = true }) {
 
       <Card
         title="Tài liệu đã nạp"
-        hint={loadError ? `Không tải được danh sách: ${loadError}` : `${docs.length} tài liệu · ${totalChunks} đoạn`}
+        hint={
+          loadError
+            ? `Không tải được danh sách: ${loadError}`
+            : query
+              ? `${filteredDocs.length}/${docs.length} tài liệu phù hợp · ${totalChunks} đoạn`
+              : `${docs.length} tài liệu · ${totalChunks} đoạn`
+        }
         size="lg"
       >
+        {docs.length > 0 && (
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm theo tên, loại hoặc phòng ban…"
+            style={{ width: "100%", maxWidth: 360, marginBottom: "var(--space-4)" }}
+          />
+        )}
         <Table
           columns={canManage ? ["Tên tài liệu", "Loại", "Phòng ban", "Số đoạn", "Thời gian nạp", ""] : ["Tên tài liệu", "Loại", "Phòng ban", "Số đoạn", "Thời gian nạp"]}
-          rows={docs}
-          emptyLabel="Chưa có tài liệu nào được nạp."
+          rows={filteredDocs}
+          emptyLabel={query ? "Không có tài liệu nào khớp." : "Chưa có tài liệu nào được nạp."}
           renderRow={(d) => {
             const cells = [
               <div key="title" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
