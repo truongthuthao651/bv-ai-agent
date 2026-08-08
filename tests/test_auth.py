@@ -145,14 +145,56 @@ def test_admin_role_is_not_blocked_by_require_admin(monkeypatch) -> None:
 
 def test_employee_role_gets_403_on_admin_only_reads(monkeypatch) -> None:
     """GET /documents and GET /metrics/summary are admin-console data, not
-    something /chat's employee accounts need (citations resolve via the
-    separately-public /documents/{id}/view and /file routes instead)."""
+    something /chat's employee accounts need (citations resolve via
+    /documents/{id}/view and /file instead, which need only a session — see
+    test_document_view_and_file_require_a_session_but_not_admin below)."""
     accounts.create_account("user@baoviet.com", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
         client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
         assert client.get("/documents").status_code == 403
         assert client.get("/metrics/summary").status_code == 403
+
+
+def test_document_view_and_file_reject_sessionless_requests(monkeypatch) -> None:
+    """SEC-A (audit/01-engineering.md §1.4): these two routes used to have NO
+    session check at all — doc_id is a deterministic uuid5 of the uploaded
+    filename, so anyone who could guess a filename could read the full
+    document with zero credentials. Confirm both now require a session."""
+    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    client = _client(monkeypatch)
+    with client:
+        resp = client.get(
+            "/documents/whatever/view",
+            headers={"accept": "text/html"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/login")
+
+        resp = client.get(
+            "/documents/whatever/file", headers={"accept": "application/json"}
+        )
+        assert resp.status_code == 401
+
+
+def test_document_view_and_file_require_a_session_but_not_admin(monkeypatch) -> None:
+    """An employee session (not just admin) must reach these — /chat's
+    citation links are opened by ordinary employee accounts. A 404 here means
+    the request reached the real handler (no matching doc_id), not a 401/403
+    from the auth layer — the same pattern test_admin_role_is_not_blocked_by_
+    require_admin uses above. Indexer calls are stubbed to "not found" so this
+    doesn't need a live Qdrant (and can't collide with one already running)."""
+    from app.ingestion import indexer
+
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    monkeypatch.setattr(indexer, "get_document_source_filename", lambda doc_id: None)
+    monkeypatch.setattr(indexer, "get_document_chunks", lambda doc_id: [])
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        assert client.get("/documents/whatever/view").status_code == 404
+        assert client.get("/documents/whatever/file").status_code == 404
 
 
 def test_employee_hitting_admin_page_is_redirected_to_chat(monkeypatch) -> None:

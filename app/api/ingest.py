@@ -264,8 +264,9 @@ async def ingest_file(
 async def list_documents() -> list[DocumentInfo]:
     """List documents currently indexed in Qdrant. Admin-only: this is
     admin-console data, not something the chat UI's employee accounts need —
-    /chat's citation links resolve via the separately-public
-    /documents/{id}/view and /file routes instead."""
+    /chat's citation links resolve via the /documents/{id}/view and /file
+    routes instead, which require only a signed-in session (any role), not
+    admin (see app.auth.PUBLIC_PREFIXES's SEC-A note)."""
     return await run_in_threadpool(indexer.list_documents)
 
 
@@ -310,6 +311,9 @@ async def get_document_file(doc_id: str) -> FileResponse:
     ``content_disposition_type="inline"`` lets the browser display the file
     (PDFs scroll natively) instead of downloading it. 404 covers both "no such
     doc_id" and "doc has no backing upload" (e.g. a glossary entry) identically.
+    Requires any signed-in session (not admin-only) — enforced by
+    ``admin_session_gate`` in app/main.py, since this route is no longer in
+    ``auth.PUBLIC_PREFIXES`` (SEC-A: it used to have no session check at all).
     """
     path = await run_in_threadpool(_source_path_for, doc_id)
     if path is None:

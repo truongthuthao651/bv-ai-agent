@@ -124,9 +124,15 @@ def test_render_page_download_link_only_with_source_file() -> None:
     )
 
 
-def test_viewer_routes_are_public_but_list_and_delete_are_not() -> None:
-    assert is_public_path("/documents/abc-123/view")
-    assert is_public_path("/documents/abc-123/file")
-    # The admin list + per-doc DELETE target must stay gated.
+def test_no_documents_route_is_public() -> None:
+    # SEC-A (audit/01-engineering.md §1.4): /view and /file used to be
+    # regex-matched into PUBLIC_PREFIXES, meaning no session check at all —
+    # anyone who could guess a filename (doc_id is a deterministic uuid5 of
+    # it) could read the full document unauthenticated. All /documents routes
+    # now require at least a signed-in session; see tests/test_auth.py for
+    # the "any account, not just admin" vs. "admin-only" split (list/delete
+    # need require_admin on top of this; view/file don't).
+    assert not is_public_path("/documents/abc-123/view")
+    assert not is_public_path("/documents/abc-123/file")
     assert not is_public_path("/documents")
     assert not is_public_path("/documents/abc-123")

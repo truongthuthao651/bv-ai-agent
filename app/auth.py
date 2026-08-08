@@ -28,7 +28,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import re
 import secrets
 import time
 
@@ -65,6 +64,16 @@ SESSION_TTL_SECONDS = 60 * 60 * 12  # 12h — re-login roughly once a working da
 #    when an account is provisioned — the admin bundle's own JS/CSS live under
 #    /app-assets too, but shipping compiled UI code publicly is normal (the
 #    security boundary is the gated data endpoints below, not the JS itself).
+#
+# Deliberately NOT here: /documents/{id}/view and /documents/{id}/file (the
+# citation-link targets). They used to be regex-matched into this list so
+# /chat's employee accounts could open them without an *admin* session — but
+# that also meant they had NO session check at all (SEC-A,
+# audit/01-engineering.md §1.4): doc_id is a deterministic uuid5 of the
+# uploaded filename, so anyone who could guess a filename could read the full
+# document with zero credentials. They now fall through to the same "any
+# signed-in account" check every other non-/admin, non-public path gets below
+# — which is exactly the access level they were always meant to have.
 PUBLIC_PREFIXES = (
     "/login",
     "/logout",
@@ -75,13 +84,6 @@ PUBLIC_PREFIXES = (
     "/fonts",
     "/tokens",
 )
-
-# Read-only, per-document source views (citation link targets). Employees reach
-# these from /chat without an admin session, so they must be
-# public — but ONLY these two GET routes, never the /documents list or the
-# DELETE route (which stay behind the admin gate). The doc_id segment is opaque
-# and can't contain a slash, so the regex can't widen to those.
-_PUBLIC_DOC_RE = re.compile(r"^/documents/[^/]+/(view|file)$")
 
 
 def auth_enabled() -> bool:
@@ -152,8 +154,6 @@ def check_shared_secret(authorization_header: str | None) -> bool:
 
 
 def is_public_path(path: str) -> bool:
-    if _PUBLIC_DOC_RE.match(path):
-        return True
     return any(
         path == prefix or path.startswith(prefix + "/") for prefix in PUBLIC_PREFIXES
     )
