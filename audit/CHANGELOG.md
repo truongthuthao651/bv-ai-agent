@@ -87,7 +87,7 @@ Escape closed the delete-confirmation dialog.
 a real M-effort implementation (Tab-cycling within the modal, not a one-liner like C3) —
 audit/REPORT.md places it in Wave 4 alongside the rest of the accessibility batch, not Wave 1.
 
-### `<pending>` — feat: composer autogrow (CHAT-3)
+### `e4bbb99` — feat: composer autogrow (CHAT-3)
 **Fixed.** The textarea was a fixed `rows={2}` with no `scrollHeight`-driven resize — a long
 multi-line question scrolled inside a cramped box instead of the box growing with it. Added a
 `useEffect` that resizes on every `value` change, capped at 200px (scrolls internally past that
@@ -133,7 +133,7 @@ hand-edited per CLAUDE.md's design-system convention — added a comment flaggin
 line so a future re-vendor doesn't silently regress it back to the failing value.
 Screenshot: `audit/screenshots/after/chat-text-muted-contrast-fixed.png`.
 
-### `<pending>` — docs: confirm landing/login theming is deliberate (F3-1)
+### `8ab0bce` — docs: confirm landing/login theming is deliberate (F3-1)
 **Resolved as documentation, not a code change.** Checked `app/templates/login.html` alongside
 `LandingScreen.jsx`: neither renders a `ThemeToggle`, and both use the identical fixed navy-hero
 gradient regardless of `prefers-color-scheme` — a consistent pattern (pre-authentication surfaces
@@ -144,7 +144,7 @@ to theme tokens — that would be a deliberate redesign decision for later, not 
 No visual or functional change; `app/static/dist` is byte-identical (comment-only edit, stripped
 by minification) — no rebuild commit needed for this one.
 
-### `<pending>` — fix: empty department donut shows an honest message, not a 100% pie of nothing (CHART-1)
+### `6c31e20` — fix: empty department donut shows an honest message, not a 100% pie of nothing (CHART-1)
 **Fixed.** `documents_by_department` correctly labels untagged documents `"Không đặt"`
 (`app/api/metrics.py:257`, confirmed by reading it) — the frontend just rendered that as a
 literal 100%-one-color donut, which reads as real data rather than "nothing tagged yet". Added a
@@ -155,7 +155,7 @@ just asserted. Screenshot: `audit/screenshots/after/admin-overview-donut-fixed.p
 re-confirms F3-4's KPI grid fix holds cleanly at the standard 1440px desktop width the original
 audit screenshot used — full labels, no truncation).
 
-### `<pending>` — fix: /chat adopts the Button component instead of hand-rolled buttons (ENG-1)
+### `d6ca766` — fix: /chat adopts the Button component instead of hand-rolled buttons (ENG-1)
 **Fixed, with one prerequisite fix to the design-system component itself.** `Button.jsx` had no
 `...rest` passthrough at all — no way to set `aria-label`/`title` on it, which is exactly why
 `/chat`'s icon-only buttons (send, stop, close, hamburger) had stayed hand-rolled despite the
