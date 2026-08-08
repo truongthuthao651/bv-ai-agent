@@ -43,4 +43,34 @@ fail-safe-default fix, not a behavior change for any real deployment (which alre
 Wave 0 complete: **SEC-A** and **SEC-B** fixed; **OPS-A** resolved as a side effect of the
 foundational redesign commit.
 
+## Wave 1 — Smoothness
+
+### `dd88582` — fix: refusal recovery message was dead code (REFUSAL-UI)
+**Fixed.** `isRefusal`'s exact-string comparison never matched because the server always appends
+a timing footer. Stripped the footer before comparing. Verified live: an out-of-scope query now
+shows the intended "Hãy thử nêu rõ tên sản phẩm..." recovery message instead of a dead-ended raw
+sentence. Screenshot: `audit/screenshots/after/chat-refusal-recovery-message-fixed.png`.
+
+### `9bc9a7d` — feat: loading indicator during the first-token wait (WAIT-1)
+**Fixed.** Added a "Đang tìm trong tài liệu…" status line with a reduced-motion-aware dot cue,
+shown while `streaming && !body`. Verified live with a screenshot taken ~1.5s into a real request
+(before first token). `audit/screenshots/after/chat-thinking-indicator-during-wait.png`.
+
+### `e732c47` — feat: cancel an in-flight generation (CHAT-1)
+**Fixed.** `AbortController` threaded through `askStreaming` → a "Dừng" stop button that replaces
+the send button while busy. Verified live: cancelling ~1s into an otherwise-8s+ request produced
+no new `logs/query_timings.jsonl` entry — confirms Starlette's built-in disconnect-cancellation
+already interrupts the server-side generator before it reaches its completion/logging path, so no
+separate `request.is_disconnected()` poll was needed (this resolves Phase 4's unverified
+suspicion #4, not just the client-side half of the finding).
+
+### `<pending>` — feat: persist the conversation across refresh (P2-F1)
+**Fixed.** `messages` now round-trips through `sessionStorage` (keyed per tab, cleared when the
+thread is emptied or a new chat is started) — no backend change, nothing leaves the browser.
+Verified live twice: (1) reload mid-request (before any token arrived) — the interrupted,
+still-empty assistant turn is dropped on load rather than persisted as a permanently-blank bubble
+(a small polish addition beyond the minimal fix, since the plain version of this fix would have
+shown exactly that); (2) reload after a full completed answer — text, citations, and the citation
+chips all survive intact. Screenshot: `audit/screenshots/after/chat-persistence-after-reload.png`.
+
 

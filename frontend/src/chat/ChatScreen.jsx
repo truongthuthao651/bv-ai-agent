@@ -19,10 +19,44 @@ function useIsMobile() {
   return mobile;
 }
 
+// Per-tab conversation persistence (P2-F1, audit/REPORT.md): messages lived
+// in plain useState with nothing backing it, so a refresh, accidental
+// back-button, or tab close silently destroyed the whole thread — including
+// a long multi-turn conversation an employee may have spent several minutes
+// building context in. sessionStorage is the smallest fix that closes this:
+// no new backend surface, no schema, nothing leaves the browser, and it
+// clears itself when the tab closes (matching what a user expects from "the
+// chat I currently have open", not a permanent server-side history).
+const STORAGE_KEY = "bv-chat-messages";
+
+function loadStoredMessages() {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // A message still marked "streaming" was mid-flight when the tab closed
+    // or the page was left — that request is gone now, so it must not be
+    // rendered as still-in-progress (it would show the "Đang tìm..."
+    // indicator forever with no fetch behind it).
+    const restored = parsed.map((m) => ({ ...m, streaming: false }));
+    // If the very last turn was an assistant message that never received any
+    // content (reload/close landed before the first token), drop it rather
+    // than show a permanently blank bubble with only "Tạo lại" — the user's
+    // question is still there to resend or the regenerate flow still needs
+    // a real prior turn to work from.
+    const last = restored[restored.length - 1];
+    if (last && last.role === "assistant" && !last.text) restored.pop();
+    return restored;
+  } catch {
+    return [];
+  }
+}
+
 export function ChatScreen() {
   const [theme, setTheme] = useTheme();
   const [me, setMe] = useState(null);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(loadStoredMessages);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [citation, setCitation] = useState(null);
@@ -38,6 +72,16 @@ export function ChatScreen() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages]);
+
+  useEffect(() => {
+    try {
+      if (messages.length === 0) sessionStorage.removeItem(STORAGE_KEY);
+      else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch {
+      // Private-browsing quota or storage disabled — persistence is a
+      // nice-to-have degradation, not a reason to break the chat itself.
+    }
   }, [messages]);
 
   async function send(queryText) {
