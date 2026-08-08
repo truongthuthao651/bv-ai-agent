@@ -215,3 +215,23 @@ needs a restart to take effect; confirmed via a `Method Not Allowed` failure cau
 assuming the fix worked. Screenshots in `audit/screenshots/after/`.
 
 
+
+### `1904d6e` — feat: thumbs-down feedback loop (P2-F2)
+**Fixed, with one deliberate deviation from the audit's own suggested shape.** The audit named
+query/answer text as fields to log for feedback — not implemented that way, since
+`query_timing.py` has an established, repeatedly-documented no-content-logging privacy convention
+that wins over a generic recommendation. Shipped metadata-only instead: `completion_id` (already
+present in every SSE chunk) + an optional reason, logged to `logs/feedback.jsonl` via a new
+`log_feedback()`. `POST /feedback` (log-only, no admin view yet). A "👎 Chưa đúng" action next to
+Chép/Tạo lại. 5 new backend tests.
+
+Verified live end-to-end: sent a real question, clicked the new action once it finished, confirmed
+a real record landed in `logs/feedback.jsonl` with a real `completion_id` (not a stub), then
+deleted that entry since it was test data. Also caught and cleaned up an unrelated artifact: an
+earlier, since-fixed version of one test case had written a stray `chatcmpl-abc` entry into the
+*real* log path before the test was corrected to gate on a provisioned account — removed before
+this commit so it doesn't read as real user activity.
+
+**Wave 3 in progress.** Remaining: CHAT-4 (hybrid-mode scope — a product decision, being raised
+with the user rather than decided unilaterally, given its interaction with this app's documented
+false-refusal-rate history in `docs/audit/roadmap.md`).
