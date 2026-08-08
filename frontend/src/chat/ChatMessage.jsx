@@ -62,7 +62,7 @@ function CitationRow({ citations, active, onOpen }) {
   );
 }
 
-function MessageActions({ text, onRegenerate }) {
+function MessageActions({ text, onRegenerate, onFeedback, feedbackSent }) {
   const [copied, setCopied] = useState(false);
   const btnStyle = { height: 28, padding: "0 var(--space-2)", color: "var(--text-muted)", fontSize: "var(--text-2xs)", border: "none" };
   return (
@@ -81,6 +81,21 @@ function MessageActions({ text, onRegenerate }) {
       {onRegenerate && (
         <Button variant="ghost" style={btnStyle} onClick={onRegenerate}>
           Tạo lại
+        </Button>
+      )}
+      {onFeedback && (
+        // P2-F2 (audit/REPORT.md): the only quality signal this app has in
+        // production beyond eval/'s golden set — flags this answer without
+        // sending its text anywhere (see chat/api.js's sendFeedback).
+        <Button
+          variant="ghost"
+          style={btnStyle}
+          onClick={onFeedback}
+          disabled={feedbackSent}
+          title="Báo câu trả lời này chưa đúng"
+          aria-label="Báo câu trả lời này chưa đúng"
+        >
+          {feedbackSent ? "Đã báo" : "👎 Chưa đúng"}
         </Button>
       )}
     </div>
@@ -130,7 +145,7 @@ function ThinkingIndicator() {
   );
 }
 
-export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerate }) {
+export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerate, onFeedback, feedbackSent }) {
   if (role === "user") {
     return (
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -173,7 +188,9 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
           <>
             <div style={{ fontSize: "var(--text-md)", color: "var(--text-primary)" }}>{renderMarkdown(body || " ")}</div>
             {citations.length > 0 && <CitationRow citations={citations} active={active} onOpen={onOpen} />}
-            {!streaming && <MessageActions text={body} onRegenerate={onRegenerate} />}
+            {!streaming && (
+              <MessageActions text={body} onRegenerate={onRegenerate} onFeedback={onFeedback} feedbackSent={feedbackSent} />
+            )}
           </>
         )}
       </div>

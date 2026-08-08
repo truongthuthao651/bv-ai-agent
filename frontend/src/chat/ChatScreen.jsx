@@ -7,7 +7,7 @@ import { EmptyState } from "./EmptyState.jsx";
 import { SourcePanel } from "./SourcePanel.jsx";
 import { Composer } from "./Composer.jsx";
 import { ChatMessage } from "./ChatMessage.jsx";
-import { fetchMe, askStreaming } from "./api.js";
+import { fetchMe, askStreaming, sendFeedback } from "./api.js";
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 640px)").matches);
@@ -97,8 +97,9 @@ export function ChatScreen() {
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    let completionId = null;
     try {
-      await askStreaming(
+      completionId = await askStreaming(
         [...history, { role: "user", content: query }],
         (delta) => {
           setMessages((prev) => {
@@ -119,7 +120,7 @@ export function ChatScreen() {
       setMessages((prev) => {
         const copy = prev.slice();
         const last = copy[copy.length - 1];
-        copy[copy.length - 1] = { ...last, streaming: false };
+        copy[copy.length - 1] = { ...last, streaming: false, completionId };
         return copy;
       });
       setBusy(false);
@@ -129,6 +130,24 @@ export function ChatScreen() {
 
   function stop() {
     abortRef.current?.abort();
+  }
+
+  // P2-F2 (audit/REPORT.md): thumbs-down on one answer, identified by the
+  // completion id captured above — never the query/answer text itself (see
+  // chat/api.js's sendFeedback and the backend's FeedbackRequest model).
+  const [feedbackSent, setFeedbackSent] = useState({});
+  async function giveFeedback(index) {
+    const msg = messages[index];
+    if (!msg?.completionId || feedbackSent[index]) return;
+    setFeedbackSent((prev) => ({ ...prev, [index]: true }));
+    try {
+      await sendFeedback(msg.completionId, null);
+    } catch {
+      // Best-effort UI signal — a failed feedback POST isn't worth
+      // interrupting the person who just tried to flag a bad answer with a
+      // second error message. Allow retrying by rolling the flag back.
+      setFeedbackSent((prev) => ({ ...prev, [index]: false }));
+    }
   }
 
   function regenerate(assistantIndex) {
@@ -201,6 +220,8 @@ export function ChatScreen() {
                       active={citation}
                       onOpen={setCitation}
                       onRegenerate={m.role === "assistant" && !m.streaming ? () => regenerate(i) : null}
+                      onFeedback={m.role === "assistant" && !m.streaming && m.completionId ? () => giveFeedback(i) : null}
+                      feedbackSent={!!feedbackSent[i]}
                     />
                   ))}
                   {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>Lỗi: {error}</p>}

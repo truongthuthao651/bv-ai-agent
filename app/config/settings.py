@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # is not telemetry — nothing leaves the machine).
     query_timing_log_enabled: bool = True
     query_timing_log_path: Path = Path("./logs/query_timings.jsonl")
+    # Thumbs-down signal on one streamed answer (P2-F2, audit/REPORT.md) —
+    # same metadata-only design as query timing above:
+    # completion_id + an optional short reason, never the query or answer
+    # text. The only quality signal this app has beyond eval/'s golden set;
+    # without it a bad answer in production leaves no trace at all.
+    feedback_log_enabled: bool = True
+    feedback_log_path: Path = Path("./logs/feedback.jsonl")
 
     # ---- Assistant identity / branding ----
     # Display name shown in the browser tab/header. The underlying local

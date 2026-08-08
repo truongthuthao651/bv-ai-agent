@@ -11,6 +11,7 @@ from app.config.settings import settings
 from app.query_timing import (
     TimingContext,
     format_elapsed,
+    log_feedback,
     log_query_timing,
     response_time_footer,
 )
@@ -200,3 +201,45 @@ def test_static_stream_appends_footer_when_timing_given(monkeypatch) -> None:
         if c.strip() and c.strip() != "data: [DONE]"
     )
     assert plain_body == "Xin chào."
+
+
+# --- P2-F2: thumbs-down feedback log (audit/REPORT.md) ---
+
+
+def test_log_feedback_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", True)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-abc123", "sai_thong_tin")
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["completion_id"] == "chatcmpl-abc123"
+    assert record["reason"] == "sai_thong_tin"
+    assert "ts" in record
+    # Metadata-only: no field on this record could ever carry query/answer
+    # text (matches log_query_timing's own no-content-logging convention).
+    assert set(record.keys()) == {"ts", "completion_id", "reason"}
+
+
+def test_log_feedback_reason_is_optional(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", True)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-xyz", None)
+
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["reason"] is None
+
+
+def test_log_feedback_is_noop_when_disabled(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", False)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-abc123", None)
+
+    assert not path.exists()

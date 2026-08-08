@@ -131,3 +131,27 @@ def log_query_timing(
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:  # a logging failure must never break the answer
         logger.warning("Could not write query timing log to %s: %s", path, exc)
+
+
+def log_feedback(completion_id: str, reason: str | None) -> None:
+    """Append one thumbs-down record (P2-F2, audit/REPORT.md). Metadata-only,
+    same convention as ``log_query_timing`` above: never the query or answer
+    text, just enough to see *that* and *roughly why* an answer was flagged.
+    Best-effort, never raises — a logging failure must never surface as an
+    error to the person who just took the time to flag a bad answer.
+    """
+    if not settings.feedback_log_enabled:
+        return
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "completion_id": completion_id,
+        "reason": reason,
+    }
+    logger.info("feedback: %s", record)
+    try:
+        path = settings.feedback_log_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:  # a logging failure must never break the UI
+        logger.warning("Could not write feedback log to %s: %s", path, exc)
