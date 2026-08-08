@@ -100,7 +100,7 @@ P2-C1/C2/C3, CHAT-3.
 
 ## Wave 2 — Visual polish and design-system compliance
 
-### `<pending>` — fix: admin console responsive layout (F3-4)
+### `fd4a6b2` — fix: admin console responsive layout (F3-4)
 **Fixed — the highest-value visual fix in the audit.** Ported `chat/ChatScreen.jsx`'s proven
 `useIsMobile()`/slide-over-drawer pattern to `AdminShell.jsx` (640px threshold, same as chat): the
 264px rail now collapses to a hamburger-triggered drawer below that width instead of eating 70%
@@ -122,7 +122,7 @@ Bonus (found while touching the same button): added the missing `aria-label="Đ�
 copies of the icon-only logout button (`AdminShell.jsx` and `chat/Sidebar.jsx`) — this is F5-1,
 originally slated for Wave 4, but one line each while already in this exact code.
 
-### `<pending>` — fix: light-mode `--text-muted` contrast (F3-3)
+### `511e9d3` — fix: light-mode `--text-muted` contrast (F3-3)
 **Fixed.** `--text-muted` (light theme) was `#8CA0B3` — computed at 2.58:1 against `--bg`, well
 below WCAG AA's 4.5:1 for normal text (dark theme's `--text-muted` already passed at 5.54:1,
 untouched). Changed to `#5B7184`, computed at ~4.80:1 — real margin above the threshold, not a
@@ -132,5 +132,16 @@ legibly darker in the screenshot. `frontend/src/tokens/colors.css` is nominally 
 hand-edited per CLAUDE.md's design-system convention — added a comment flagging this specific
 line so a future re-vendor doesn't silently regress it back to the failing value.
 Screenshot: `audit/screenshots/after/chat-text-muted-contrast-fixed.png`.
+
+### `<pending>` — docs: confirm landing/login theming is deliberate (F3-1)
+**Resolved as documentation, not a code change.** Checked `app/templates/login.html` alongside
+`LandingScreen.jsx`: neither renders a `ThemeToggle`, and both use the identical fixed navy-hero
+gradient regardless of `prefers-color-scheme` — a consistent pattern (pre-authentication surfaces
+stay on-brand navy; only the post-login product respects the signed-in user's theme), not a
+half-finished token migration on one page. Documented this explicitly in `LandingScreen.jsx`'s
+header comment per the audit's own suggested resolution path, rather than rewiring `onInk`/`INK`
+to theme tokens — that would be a deliberate redesign decision for later, not a bug fix now.
+No visual or functional change; `app/static/dist` is byte-identical (comment-only edit, stripped
+by minification) — no rebuild commit needed for this one.
 
 

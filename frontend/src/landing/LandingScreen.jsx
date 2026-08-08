@@ -2,7 +2,18 @@ import { Triangle } from "../brand/Triangle.jsx";
 import { Lift } from "../brand/Lift.jsx";
 
 /* Landing → auth flow. Navy is the marketing surface; the app itself stays
- * light. Ported from ui_kits/landing/LandingScreen.jsx, translated, with one
+ * light. CONFIRMED DELIBERATE (audit/03-frontend.md finding F3-1 asked this
+ * to be settled one way or the other): this page and app/templates/login.html
+ * both render a fixed navy-hero design regardless of prefers-color-scheme,
+ * with no ThemeToggle exposed on either — pre-authentication surfaces stay
+ * on-brand navy; only the post-login product (chat, admin) respects the
+ * signed-in user's light/dark preference. Not an oversight or a
+ * half-migrated token pass — if this page ever needs to theme, wire
+ * `onInk`/`INK` below to the color tokens instead of their current hardcoded
+ * hex values, but that's a deliberate redesign decision to make later, not a
+ * bug to fix now.
+ *
+ * Ported from ui_kits/landing/LandingScreen.jsx, translated, with one
  * deliberate structural simplification: the kit's header/hero each carry two
  * CTAs (a "sign in" and a "request access"/"start" pair) because its auth kit
  * assumes a signup flow. This app has exactly one real gate today — the
