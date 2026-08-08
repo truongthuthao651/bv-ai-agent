@@ -177,4 +177,18 @@ normally), and opened the mobile drawer (hamburger → drawer, unaffected). Scre
 
 **Wave 2 complete.** All 5 items fixed and verified live: F3-4, F3-3, F3-1, CHART-1, ENG-1.
 
+## Wave 3 — Product gaps
+
+### `3a2ad3f` — fix: terminology — inaccurate accounts copy, raw English doc_type labels (P2-T1/T2)
+**Fixed, both.** P2-T1: `UsersView.jsx`'s description called every account "for the admin page" —
+leftover copy from before the RBAC split. P2-T2: `doc_type` rendered as a raw English enum
+("policy", "other") in the documents table and Overview's recent-documents list despite the
+upload/edit dropdowns already being bilingual — extracted a shared `DOC_TYPE_LABEL` lookup from
+the existing dropdown options (exported once, imported where needed) rather than duplicating it.
+Verified live — screenshots in `audit/screenshots/after/`.
+
+**Skipped: P2-T3** (department code expansion). I don't know what PTSP/DP/DVA stand for in Bảo
+Việt Life's real org chart, and inventing plausible-looking full names would be fabricating
+business information, not fixing a bug — flagged to the user rather than guessed at.
+
 
