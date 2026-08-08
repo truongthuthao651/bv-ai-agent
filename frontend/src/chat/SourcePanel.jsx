@@ -1,3 +1,5 @@
+import { Button } from "../components/index.js";
+
 /** Ported from ui_kits/chatbot/ChatParts.jsx's SourcePanel, reduced to what
  * the real API actually exposes: document title, section/page, and a real
  * link to the source. The kit's "% similarity" and passage preview need
@@ -10,9 +12,14 @@ export function SourcePanel({ citation, onClose }) {
         <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)" }}>
           Nguồn {citation.n}
         </div>
-        <button onClick={onClose} aria-label="Đóng khung nguồn" style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 4 }}>
+        <Button
+          variant="ghost"
+          onClick={onClose}
+          aria-label="Đóng khung nguồn"
+          style={{ width: 28, height: 28, padding: 0, fontSize: 15, lineHeight: 1, border: "none" }}
+        >
           ✕
-        </button>
+        </Button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-5)" }}>
         <div style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)", letterSpacing: "var(--tracking-tight)" }}>

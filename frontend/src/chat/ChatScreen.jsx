@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
 import { useTheme } from "../theme/useTheme.js";
+import { Button } from "../components/index.js";
 import { Sidebar } from "./Sidebar.jsx";
 import { EmptyState } from "./EmptyState.jsx";
 import { SourcePanel } from "./SourcePanel.jsx";
@@ -159,9 +160,14 @@ export function ChatScreen() {
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%" }}>
         <header style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", height: 56, flexShrink: 0, padding: mobile ? "0 var(--space-4)" : "0 var(--space-5) 0 var(--space-8)", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
           {mobile && (
-            <button onClick={() => setRailOpen(true)} aria-label="Mở menu" style={{ border: "none", background: "transparent", fontSize: 17, cursor: "pointer", color: "var(--text-primary)", padding: 0, width: 32, height: 32 }}>
+            <Button
+              variant="ghost"
+              onClick={() => setRailOpen(true)}
+              aria-label="Mở menu"
+              style={{ border: "none", fontSize: 17, color: "var(--text-primary)", padding: 0, width: 32, height: 32 }}
+            >
               ☰
-            </button>
+            </Button>
           )}
           <div style={{ minWidth: 0, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {messages.length === 0 ? "Cuộc trò chuyện mới" : messages[0]?.text}

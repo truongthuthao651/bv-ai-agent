@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "../components/index.js";
 
 /** Ported from ui_kits/chatbot/ChatParts.jsx's Composer. Attachment chips and
  * the "Scope"/model pickers are dropped — see the Phase 4 gap list: there is
@@ -79,52 +80,26 @@ export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) 
               // model's own answers routinely take 8-50s (audit/04-chatbot.md
               // §4.2), and until now there was no way to back out of a wrong
               // or regretted question short of closing the tab.
-              <button
+              <Button
+                variant="danger"
                 onClick={onStop}
                 title="Dừng"
                 aria-label="Dừng tạo câu trả lời"
-                style={{
-                  marginLeft: "auto",
-                  width: 36,
-                  height: 36,
-                  borderRadius: "var(--radius-md)",
-                  border: "none",
-                  background: "var(--danger)",
-                  color: "var(--text-on-accent)",
-                  cursor: "pointer",
-                  fontSize: 15,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 150ms",
-                }}
+                style={{ marginLeft: "auto", width: 36, height: 36, padding: 0, border: "none" }}
               >
                 <span style={{ width: 10, height: 10, borderRadius: 2, background: "currentColor" }} />
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
+                variant="primary"
                 onClick={submit}
                 disabled={!value.trim() || disabled}
                 title="Gửi"
                 aria-label="Gửi câu hỏi"
-                style={{
-                  marginLeft: "auto",
-                  width: 36,
-                  height: 36,
-                  borderRadius: "var(--radius-md)",
-                  border: "none",
-                  background: value.trim() && !disabled ? "var(--accent)" : "var(--surface-sunken)",
-                  color: value.trim() && !disabled ? "var(--text-on-accent)" : "var(--text-muted)",
-                  cursor: value.trim() && !disabled ? "pointer" : "not-allowed",
-                  fontSize: 15,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "background 150ms",
-                }}
+                style={{ marginLeft: "auto", width: 36, height: 36, padding: 0, border: "none", fontSize: 15 }}
               >
                 ↑
-              </button>
+              </Button>
             )}
           </div>
         </div>

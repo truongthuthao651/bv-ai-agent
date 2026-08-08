@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Triangle } from "../brand/Triangle.jsx";
+import { Button } from "../components/index.js";
 import { renderMarkdown, splitSources } from "./markdown.jsx";
 
 const REFUSAL_TEXT = "Tôi không tìm thấy thông tin trong tài liệu.";
@@ -63,11 +64,12 @@ function CitationRow({ citations, active, onOpen }) {
 
 function MessageActions({ text, onRegenerate }) {
   const [copied, setCopied] = useState(false);
-  const btn = { display: "inline-flex", alignItems: "center", gap: "var(--space-1)", height: 28, padding: "0 var(--space-2)", border: "none", background: "transparent", color: "var(--text-muted)", fontFamily: "var(--font-sans)", fontSize: "var(--text-2xs)", fontWeight: "var(--weight-semibold)", borderRadius: "var(--radius-sm)", cursor: "pointer" };
+  const btnStyle = { height: 28, padding: "0 var(--space-2)", color: "var(--text-muted)", fontSize: "var(--text-2xs)", border: "none" };
   return (
     <div style={{ display: "flex", gap: "var(--space-1)", marginTop: "var(--space-3)", marginLeft: "calc(var(--space-2) * -1)" }}>
-      <button
-        style={btn}
+      <Button
+        variant="ghost"
+        style={btnStyle}
         onClick={() => {
           navigator.clipboard?.writeText(text);
           setCopied(true);
@@ -75,11 +77,11 @@ function MessageActions({ text, onRegenerate }) {
         }}
       >
         {copied ? "Đã chép" : "Chép"}
-      </button>
+      </Button>
       {onRegenerate && (
-        <button style={btn} onClick={onRegenerate}>
+        <Button variant="ghost" style={btnStyle} onClick={onRegenerate}>
           Tạo lại
-        </button>
+        </Button>
       )}
     </div>
   );

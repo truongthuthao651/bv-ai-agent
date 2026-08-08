@@ -155,4 +155,26 @@ just asserted. Screenshot: `audit/screenshots/after/admin-overview-donut-fixed.p
 re-confirms F3-4's KPI grid fix holds cleanly at the standard 1440px desktop width the original
 audit screenshot used — full labels, no truncation).
 
+### `<pending>` — fix: /chat adopts the Button component instead of hand-rolled buttons (ENG-1)
+**Fixed, with one prerequisite fix to the design-system component itself.** `Button.jsx` had no
+`...rest` passthrough at all — no way to set `aria-label`/`title` on it, which is exactly why
+`/chat`'s icon-only buttons (send, stop, close, hamburger) had stayed hand-rolled despite the
+design system existing (audit/01-engineering.md finding ENG-1 flagged this as the likely root
+cause without confirming it — confirmed here by reading the component). Added `...rest` spread
+onto the underlying `<button>`; this benefits every future icon-only `Button` usage app-wide, not
+just this fix.
+
+Swapped onto `Button` where its shape genuinely fits (single-line label or icon, not a
+multi-line compound element): `Composer.jsx`'s send/stop buttons (`variant="primary"`/`"danger"`),
+`ChatScreen.jsx`'s mobile hamburger, `SourcePanel.jsx`'s close button, `ChatMessage.jsx`'s
+Copy/Regenerate actions. Left `EmptyState.jsx`'s prompt-suggestion cards as their own thing —
+they're title+subtitle compound cards, not a fit for `Button`'s single-line `inline-flex` shape,
+and forcing them in would fight the component rather than reuse it.
+
+Verified live: sent a real question end-to-end (Copy/Regenerate render and the answer completes
+normally), and opened the mobile drawer (hamburger → drawer, unaffected). Screenshot:
+`audit/screenshots/after/chat-buttons-using-design-system.png`.
+
+**Wave 2 complete.** All 5 items fixed and verified live: F3-4, F3-3, F3-1, CHART-1, ENG-1.
+
 

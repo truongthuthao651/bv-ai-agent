@@ -1,7 +1,12 @@
 import React from "react";
 
-/** Every variant ships default, hover, active, focus-visible and disabled. */
-export function Button({ children, variant = "primary", size = "md", disabled = false, onClick, type = "button", style }) {
+/** Every variant ships default, hover, active, focus-visible and disabled.
+ * `...rest` forwards anything else (aria-label, title, aria-hidden, id, ...)
+ * onto the underlying <button> — needed for icon-only usage, where an
+ * accessible name has to come from an attribute rather than visible text
+ * (ENG-1, audit/REPORT.md: this was previously the reason /chat's icon
+ * buttons couldn't adopt this component and stayed hand-rolled). */
+export function Button({ children, variant = "primary", size = "md", disabled = false, onClick, type = "button", style, ...rest }) {
   const sizes = {
     sm: { height: "var(--control-h-sm)", padding: "0 var(--space-3)", fontSize: "var(--text-xs)" },
     md: { height: "var(--control-h-md)", padding: "0 var(--space-4)", fontSize: "var(--text-sm)" },
@@ -31,6 +36,7 @@ export function Button({ children, variant = "primary", size = "md", disabled = 
       type={type} disabled={disabled} onClick={onClick}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => { setHover(false); setPress(false); }}
       onMouseDown={() => setPress(true)} onMouseUp={() => setPress(false)}
+      {...rest}
       style={{
         fontFamily: "var(--font-sans)", fontWeight: "var(--weight-semibold)", borderRadius: "var(--radius-md)",
         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)",
