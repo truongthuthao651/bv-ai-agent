@@ -2,11 +2,12 @@
 # =============================================================================
 # One-time NATIVE (no-Docker) setup for macOS / Linux.
 #
-# Installs everything into two virtualenvs inside the repo — no system-wide
+# Installs everything into one virtualenv inside the repo — no system-wide
 # software beyond Python 3.11/3.12 and Ollama (https://ollama.com):
-#   .venv        — the FastAPI app (pandoc arrives bundled via pypandoc-binary;
-#                  the vector DB runs EMBEDDED in-process, so no Qdrant server)
-#   .venv-webui  — Open WebUI (big dependency tree; kept apart from the app's)
+#   .venv — the FastAPI app AND frontend (pandoc arrives bundled via
+#           pypandoc-binary; the vector DB runs EMBEDDED in-process, so no
+#           Qdrant server; the landing/admin/chat UI is served from the same
+#           process — see frontend/ for the dev-machine-only build step)
 # Then pulls all model weights via scripts/setup_models.sh.
 #
 # Network access is needed ONLY during this script (pip + model downloads);
@@ -17,7 +18,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# ---- Pick a Python: Open WebUI 0.5.4 requires >=3.11,<3.13 ----
+# ---- Pick a Python: pinned to 3.11/3.12 (see CLAUDE.md) ----
 PYTHON=""
 for cand in python3.12 python3.11 python3; do
   if command -v "$cand" >/dev/null 2>&1; then
@@ -28,7 +29,7 @@ for cand in python3.12 python3.11 python3; do
   fi
 done
 if [[ -z "$PYTHON" ]]; then
-  echo "ERROR: need Python 3.11 or 3.12 on PATH (Open WebUI does not support 3.13 yet)." >&2
+  echo "ERROR: need Python 3.11 or 3.12 on PATH." >&2
   echo "       Install from https://www.python.org/downloads/ and re-run." >&2
   exit 1
 fi
@@ -55,23 +56,22 @@ echo "==> Creating app venv (.venv) and installing pinned requirements"
 .venv/bin/pip install torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/pip install -r requirements-pdf.txt
 
-# ---- Open WebUI venv (version pinned to match the compose image tag) ----
-echo "==> Creating Open WebUI venv (.venv-webui)"
-[[ -d .venv-webui ]] || "$PYTHON" -m venv .venv-webui
-.venv-webui/bin/pip install --upgrade pip
-.venv-webui/bin/pip install open-webui==0.5.4
-
-# ---- Bảo Việt branding (logo, colors, VI prompt suggestions) ----
-# Patches the installed Open WebUI package in place; also re-run automatically
-# by run_native.sh before each start (pip upgrades restore stock assets).
-.venv/bin/python scripts/open_webui/apply_branding.py || true
+# ---- Frontend build (dev-machine only — see frontend/, CLAUDE.md) ----
+# Skipped here if Node isn't installed: the committed app/static/dist/ still
+# works for deployment; only rebuild when you've actually changed frontend/.
+if command -v npm >/dev/null 2>&1; then
+  echo "==> Building frontend (frontend/ -> app/static/dist/)"
+  (cd frontend && npm install && npm run build)
+else
+  echo "WARN: npm not found — skipping frontend build. app/static/dist/ (already" >&2
+  echo "      committed) will be served as-is; install Node to rebuild it." >&2
+fi
 
 # ---- Model weights (Ollama models + HF embedding/reranker/docling) ----
 bash scripts/setup_models.sh
 
 echo "==> Native setup complete."
-echo "    Start the stack:   bash scripts/run_native.sh"
-echo "    (Run it once now, while still online: Open WebUI fetches a small"
-echo "     internal model on first start; afterwards everything is offline.)"
-echo "    Check health:      bash scripts/healthcheck.sh"
-echo "    Stop the stack:    bash scripts/stop_native.sh"
+echo "    Provision an account:  .venv/bin/python scripts/seed_accounts.py you@baoviet.com PASSWORD admin"
+echo "    Start the stack:       bash scripts/run_native.sh"
+echo "    Check health:          bash scripts/healthcheck.sh"
+echo "    Stop the stack:        bash scripts/stop_native.sh"

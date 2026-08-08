@@ -6,14 +6,19 @@ Trợ lý AI chạy **hoàn toàn nội bộ** (offline) giúp nhân viên tra c
 về tài liệu công ty: hợp đồng, quy trình, biểu mẫu, bảng tính, hình ảnh scan.
 
 > **Thương hiệu:** tên hiển thị ("Trợ lý AI Bảo Việt Life") đặt qua `ASSISTANT_NAME`
-> / `WEBUI_NAME` trong `.env` — chỉ là phần hiển thị, mô hình chạy nền không đổi.
-> Đổi các giá trị này (và `ASSISTANT_MODEL_ID` / `DEFAULT_MODELS`) để đổi thương hiệu.
+> trong `.env` — chỉ là phần hiển thị, mô hình chạy nền không đổi. Đổi giá trị
+> này (và `ASSISTANT_MODEL_ID`) để đổi thương hiệu.
 Câu trả lời bằng **tiếng Việt**, có **trích dẫn nguồn**, và **hiển thị công thức
 toán** (LaTeX). Toàn bộ dữ liệu **không rời khỏi máy** — không gọi API bên ngoài.
 
 - **Mô hình (qua Ollama):** chat `qwen3:8b`, thị giác `qwen2.5vl:7b`, embedding `bge-m3`
 - **Cơ sở dữ liệu vector:** Qdrant (tìm kiếm hybrid dense + sparse), rerank `bge-reranker-v2-m3`
-- **Giao diện:** Open WebUI trỏ tới API FastAPI (hiển thị LaTeX bằng KaTeX)
+- **Giao diện:** một ứng dụng React duy nhất, một cổng duy nhất (8000) — trang
+  giới thiệu (`/`), giao diện trò chuyện (`/chat`, công thức LaTeX qua KaTeX
+  tự lưu trữ — dùng được cho MỌI tài khoản), và trang quản trị (`/admin`, nạp/
+  sửa/xoá tài liệu, số liệu — **chỉ tài khoản vai trò admin**). Đăng nhập bằng
+  tài khoản email `@baoviet.com` (`app/accounts.py`, xem bước 7 dưới đây).
+  Open WebUI đã được gỡ bỏ hoàn toàn.
 
 > ⚠️ **Bảo mật:** Thư mục `data/real/` chứa tài liệu mật của công ty — **không bao
 > giờ** đưa vào Git, không đọc trong quá trình phát triển. Chỉ dùng `data/synthetic/`
@@ -41,58 +46,58 @@ cd bv-ai-agent
 # 2) Tạo file cấu hình cho máy này (chỉnh nếu cần)
 cp .env.example .env
 #    - Máy yếu: sửa CHAT_MODEL=qwen3:4b trong .env
-#    - Đổi cổng nếu bị trùng: API_PORT, OPEN_WEBUI_PORT
-#    - Đặt ADMIN_PASSWORD trong .env nếu máy này có người khác dùng chung
-#      (bảo vệ trang quản trị http://localhost:8000 bằng mật khẩu)
+#    - Đổi cổng nếu bị trùng: API_PORT
+#    - Đặt SESSION_SECRET_KEY thành một chuỗi ngẫu nhiên cố định (xem chú thích
+#      trong .env.example) để phiên đăng nhập /admin và /chat không bị đăng
+#      xuất mỗi khi khởi động lại dịch vụ
 
-# 3) Cài đặt một lần (tạo môi trường Python + tải toàn bộ mô hình — cần mạng)
+# 3) Cài đặt một lần (Python + mô hình + build sẵn frontend — cần mạng;
+#    cần Node/npm chỉ cho bước build frontend, KHÔNG cần trên máy triển khai
+#    thật nếu bạn build sẵn ở máy dev rồi commit app/static/dist/)
 bash scripts/setup_native.sh
 
-# 4) Khởi động hệ thống (lần đầu hãy chạy khi còn mạng — Open WebUI tải một
-#    thành phần nhỏ ở lần khởi động đầu tiên; các lần sau hoàn toàn offline)
+# 4) Khởi động hệ thống (lần đầu hãy chạy khi còn mạng; sau đó hoàn toàn offline)
 bash scripts/run_native.sh
 
 # 5) Kiểm tra hệ thống
 bash scripts/healthcheck.sh
 
-# 6) Cài đặt tính năng "Nạp tài liệu" ngay trong Open WebUI (một lần, xem
-#    scripts/open_webui/README.md để biết chi tiết từng bước)
+# 6) Tạo tài khoản (một lần cho mỗi người — KHÔNG có đăng ký công khai,
+#    admin tạo tài khoản bằng lệnh dưới đây; email phải @baoviet.com)
+.venv/bin/python scripts/seed_accounts.py ban-quan-tri@baoviet.com "MatKhauManh1!" admin
+.venv/bin/python scripts/seed_accounts.py nhanvien@baoviet.com "MatKhauManh2!" employee
+#    - Tài khoản "admin" thấy đầy đủ /admin (nạp/sửa/xoá tài liệu, danh sách
+#      tài khoản) VÀ dùng được /chat.
+#    - Tài khoản "employee" CHỈ dùng được /chat — vào /admin sẽ tự động
+#      chuyển hướng về /chat, và các API quản trị trả lỗi 403.
+#    - Chưa dùng SSO nội bộ (không có sẵn) — xem CLAUDE.md, phần ghi chú ngay
+#      dưới 5 quy tắc an toàn, nếu công ty sau này có SSO để chuyển sang.
 
-# 7) Tạo tài khoản & phân quyền (một lần)
-#    - Mở http://localhost:3000 và ĐĂNG KÝ tài khoản ĐẦU TIÊN — tài khoản này
-#      tự động trở thành admin (đặt mật khẩu mạnh, đây là tài khoản quản trị).
-#    - Cho phép nhân viên thấy trợ lý: Admin Panel → Settings → Models →
-#      "bao-viet-life" → Visibility: Public → Save. (Mặc định Open WebUI ẩn
-#      mọi model với người dùng thường; các model gốc qwen3/qwen2.5vl cứ để
-#      riêng tư — nhân viên chỉ cần thấy "Trợ lý AI Bảo Việt Life".)
-#    - Tạo tài khoản cho từng nhân viên: Admin Panel → Users → "+" (vai trò
-#      "user"). Đăng ký công khai đã tắt — chỉ admin tạo được tài khoản.
-
-# 8) Mở giao diện
-#    Trình duyệt: http://localhost:3000  (Open WebUI — đăng nhập rồi trò chuyện)
-#    Trang quản trị (chỉ mở được TRÊN máy chủ này): http://localhost:8000
-#    API sức khỏe: http://localhost:8000/health
+# 7) Mở giao diện
+#    Trang giới thiệu: http://localhost:8000
+#    Trò chuyện:        http://localhost:8000/chat   (mọi tài khoản)
+#    Trang quản trị:    http://localhost:8000/admin   (chỉ tài khoản admin —
+#                        cũng có một nút "Mở trang quản trị" ngay trong /chat)
+#    API sức khỏe:      http://localhost:8000/health
 ```
 
 Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm trong `logs/`.
 
-> **Phân quyền (RBAC):** nhân viên đăng nhập và chỉ chat; mọi chức năng quản
-> trị (nạp/xoá tài liệu, cấu hình, tạo tài khoản) chỉ admin thấy. Cụ thể:
-> Open WebUI yêu cầu đăng nhập (`WEBUI_AUTH=true`), API cổng 8000 chỉ nghe
-> trên `127.0.0.1` (`API_HOST` trong `.env`) nên nhân viên trong mạng LAN
-> không truy cập được trang quản trị hay gọi thẳng API nạp/xoá tài liệu.
-> KHÔNG đổi `WEBUI_AUTH` về `false` sau khi đã có tài khoản — Open WebUI sẽ
-> từ chối khởi động. Nếu máy chủ này có người khác dùng chung (không chỉ
-> admin), đặt thêm `ADMIN_PASSWORD` trong `.env` — trang quản trị sẽ yêu cầu
-> đăng nhập riêng tại `http://localhost:8000/login` trước khi cho nạp/xoá tài
-> liệu hay xem trang quản trị (để trống = không yêu cầu, như trước đây).
+> **Phân quyền (RBAC):** một hệ thống tài khoản duy nhất (`app/accounts.py`) —
+> email `@baoviet.com` + mật khẩu, cấp bằng `scripts/seed_accounts.py`, không
+> có đăng ký công khai. Vai trò "admin" dùng được cả `/admin` và `/chat`; vai
+> trò "employee" chỉ dùng được `/chat`. Việc chặn `/admin` khỏi "employee" thực
+> thi ở CẢ HAI lớp — không chỉ ẩn nút trên giao diện: vào thẳng `/admin` sẽ bị
+> chuyển hướng về `/chat`, và mọi API quản trị (`GET/PATCH/DELETE /documents`,
+> `GET /metrics/summary`, `GET /accounts`) trả 403 nếu gọi trực tiếp bằng tài
+> khoản "employee". `API_HOST` mặc định `127.0.0.1` (chỉ máy chủ này) nên mọi
+> tài khoản, kể cả "employee", chỉ đăng nhập được TỪ máy chủ trừ khi mở
+> `API_HOST=0.0.0.0` (xem mục LAN bên dưới).
 
-> **Nạp tài liệu (chỉ admin):** admin nạp tài liệu ngay trong Open WebUI
-> (chọn model "📥 Nạp tài liệu", đính kèm tệp, gửi) — xem
-> `scripts/open_webui/README.md` cho bước cài đặt một lần. Giữ model này ở
-> chế độ Private (mặc định) để nhân viên không thấy nó. Trang
-> `http://localhost:8000` là tiện ích quản trị trên máy chủ (trạng thái hệ
-> thống, danh sách tài liệu, nạp/hỏi thử nhanh) — không bắt buộc dùng hằng ngày.
+> **Nạp tài liệu (chỉ admin):** trang `/admin` (tài khoản vai trò admin) có
+> màn hình "Tài liệu" với kéo-thả, sửa, xoá — chạm trực tiếp vào kho Qdrant.
+> `/admin` cũng có trạng thái hệ thống, số liệu chất lượng, và hỏi thử nhanh —
+> không bắt buộc dùng hằng ngày.
 
 > **Thời gian trả lời:** dưới mỗi câu trả lời có dòng nhỏ "⏱ Thời gian trả lời:
 > 1m55s" cho biết hệ thống mất bao lâu để trả lời (tính từ lúc nhận câu hỏi đến
@@ -106,30 +111,21 @@ Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm tron
 > liên kết chỉ bấm được khi mở TRÊN máy chủ; nhân viên ở máy khác trong mạng LAN
 > bấm vào sẽ mở `localhost` của chính họ (không có gì). Muốn nhân viên bấm được:
 > đặt `API_PUBLIC_BASE_URL` thành địa chỉ LAN của máy chủ (ví dụ
-> `http://192.168.1.20:8000`), đặt `API_HOST=0.0.0.0` để hai tuyến chỉ-đọc
-> `/documents/{id}/view` và `/file` mở được từ LAN, và GIỮ `ADMIN_PASSWORD` để
-> chức năng nạp/xoá vẫn được bảo vệ. Khi giá trị này là loopback, API ghi một
-> cảnh báo lúc khởi động. Để nguyên nếu chấp nhận trích dẫn chỉ dùng trên máy chủ.
+> `http://192.168.1.20:8000`), và đặt `API_HOST=0.0.0.0` để hai tuyến chỉ-đọc
+> `/documents/{id}/view` và `/file` mở được từ LAN — tài khoản @baoviet.com
+> (bước 7) vẫn bảo vệ nạp/sửa/xoá vì đó là những tuyến riêng, có gác cổng.
+> Khi giá trị này là loopback, API ghi một cảnh báo lúc khởi động. Để nguyên
+> nếu chấp nhận trích dẫn chỉ dùng trên máy chủ.
 >
 > ⚠️ **Quan trọng — `API_HOST=0.0.0.0` cũng mở `/v1/chat/completions` ra cả
-> mạng LAN, KHÔNG cần đăng nhập.** `ADMIN_PASSWORD` chỉ bảo vệ trang quản trị
-> (nạp/xoá tài liệu) và đăng nhập Open WebUI (`WEBUI_AUTH`) chỉ bảo vệ trình
-> duyệt Open WebUI — cả hai đều KHÔNG bảo vệ việc gọi thẳng
-> `/v1/chat/completions` bằng một request HTTP thông thường từ bất kỳ máy nào
-> trong mạng. Trước khi đặt `API_HOST=0.0.0.0`, hãy làm MỘT trong hai việc:
-> đặt `API_SHARED_SECRET` thành một chuỗi ngẫu nhiên và đặt `OPENAI_API_KEY`
-> của Open WebUI thành đúng giá trị đó (xem `.env.example`), hoặc giới hạn
-> quyền truy cập cổng 8000 bằng tường lửa/router chỉ cho các máy trong công ty.
-> API ghi một cảnh báo lúc khởi động nếu `API_HOST=0.0.0.0` mà chưa đặt
-> `API_SHARED_SECRET`.
-
-> **Giao diện thương hiệu Bảo Việt:** logo, màu xanh/vàng thương hiệu và các
-> câu hỏi gợi ý (thuật ngữ định phí, quy trình nội bộ…) được tự động áp dụng
-> bởi `scripts/open_webui/apply_branding.py` — chạy sẵn trong `setup_native.sh`
-> và mỗi lần `run_native.sh` khởi động Open WebUI. Lưu ý: gợi ý câu hỏi tiếng
-> Việt xuất hiện từ **lần khởi động thứ hai** trở đi (lần đầu Open WebUI mới
-> tạo cơ sở dữ liệu cấu hình). Nếu nâng cấp `open-webui` bằng pip, chỉ cần
-> khởi động lại bằng `run_native.sh` là thương hiệu được áp dụng lại.
+> mạng LAN.** Tuyến này chấp nhận HOẶC một phiên đăng nhập hợp lệ (`/chat` của
+> bạn tự động gửi kèm — không cần cấu hình gì) HOẶC `API_SHARED_SECRET` — nên
+> một nhân viên đã đăng nhập `/chat` luôn gọi được, nhưng vẫn nên đặt
+> `API_SHARED_SECRET` thành một chuỗi ngẫu nhiên (xem `.env.example`) để chặn
+> một request HTTP trực tiếp, không có phiên đăng nhập, từ máy khác trong
+> mạng. Hoặc giới hạn quyền truy cập cổng 8000 bằng tường lửa/router chỉ cho
+> các máy trong công ty. API ghi một cảnh báo lúc khởi động nếu
+> `API_HOST=0.0.0.0` mà chưa đặt `API_SHARED_SECRET`.
 
 > **Trợ lý tư vấn / so sánh sản phẩm:** với câu hỏi mang tính so sánh hoặc
 > khuyến nghị ("so sánh quyền lợi A và B", "khách hàng nên chọn sản phẩm nào?"),
@@ -157,7 +153,7 @@ Dừng hệ thống: `bash scripts/stop_native.sh`. Nhật ký chạy nằm tron
 > Khi trợ lý dùng các tài liệu này, phần "Nguồn tham khảo" sẽ hiển thị **liên
 > kết tới địa chỉ công khai gốc** kèm nhãn "(nguồn công khai)", để nhân viên bấm
 > vào kiểm chứng. Ứng dụng không bao giờ tự truy cập địa chỉ đó. **Chỉ đặt tài
-> liệu CÔNG KHAI vào đây** — tài liệu nội bộ nạp qua Open WebUI như bình thường.
+> liệu CÔNG KHAI vào đây** — tài liệu nội bộ nạp qua trang /admin như bình thường.
 > Cách khác cho một tệp lẻ: nạp qua trang quản trị và điền ô "Nguồn URL công khai".
 
 > Mọi giá trị đặc thù theo máy nằm trong `.env`, **không** nằm trong mã nguồn.
@@ -173,29 +169,23 @@ render **math formulas** as LaTeX. Nothing leaves the machine — no external AP
 
 - **Serving (Ollama):** chat `qwen3:8b`, vision `qwen2.5vl:7b`, embeddings `bge-m3`
 - **Vector DB:** Qdrant (hybrid dense + sparse), reranker `bge-reranker-v2-m3`
-- **Frontend:** Open WebUI pointed at the FastAPI endpoint (KaTeX for LaTeX)
+- **Frontend:** a single React app (`frontend/`), one process, one port — the
+  landing page (`/`), a bespoke chat UI (`/chat`, self-hosted KaTeX, any
+  signed-in account), and the admin console (`/admin`, admin role only). Open
+  WebUI has been fully retired: no second login, no port 3000. One account
+  system (email `@baoviet.com` + password, see step 6 above) gates both
+  `/admin` and `/chat`, with role-based access — see RBAC below.
 
 **Deployment is Docker-free** (company machines don't allow Docker): the
 `scripts/*_native.sh` scripts run everything directly — the API in a local
-venv (pandoc bundled via `pypandoc-binary`), Open WebUI pip-installed in its
-own venv, and Qdrant **embedded in-process** via qdrant-client local mode
-(`QDRANT_LOCAL_PATH` in `.env`; empty switches back to server mode at
-`QDRANT_URL`). Only Python 3.11/3.12 and Ollama need to be installed. See the
-deployment steps above (same commands). Development uses `data/synthetic/`
-only; `data/real/` is confidential and never touched.
+venv (pandoc bundled via `pypandoc-binary`), and Qdrant **embedded in-process**
+via qdrant-client local mode (`QDRANT_LOCAL_PATH` in `.env`; empty switches
+back to server mode at `QDRANT_URL`). Only Python 3.11/3.12 and Ollama need to
+be installed. See the deployment steps above (same commands). Development
+uses `data/synthetic/` only; `data/real/` is confidential and never touched.
 
 > Embedded-mode caveat: the storage directory is single-process. Stop the API
 > (`bash scripts/stop_native.sh`) before running `eval/run_ragas.py` natively.
-
-**Bảo Việt branding:** `scripts/open_webui/apply_branding.py` patches the
-pip-installed Open WebUI in place (offline): BV logo/favicon/splash, brand
-blue/gold accents, Vietnamese default locale, and actuarial/internal-document
-prompt suggestions (from `scripts/open_webui/prompt_suggestions.json`). It
-runs automatically in `setup_native.sh` and before each Open WebUI start in
-`run_native.sh`; the suggestion swap takes effect from the second start
-(Open WebUI creates its config DB on first boot). Suggestions customized
-later in the Admin UI are never overwritten (use `--force` to reset them).
-The Docker dev stack uses the stock Open WebUI image and is not branded.
 
 ### Optional: Docker dev stack
 
@@ -205,7 +195,8 @@ The container always uses server-mode Qdrant — compose overrides
 `QDRANT_LOCAL_PATH` internally — but `OLLAMA_BASE_URL` is substituted from
 `.env`: delete that line from `.env` to use the in-compose `ollama` service,
 or point it at `http://host.docker.internal:11434` for a native Ollama (next
-section).
+section). The `api` container serves `/`, `/admin`, and `/chat` on its
+mapped port same as native mode.
 
 ### Local dev on Apple Silicon (Metal GPU)
 
@@ -232,11 +223,12 @@ box is unaffected — it keeps `OLLAMA_BASE_URL=http://ollama:11434` and the GPU
 ### Common commands
 
 ```bash
-bash scripts/setup_native.sh                # one-time native setup (venvs + all models)
+bash scripts/setup_native.sh                # one-time native setup (venv + models + frontend build)
 bash scripts/run_native.sh                  # start the stack natively (no Docker)
 bash scripts/stop_native.sh                 # stop it
 bash scripts/setup_models.sh                # (re-)pull models — autodetects native vs docker
 bash scripts/healthcheck.sh                 # smoke test
+.venv/bin/python scripts/seed_accounts.py you@baoviet.com PASSWORD admin  # provision an account
 python scripts/ingest_knowledge_pack.py --dry-run   # validate the public-reference manifest
 python scripts/ingest_knowledge_pack.py     # index public refs — native: stop the API first
 pytest tests/ -x -q                         # unit tests (no services needed)
@@ -283,16 +275,18 @@ eval harness —
 `docker compose exec api python eval/run_ragas.py` — reporting retrieval hit
 rates/MRR, refusal & citation compliance, and LLM-judged
 correctness/faithfulness, with per-run JSON under `eval/results/`;
-document upload wired into the user-facing Open WebUI chat itself via a Pipe
-function (`scripts/open_webui/ingest_pipe.py`), plus an optional admin page
-(`http://localhost:8000`) for system status / manual upload / quick testing;
-role-based access (`WEBUI_AUTH=true`): the first registered account is the
-admin, who creates employee accounts (public signup off) and publishes only
-the `bao-viet-life` model to them — employees log in and chat, while the
-Admin Panel, raw Ollama models, the ingest pipe, and the port-8000 admin
-page/API (bound to `127.0.0.1` via `API_HOST`, and additionally gated by a
-single shared password — `ADMIN_PASSWORD`, `app/auth.py`, login page at
-`/login` — when set) stay admin/machine-only;
+a React admin console at `/admin` for system status / document upload/edit/
+delete / quick testing, and a bespoke chat UI at `/chat` (self-hosted KaTeX,
+citation source panel, real prompt suggestions) — see the Frontend section
+above; Open WebUI has been fully retired (no more separate service, no more
+port 3000 — its conversation history was not migrated);
+role-based access on one account system (`app/accounts.py`): email
+(`@baoviet.com`)+password accounts (`scripts/seed_accounts.py` provisions
+them; no self-service signup) gate `/admin` (role `admin` only — enforced
+server-side, e.g. `DELETE /documents/{id}` and `GET /documents` 403 for
+`employee`) and `/chat` (either role) — bound to `127.0.0.1` via `API_HOST`
+by default; an employee navigating straight to `/admin` is redirected to
+`/chat`, and an admin's `/chat` sidebar links to `/admin`;
 Docker-free native deployment (`scripts/setup_native.sh` / `run_native.sh` /
 `stop_native.sh`, embedded in-process Qdrant via `QDRANT_LOCAL_PATH`, pandoc
 bundled via `pypandoc-binary`) for company machines where Docker isn't allowed.

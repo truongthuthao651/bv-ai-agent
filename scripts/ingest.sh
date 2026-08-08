@@ -13,7 +13,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # Read one variable from .env. Never `source` it: values contain spaces and
-# UTF-8 (ASSISTANT_NAME, WEBUI_NAME), which the shell would try to execute.
+# UTF-8 (ASSISTANT_NAME), which the shell would try to execute.
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 
 API_PORT="$(env_get API_PORT)"

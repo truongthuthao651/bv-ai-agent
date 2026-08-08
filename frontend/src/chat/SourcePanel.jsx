@@ -1,0 +1,46 @@
+/** Ported from ui_kits/chatbot/ChatParts.jsx's SourcePanel, reduced to what
+ * the real API actually exposes: document title, section/page, and a real
+ * link to the source. The kit's "% similarity" and passage preview need
+ * structured per-citation metadata /v1/chat/completions doesn't return
+ * separately — see the Phase 4 gap list. Not fabricated here. */
+export function SourcePanel({ citation, onClose }) {
+  return (
+    <aside style={{ width: "var(--panel-width)", flexShrink: 0, borderLeft: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 56, padding: "0 var(--space-5)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+        <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)" }}>
+          Nguồn {citation.n}
+        </div>
+        <button onClick={onClose} aria-label="Đóng khung nguồn" style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 4 }}>
+          ✕
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-5)" }}>
+        <div style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)", letterSpacing: "var(--tracking-tight)" }}>
+          {citation.title}
+        </div>
+        {citation.meta && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: "var(--space-1)" }}>{citation.meta}</div>}
+
+        <a
+          href={citation.url}
+          target="_blank"
+          rel="noopener"
+          style={{
+            display: "block",
+            textAlign: "center",
+            marginTop: "var(--space-5)",
+            height: "var(--control-h-sm)",
+            lineHeight: "var(--control-h-sm)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            fontSize: "var(--text-xs)",
+            fontWeight: "var(--weight-semibold)",
+            color: "var(--text-secondary)",
+            textDecoration: "none",
+          }}
+        >
+          Mở tài liệu
+        </a>
+      </div>
+    </aside>
+  );
+}

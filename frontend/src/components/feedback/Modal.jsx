@@ -1,0 +1,15 @@
+import React from "react";
+
+export function Modal({ open, title, hint, children, onClose, actions }) {
+  if (!open) return null;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(12,42,69,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-5)", zIndex: 50 }} onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
+      <div role="dialog" aria-modal="true" style={{ background: "var(--surface-raised)", border: "1px solid var(--border)", borderRadius: "var(--radius-xl)", width: "100%", maxWidth: 480, padding: "var(--pad-card-lg)", boxShadow: "var(--shadow-lg)" }}>
+        {title && <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", letterSpacing: "var(--tracking-tight)" }}>{title}</h3>}
+        {hint && <p style={{ margin: "var(--space-1) 0 0", fontSize: "var(--text-sm)", color: "var(--text-secondary)", lineHeight: "var(--leading-normal)" }}>{hint}</p>}
+        <div style={{ marginTop: "var(--space-5)" }}>{children}</div>
+        {actions && <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)", marginTop: "var(--space-6)" }}>{actions}</div>}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,62 @@
+:root{
+/* Brand — sampled from the BAOVIET Life lockup. Raw values; never used directly in UI code. */
+--brand-blue:#2A7AC1;--brand-blue-hover:#1F5F9B;--brand-navy:#14456F;--brand-ink:#0C2A45;
+--brand-gold:#E0A208;--brand-gold-light:#E8C25C;--brand-gold-deep:#8A6A21;
+--brand-success:#1E8E5A;--brand-warning:#C77700;--brand-danger:#C0392B;
+
+/* Elevation, light. Lightness rises with elevation: the canvas is tinted, cards are
+   white, sunken wells are the darkest. (Previously "raised" was darker than the page.) */
+--bg:#F7F9FC;--surface:#FFFFFF;--surface-raised:#FFFFFF;--surface-sunken:#EDF2F8;
+--border:#E3E9F1;--border-strong:#CBD7E6;
+--hover:#F1F5FA;--active:#E7EEF7;
+
+--text-primary:#0C2A45;--text-secondary:#5A6B7F;--text-muted:#8CA0B3;
+--text-on-accent:#FFFFFF;--text-on-gold:#0C2A45;
+
+--accent:var(--brand-blue);--accent-hover:var(--brand-blue-hover);--accent-subtle:#EAF2FA;
+--gold:var(--brand-gold);--gold-subtle:#FBF0D6;--gold-border:#E8C25C;
+--focus-ring:#2A7AC1;--focus-ring-offset:#FFFFFF;
+
+--success:var(--brand-success);--warning:var(--brand-warning);--danger:var(--brand-danger);
+--success-subtle:#E4F3EC;--warning-subtle:#FBF0DC;--danger-subtle:#F9E9E7;
+
+--shadow-sm:0 1px 2px rgba(12,42,69,.06);--shadow-md:0 6px 20px rgba(12,42,69,.08);--shadow-lg:0 16px 40px rgba(12,42,69,.14);
+
+/* Charts: blue is always the primary series, gold always the highlighted/comparison one.
+   c and d are for third/fourth categories only — never for emphasis. */
+--chart-grid:#EDF2F8;--chart-track:#EDF2F8;
+--chart-series-a:var(--accent);--chart-series-b:var(--gold);
+--chart-series-c:var(--brand-navy);--chart-series-d:#A9BDD2;
+}
+[data-theme="dark"]{
+--bg:#0D1620;--surface:#141F2C;--surface-raised:#1B2938;--surface-sunken:#0A1119;
+--border:#253546;--border-strong:#374B60;
+--hover:#1B2938;--active:#223345;
+
+--text-primary:#E8EEF5;--text-secondary:#9FB0C2;--text-muted:#7C90A5;
+--text-on-accent:#08131D;--text-on-gold:#0C2A45;
+
+--accent:#4A94D6;--accent-hover:#6BA8DE;--accent-subtle:#1B2E42;
+--gold:#E8C25C;--gold-subtle:#3A2F16;--gold-border:#8A6A21;
+--focus-ring:#6BA8DE;--focus-ring-offset:#0D1620;
+
+--success:#3FBE85;--warning:#E0A94A;--danger:#E2705F;
+--success-subtle:#122C22;--warning-subtle:#31260F;--danger-subtle:#33191A;
+
+--shadow-sm:0 1px 2px rgba(0,0,0,.4);--shadow-md:0 8px 24px rgba(0,0,0,.4);--shadow-lg:0 20px 48px rgba(0,0,0,.5);
+--chart-grid:#22303F;--chart-track:#1B2938;--chart-series-d:#4E6786;
+}
+/* legacy aliases: earlier component code references these names — indirected onto the
+   semantic tokens above so every existing component is dark-theme-aware automatically */
+:root{
+--bv-navy:var(--brand-navy);--bv-navy-dark:var(--brand-ink);--bv-blue:var(--accent);--bv-blue-dark:var(--accent-hover);
+--bv-gold:var(--gold);--bv-gold-dark:var(--brand-gold-deep);
+--neutral-bg:var(--bg);--neutral-surface:var(--surface);--neutral-border:var(--border);--neutral-text:var(--text-primary);--neutral-muted:var(--text-secondary);
+--color-bg:var(--bg);--color-surface:var(--surface);--color-border:var(--border);--color-text:var(--text-primary);--color-text-muted:var(--text-secondary);
+--color-primary:var(--accent);--color-primary-hover:var(--accent-hover);--color-accent:var(--gold);--color-accent-hover:var(--brand-gold-deep);
+--color-header-from:var(--brand-navy);--color-header-to:var(--brand-ink);
+--color-success:var(--success);--color-danger:var(--danger);--color-warning:var(--warning);
+--color-tag-bg:var(--accent-subtle);--color-tag-text:var(--accent);--color-hover-tint:var(--hover);
+--color-link:var(--accent);--color-link-hover:var(--accent-hover);
+--state-ok:var(--success);--state-bad:var(--danger);--state-warn:var(--warning);
+}

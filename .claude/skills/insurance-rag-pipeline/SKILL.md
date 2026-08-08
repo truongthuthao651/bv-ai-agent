@@ -163,8 +163,8 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
 ### 6. Generation (prompts.py, generator.py)
 
 - Context assembly uses `display_text`, numbered (`[1] Tài liệu: ...`) so
-  citations are checkable. LaTeX passes through untouched — Open WebUI renders it
-  with KaTeX.
+  citations are checkable. LaTeX passes through untouched — `/chat` renders it
+  with self-hosted KaTeX (`frontend/src/chat/markdown.jsx`).
 - System prompt is Vietnamese and MUST keep these properties:
   1. Answer only from provided context.
   2. Cite sources as `[n]`, the context block's number — `prompts.citation_numbers`
@@ -223,7 +223,8 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   `METRIC_GUARD_ENABLED`): on benefit-payout queries, drop fee/interest hits
   before generation so a claim-% question cannot be answered from a guaranteed-
   interest schedule.
-- Stream via SSE in OpenAI format so Open WebUI works unmodified.
+- Stream via SSE in OpenAI format — `/chat` and any other OpenAI-compatible
+  client work against it unmodified.
 
 ### 7. Synthetic data & evaluation
 

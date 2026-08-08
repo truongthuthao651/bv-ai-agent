@@ -42,19 +42,25 @@ class Settings(BaseSettings):
     # matching the admin API's default 127.0.0.1-only binding (README); change
     # only if API_HOST is opened up beyond this machine.
     api_public_base_url: str = "http://localhost:8000"
-    # Single shared password gating the admin dashboard (app/auth.py) — upload,
-    # delete, and the quick-ask test page. Empty disables the gate entirely
-    # (today's default: open on loopback). Not the employee-facing login —
-    # that's Open WebUI's own WEBUI_AUTH.
+    # DEPRECATED — the admin gate now checks per-account email+password
+    # (app/accounts.py) instead of one shared password. Kept only so an old
+    # .env with ADMIN_PASSWORD set doesn't silently do nothing; app/auth.py
+    # logs a warning and ignores it otherwise.
     admin_password: str = ""
-    # Shared secret gating /v1/* (the OpenAI-compatible surface Open WebUI calls
-    # server-to-server). Empty = today's behavior, unchanged: /v1 is public,
-    # relying only on network placement (loopback by default) and Open WebUI's
-    # own WEBUI_AUTH on the employee side. When API_HOST is opened to the LAN
-    # (see API_PUBLIC_BASE_URL), set this to a random value and configure the
-    # same value as Open WebUI's OPENAI_API_KEY so only Open WebUI (and anyone
-    # else who has the secret) can call /v1/chat/completions directly — see
-    # README "Liên kết trích dẫn cho người dùng trong mạng LAN" (SEC1).
+    # Signs the session cookie (app/auth.py). Auto-generated and logged as a
+    # warning if unset (sessions won't survive a restart); set a fixed random
+    # value here for sessions to persist across restarts.
+    session_secret_key: str = ""
+    # Extra, opt-in gate on /v1/* for callers OTHER than /chat itself (a
+    # script, a future integration) — /chat's own fetch calls already carry
+    # the account session cookie, which app.main.admin_session_gate accepts
+    # for /v1 directly, so this is never required just to make /chat work.
+    # Empty (default) = /v1 relies only on network placement (loopback by
+    # default) and the session cookie. When API_HOST is opened to the LAN
+    # (see API_PUBLIC_BASE_URL), set this to a random value so a direct,
+    # sessionless HTTP request from elsewhere on the LAN can't call
+    # /v1/chat/completions — see README "Liên kết trích dẫn cho người dùng
+    # trong mạng LAN" (SEC1).
     api_shared_secret: str = ""
     # Warm the heavy, lazily-loaded pieces at startup (bge-m3 + reranker weights,
     # the Qdrant collection, and the Ollama chat model) so the first user request
@@ -77,18 +83,21 @@ class Settings(BaseSettings):
     query_timing_log_path: Path = Path("./logs/query_timings.jsonl")
 
     # ---- Assistant identity / branding ----
-    # Display name shown in Open WebUI (browser title/header) and the admin page.
-    # The underlying local model never changes — this is presentation only.
+    # Display name shown in the browser tab/header. The underlying local
+    # model never changes — this is presentation only.
     assistant_name: str = "Trợ lý AI Bảo Việt Life"
-    # OpenAI-style model id advertised by GET /v1/models. Open WebUI lists this in
-    # its model dropdown; chat_completions ignores the requested model and always
-    # serves settings.chat_model, so this is purely a stable, branded label.
+    # OpenAI-style model id advertised by GET /v1/models. chat_completions
+    # ignores the requested model and always serves settings.chat_model, so
+    # this is purely a stable, branded label (kept for OpenAI-compatibility —
+    # /chat itself doesn't need it, but a future non-browser API client might).
     assistant_model_id: str = "bao-viet-life"
+    # Cross-origin callers of the API — empty by default, since /admin, /chat,
+    # and /v1 are all same-origin (one FastAPI process, one port) with no
+    # separate frontend origin to allow. Only needed for something calling
+    # this API from a genuinely different origin.
     # NoDecode: keep pydantic-settings from JSON-decoding this from `.env`;
     # the validator below splits the comma-separated string instead.
-    cors_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://localhost:8080"]
-    )
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # ---- Ollama ----
     ollama_base_url: str = "http://localhost:11434"
@@ -301,12 +310,6 @@ class Settings(BaseSettings):
     synthetic_dir: Path = Path("./data/synthetic")
     glossary_path: Path = Path("./data/glossary/thuat_ngu.yaml")
     asset_dir: Path = Path("./data/assets")
-
-    # ---- Open WebUI / OpenAI-compatible surface ----
-    open_webui_port: int = 3000
-    openai_api_base_url: str = "http://localhost:8000/v1"
-    openai_api_key: str = "local-no-auth"
-    webui_auth: bool = False
 
     # ---- Departments (phòng ban) ----
     # Selectable when uploading a document and editable per document. This is the

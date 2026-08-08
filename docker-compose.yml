@@ -74,26 +74,5 @@ services:
       - ollama
       - qdrant
 
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:0.5.4
-    container_name: insurance-webui
-    restart: unless-stopped
-    environment:
-      # Point the WebUI at our OpenAI-compatible FastAPI surface.
-      OPENAI_API_BASE_URL: http://api:8000/v1
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-local-no-auth}
-      WEBUI_AUTH: ${WEBUI_AUTH:-false}
-      # Branding: app name shown in the browser tab/header, and the model
-      # pre-selected in new chats (matches ASSISTANT_MODEL_ID served by our API).
-      WEBUI_NAME: ${WEBUI_NAME:-Trợ lý AI Bảo Việt Life}
-      DEFAULT_MODELS: ${DEFAULT_MODELS:-bao-viet-life}
-    volumes:
-      - open_webui_data:/app/backend/data
-    ports:
-      - "${OPEN_WEBUI_PORT:-3000}:8080"
-    depends_on:
-      - api
-
 volumes:
   ollama_models:
-  open_webui_data:

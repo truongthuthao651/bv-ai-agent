@@ -7,7 +7,11 @@ questions about company documents. Everything runs offline on one machine.
 Zero budget: only free/open-source tools. **Deployment is Docker-free**
 (company machines don't allow Docker): native venvs + Ollama, with Qdrant
 running EMBEDDED in-process (qdrant-client local mode, `QDRANT_LOCAL_PATH`).
-Docker Compose remains as an optional dev-machine stack.
+Docker Compose remains as an optional dev-machine stack. The React frontend
+(landing/admin/chat — see **Frontend** below) is built on the **dev machine
+only**, via `frontend/` (Vite + React); the build output is committed to git
+at `app/static/dist/`, so deployment stays `git pull` + restart and the
+deployment machine never runs npm or needs Node installed at all.
 
 - **Inputs:** text questions, PDF / DOCX / XLSX documents, images (scans, screenshots).
   Documents are math-heavy: actuarial terminology, equations, charts.
@@ -19,7 +23,25 @@ Docker Compose remains as an optional dev-machine stack.
   pandas/openpyxl (XLSX → Markdown tables), PaddleOCR + PP-FormulaNet or Qwen2.5-VL
   (scans & formula OCR, Vietnamese)
 - **Backend:** FastAPI (SSE streaming, OpenAI-compatible `/v1/chat/completions`)
-- **Frontend:** Open WebUI pointed at the FastAPI endpoint (renders LaTeX via KaTeX natively)
+- **Frontend:** a React app (`frontend/`, built to `app/static/dist/`), the ONLY
+  UI — Open WebUI has been retired (no more second login, no more port 3000).
+  One process, one port, three surfaces: the public landing page (`/`), the
+  bespoke chat UI (`/chat`, self-hosted KaTeX, SSE-streamed answers with
+  citations — any signed-in account), and the admin console (`/admin`, document
+  upload/edit/delete, metrics — **admin role only**, see RBAC below). Chat
+  history is in-memory per page load; there is no conversation persistence.
+- **RBAC:** one account system (`app/accounts.py` — email `@baoviet.com` +
+  password, no SSO available, provisioned by hand via `scripts/seed_accounts.py`,
+  no self-service signup). Role `employee` reaches `/chat` only; role `admin`
+  reaches both. An employee hitting `/admin` is redirected to `/chat`
+  (`app.main.admin_session_gate`) — never shown an error for a page they can't
+  use, since they were never meant to be there. The admin sidebar (in `/chat`)
+  links to `/admin`; enforcement is server-side (`auth.require_admin` on the
+  mutating/read endpoints), not just a hidden button.
+- **Design system:** the token/component source (`frontend/src/tokens/`,
+  `frontend/src/components/`) is vendored verbatim from an external design system
+  at `/Users/haphan/Desktop/bv-ai-agent/` (outside this repo). Token and component
+  changes flow FROM there — nobody hand-edits the vendored copies in this repo.
 
 ## Canonical document representation
 
@@ -46,6 +68,17 @@ Chunking, enrichment, embedding, and display only ever deal with this one format
    requested by the app.
 5. Do not add telemetry or analytics of any kind.
 
+> **Note, not an exception to the rules above:** shipping `/chat` to employees
+> means `API_HOST` eventually needs to become `0.0.0.0` (see README's LAN
+> section), which puts `/v1/chat/completions` on the LAN. It requires a valid
+> account session OR `API_SHARED_SECRET` (SEC1) — a signed-in `/chat` session
+> is always accepted, so leaving `API_SHARED_SECRET` unset does NOT block
+> employees, only a sessionless direct HTTP request from elsewhere on the
+> LAN. Also worth naming: `app/accounts.py` is a from-scratch password store
+> (PBKDF2, no SSO) because no reachable internal identity provider was
+> available when it was built — reasonable for a handful of accounts, not a
+> decision to repeat at real scale without revisiting.
+
 ## Project structure
 
 ```
@@ -54,7 +87,7 @@ bv-ai-agent/
 ├── README.md                  # Bilingual (VI first) — written for the manager who deploys
 ├── .env.example               # Template; each machine copies to .env
 ├── .gitignore
-├── docker-compose.yml         # CPU-safe baseline (ollama, qdrant, api, open-webui)
+├── docker-compose.yml         # CPU-safe baseline (ollama, qdrant, api)
 ├── docker-compose.gpu.yml     # Override adding NVIDIA GPU to ollama
 ├── Dockerfile                 # FastAPI app image (python:3.12-slim + pandoc)
 ├── requirements.txt           # Pinned versions
@@ -64,9 +97,13 @@ bv-ai-agent/
 │           └── SKILL.md
 ├── app/
 │   ├── main.py                # FastAPI entrypoint, routers, lifespan (model warmup);
-│   │                          #   mounts app/static/ (admin UI) at "/"
-│   ├── auth.py                # Single-password session gate for the admin UI (ADMIN_PASSWORD);
+│   │                          #   mounts app/static/dist/ (React: landing "/", admin "/admin",
+│   │                          #   chat "/chat") + app/static/{fonts,assets,tokens}/ separately
+│   ├── auth.py                # Per-account session gate for /admin + /chat (app/accounts.py);
 │   │                          #   opt-in API_SHARED_SECRET gate for /v1/* (SEC1)
+│   ├── accounts.py            # Email(@baoviet.com)+password accounts, PBKDF2-hashed, SQLite
+│   │                          #   at data/accounts.db — no SSO reachable, no self-service signup;
+│   │                          #   provisioned by hand via scripts/seed_accounts.py
 │   ├── query_timing.py        # "⏱ Thời gian trả lời" footer + logs/query_timings.jsonl
 │   │                          #   (metadata-only: doc_id/section_path/score/plan flags, ADM1)
 │   ├── text_utils.py          # fold_text: shared diacritic-fold used by every guard
@@ -74,18 +111,25 @@ bv-ai-agent/
 │   │   └── settings.py        # pydantic-settings; ALL config flows through here
 │   ├── api/
 │   │   ├── chat.py            # POST /v1/chat/completions (OpenAI-compatible, SSE)
-│   │   ├── ingest.py          # POST /ingest (file upload, size-capped), GET/PATCH/DELETE /documents
+│   │   ├── chat_ui.py         # GET /prompt-suggestions — real copy for the /chat empty state
+│   │   ├── ingest.py          # POST /ingest (admin-only), GET/PATCH/DELETE /documents
+│   │   │                      #   (PATCH/DELETE admin-only; GET open to any signed-in account)
 │   │   ├── health.py          # GET /health — pings ollama + qdrant
-│   │   ├── login.py           # GET/POST /login, POST /logout (admin session)
+│   │   ├── login.py           # GET/POST /login, POST /logout, GET /me, GET /accounts (admin-only)
 │   │   ├── docview.py         # GET /documents/{id}/view — reconstructs a doc from its
 │   │   │                      #   indexed chunks so citation links always resolve
 │   │   └── metrics.py         # GET /metrics/summary — aggregates query_timings.jsonl
 │   │                          #   (refusal rate, latency percentiles, mode breakdown; ADM1)
 │   ├── static/
-│   │   └── index.html         # Dependency-free admin UI: upload/list/edit/delete docs,
-│   │                          #   quick-ask test, "Chất lượng & hiệu năng" metrics view
+│   │   ├── dist/              # React build output (frontend/) — COMMITTED; deployment serves
+│   │   │                      #   this directly and never runs npm/node
+│   │   ├── fonts/              # Self-hosted Inter woff2 (mounted at /fonts, public)
+│   │   ├── assets/            # Brand logos + generated favicon set (mounted at /assets, public)
+│   │   └── tokens -> ../../frontend/src/tokens   # symlink: app/templates/login.html loads
+│   │                          #   the vendored token CSS directly, with no build step
 │   ├── templates/
-│   │   └── login.html         # Branded admin login page
+│   │   └── login.html         # Plain Jinja-free HTML admin/chat login (AuthShell chrome);
+│   │                          #   deliberately NOT part of the React bundle (pre-auth page)
 │   ├── ingestion/
 │   │   ├── router.py          # File-type detection → correct parser
 │   │   ├── metric_hints.py    # Deterministic metric-type hint appended to embed_text
@@ -136,20 +180,44 @@ bv-ai-agent/
 │   │   └── generator.py       # Ollama call, streaming, context assembly
 │   └── models/
 │       └── schemas.py         # Pydantic request/response models
+├── frontend/                  # Vite + React — DEV MACHINE ONLY, never run on deployment.
+│   │                          #   Vendored from the external design system (see note above);
+│   │                          #   token/component changes flow from there, never hand-edited here.
+│   ├── index.html             # Entry: landing page ("/")
+│   ├── admin/index.html       # Entry: admin console ("/admin")
+│   ├── chat/index.html        # Entry: chat UI ("/chat")
+│   ├── vite.config.js         # 3-page build -> ../app/static/dist/ (assetsDir "app-assets",
+│   │                          #   kept separate from app/static/assets/'s own /assets mount)
+│   ├── public/{fonts,assets} -> ../../app/static/{fonts,assets}  # symlinks, single source of truth
+│   └── src/
+│       ├── tokens/            # Vendored styles.css + tokens/*.css (colors/typography/spacing/...)
+│       ├── components/        # Vendored base component library (Button, Card, Modal, ...)
+│       ├── brand/             # Triangle/Lift — the gold-triangle motif, shared by landing/chat
+│       ├── landing/           # LandingScreen.jsx (public entry point)
+│       ├── admin/             # AdminShell/OverviewView/DocumentsView/UsersView + api.js
+│       ├── chat/              # ChatScreen/Sidebar/EmptyState/SourcePanel/Composer/ChatMessage,
+│       │                      #   markdown.jsx (hand-rolled markdown+KaTeX — no markdown
+│       │                      #   dependency; katex is the one pre-approved beyond react/vite)
+│       ├── theme/              # useTheme.js — data-theme, localStorage, OS-preference default
+│       └── showcase/           # Throwaway Phase-0 component gallery (?showcase=1), not shipped UI
 ├── scripts/
-│   ├── setup_native.sh        # One-time no-Docker setup: venvs + models (deployment path)
-│   ├── run_native.sh          # Start ollama/API/Open WebUI natively (embedded Qdrant);
+│   ├── setup_native.sh        # One-time no-Docker setup: venv + models + frontend build
+│   ├── run_native.sh          # Start ollama + API natively (embedded Qdrant; API also
+│   │                          #   serves the landing/admin/chat frontend on the same port);
 │   │                          #   suggests a LAN API_PUBLIC_BASE_URL when API_HOST=0.0.0.0
 │   ├── stop_native.sh         # Stop what run_native.sh started (pid files in run/)
 │   ├── setup_models.sh        # ollama pull + HF downloads (native/docker autodetect)
+│   ├── seed_accounts.py       # Provision/reset one app/accounts.py account by hand
+│   │                          #   (email must end @baoviet.com; no self-service signup)
+│   ├── prompt_suggestions.json  # Real Vietnamese /chat empty-state prompts (GET /prompt-suggestions)
 │   ├── ingest.sh              # Batch-ingest a folder
 │   ├── ingest_knowledge_pack.py  # Index manually-downloaded PUBLIC refs + their URLs
-│   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api, webui
+│   ├── healthcheck.sh         # Smoke test: ollama, qdrant, api
 │   ├── check.sh               # Local CI-equivalent: ruff check + format --check + pytest
 │   ├── chunk_stats.py         # Parent/child chunk sizes for a folder (budget tuning)
-│   ├── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
-│   └── open_webui/            # Bảo Việt branding + the "Nạp tài liệu" ingest pipe for Open WebUI
+│   └── make_synthetic_data.py # Fake VI insurance docs incl. actuarial formulas & charts
 ├── data/                      # GITIGNORED except glossary/ + the pack manifest template
+│   ├── accounts.db            # app/accounts.py's SQLite store — password hashes, never committed
 │   ├── glossary/
 │   │   └── thuat_ngu.yaml     # Actuarial term glossary: term, synonyms, symbol, definition
 │   ├── knowledge_pack/        # PUBLIC refs downloaded by hand (law, circulars, brochures)
@@ -267,9 +335,10 @@ bv-ai-agent/
 - **The "Kiến thức chung" block may never contradict the grounded answer.** If
   it says the case cannot be determined, the grounded part must not have
   asserted a verdict.
-- **Never replay our own appended suffixes back to the model.** Open WebUI
-  returns the rendered answer, so the sources block, the disclaimers and the
-  "⏱ Thời gian trả lời" footer all come back as assistant content.
+- **Never replay our own appended suffixes back to the model.** The client
+  (`/chat`, or any OpenAI-compatible caller) stores and resends the rendered
+  answer as conversation history, so the sources block, the disclaimers and
+  the "⏱ Thời gian trả lời" footer all come back as assistant content.
   `generation/history.py` strips them in `build_messages`; the raw turns stay
   intact for `conversation_scope` / `comparison`, which deliberately parse the
   sources block to recover a chat's products. Real-doc failure, 2026-07-27:
@@ -301,11 +370,13 @@ bv-ai-agent/
 ## Commands
 
 ```bash
-bash scripts/setup_native.sh                                # one-time native setup (venvs + models)
+bash scripts/setup_native.sh                                # one-time native setup (venv + models + frontend build)
 bash scripts/run_native.sh                                  # start stack natively (no Docker)
 bash scripts/stop_native.sh                                 # stop the native stack
 bash scripts/setup_models.sh                                # pull all models (native/docker autodetect)
 bash scripts/healthcheck.sh                                 # smoke test
+cd frontend && npm install && npm run build                 # dev-machine-only: rebuild app/static/dist/
+python scripts/seed_accounts.py you@baoviet.com PW admin    # provision/reset an /admin + /chat account
 python scripts/make_synthetic_data.py                       # regenerate fake docs
 python scripts/chunk_stats.py data/synthetic                # parent/child chunk sizes (tuning)
 bash scripts/ingest.sh data/synthetic                       # index synthetic corpus
@@ -328,11 +399,13 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # with GP
   — **no Docker there** (company policy). Anything machine-specific belongs in
   `.env`, never in code. Keep README deployment steps up to date whenever setup
   changes.
-- Deployment needs only Python 3.11/3.12 and Ollama installed. Everything else
-  is pip-installed into `.venv` (app; pandoc bundled via `pypandoc-binary`) and
-  `.venv-webui` (Open WebUI), and Qdrant runs embedded in the API process
+- Deployment needs only Python 3.11/3.12 and Ollama installed — **no Node/npm**.
+  Everything else is pip-installed into `.venv` (pandoc bundled via
+  `pypandoc-binary`), and Qdrant runs embedded in the API process
   (`QDRANT_LOCAL_PATH` — single-process storage: stop the API before running
-  `eval/run_ragas.py` natively).
+  `eval/run_ragas.py` natively). The React frontend is built once on the dev
+  machine (`frontend/`, `npm run build`) and its output committed to
+  `app/static/dist/`; deployment is `git pull` + restart, same as the backend.
 - Hardware varies: default model is set by `CHAT_MODEL` in `.env` so weak machines
   can drop to `qwen3:4b` without code changes.
 - Enrichment (formula verbalization, figure description) makes ingestion slow —

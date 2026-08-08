@@ -13,10 +13,11 @@ import unicodedata
 import uuid
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
+from app import auth
 from app.api import docview
 from app.config.settings import settings
 from app.ingestion import indexer
@@ -214,7 +215,9 @@ def _run_pipeline(
     )
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post(
+    "/ingest", response_model=IngestResponse, dependencies=[Depends(auth.require_admin)]
+)
 async def ingest_file(
     file: UploadFile = File(...),
     doc_type: DocType | None = Form(default=None),
@@ -253,9 +256,16 @@ async def ingest_file(
         raise
 
 
-@router.get("/documents", response_model=list[DocumentInfo])
+@router.get(
+    "/documents",
+    response_model=list[DocumentInfo],
+    dependencies=[Depends(auth.require_admin)],
+)
 async def list_documents() -> list[DocumentInfo]:
-    """List documents currently indexed in Qdrant."""
+    """List documents currently indexed in Qdrant. Admin-only: this is
+    admin-console data, not something the chat UI's employee accounts need —
+    /chat's citation links resolve via the separately-public
+    /documents/{id}/view and /file routes instead."""
     return await run_in_threadpool(indexer.list_documents)
 
 
@@ -356,7 +366,11 @@ async def view_document(
     return HTMLResponse(rendered)
 
 
-@router.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)
+@router.delete(
+    "/documents/{doc_id}",
+    response_model=DocumentDeleteResponse,
+    dependencies=[Depends(auth.require_admin)],
+)
 async def delete_document(doc_id: str) -> DocumentDeleteResponse:
     """Remove all indexed chunks of one document (by ``doc_id``)."""
     n_chunks = await run_in_threadpool(indexer.count_document_points, doc_id)
@@ -442,7 +456,11 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
     return info
 
 
-@router.patch("/documents/{doc_id}", response_model=DocumentInfo)
+@router.patch(
+    "/documents/{doc_id}",
+    response_model=DocumentInfo,
+    dependencies=[Depends(auth.require_admin)],
+)
 async def update_document(doc_id: str, request: DocumentUpdateRequest) -> DocumentInfo:
     """Edit a document's title, type, and/or department.
 

@@ -30,17 +30,23 @@ data/knowledge_pack/*
 /run/
 
 # ---- Python ----
+# Anchored to repo root: an unanchored "dist/" would also match
+# app/static/dist/, the frontend build output, which IS committed
+# (REDESIGN_PROMPT.md — deployment ships the built bundle, no Node required).
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 .venv/
 venv/
 env/
 .python-version
+
+# ---- Frontend (dev-machine only; app/static/dist/ build output IS committed) ----
+frontend/node_modules/
 
 # ---- Tooling caches ----
 .pytest_cache/
