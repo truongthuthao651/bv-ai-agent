@@ -420,9 +420,19 @@ export function OverviewView() {
             </Panel>
 
             <Panel span={3} title="Tài liệu theo phòng ban" hint="Số tài liệu đã nạp, theo phòng ban.">
-              <Donut
-                segments={m.documents_by_department.map((d, i) => ({ label: d.department, value: d.count, color: DONUT_COLORS[i % DONUT_COLORS.length] }))}
-              />
+              {/* CHART-1 (audit/REPORT.md): a single "Không đặt" segment means
+                  no document has been tagged with a department yet — a 100%
+                  pie of "not set" isn't a KPI, it's noise. Say so plainly
+                  instead of rendering a technically-accurate but meaningless
+                  donut; the moment even one document gets tagged, this falls
+                  through to the real chart below unchanged. */}
+              {m.documents_by_department.length === 1 && m.documents_by_department[0].department === "Không đặt" ? (
+                <Empty>Chưa gắn phòng ban cho tài liệu nào.</Empty>
+              ) : (
+                <Donut
+                  segments={m.documents_by_department.map((d, i) => ({ label: d.department, value: d.count, color: DONUT_COLORS[i % DONUT_COLORS.length] }))}
+                />
+              )}
             </Panel>
 
             <Panel span={4} title="Chế độ trả lời" hint="Phân loại câu trả lời trong khoảng thời gian đã chọn.">

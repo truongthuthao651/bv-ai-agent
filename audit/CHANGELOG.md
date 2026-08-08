@@ -144,4 +144,15 @@ to theme tokens — that would be a deliberate redesign decision for later, not 
 No visual or functional change; `app/static/dist` is byte-identical (comment-only edit, stripped
 by minification) — no rebuild commit needed for this one.
 
+### `<pending>` — fix: empty department donut shows an honest message, not a 100% pie of nothing (CHART-1)
+**Fixed.** `documents_by_department` correctly labels untagged documents `"Không đặt"`
+(`app/api/metrics.py:257`, confirmed by reading it) — the frontend just rendered that as a
+literal 100%-one-color donut, which reads as real data rather than "nothing tagged yet". Added a
+check in `OverviewView.jsx`: when the breakdown is exactly one `"Không đặt"` segment, show
+"Chưa gắn phòng ban cho tài liệu nào." instead of the donut. The moment a real department tag
+exists, this falls through to the actual chart unchanged — verified by reading the condition, not
+just asserted. Screenshot: `audit/screenshots/after/admin-overview-donut-fixed.png` (also
+re-confirms F3-4's KPI grid fix holds cleanly at the standard 1440px desktop width the original
+audit screenshot used — full labels, no truncation).
+
 
