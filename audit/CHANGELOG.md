@@ -191,4 +191,27 @@ Verified live — screenshots in `audit/screenshots/after/`.
 Việt Life's real org chart, and inventing plausible-looking full names would be fabricating
 business information, not fixing a bug — flagged to the user rather than guessed at.
 
+### `9fd6d07` — feat: search/filter on the documents table (P2-F3)
+**Fixed.** No search/filter/sort/pagination existed at all. Added a client-side filter (title,
+translated doc-type label, department) — the cheap fix that works to a few hundred rows, matching
+the audit's own recommendation to defer server-side pagination until the corpus actually needs
+it. Verified live: "An Bình" narrowed 10 documents to the 1 real match, hint line correctly read
+"1/10 tài liệu phù hợp". Screenshot in `audit/screenshots/after/`.
+
+### `028cd60` — feat: minimum viable self-service password change (P2-J6)
+**Fixed — the audit's own "biggest product gap".** New `accounts.update_password()` (verifies
+current password first, requires 8+ chars, never touches role) behind `POST /change-password`,
+which always targets the caller's own session account (confirmed by a test that one account can't
+touch another's password this way). `ChangePasswordModal` added to both `chat/Sidebar.jsx` and
+`admin/AdminShell.jsx`, opened from the existing email/avatar chip. Also swapped
+`authenticate()`'s password comparison from `==` to `hmac.compare_digest` while already in that
+exact function (ENG-2). 5 new backend tests, 447 total passing.
+
+Verified live end-to-end on both surfaces (not just via tests): changed the employee demo
+account's real password through the UI, logged out, logged back in with the new password, then
+changed it back to the original so later manual testing wasn't disrupted. This required restarting
+the dev uvicorn process — a Python route addition, unlike the frontend's static-file changes,
+needs a restart to take effect; confirmed via a `Method Not Allowed` failure caught by curl before
+assuming the fix worked. Screenshots in `audit/screenshots/after/`.
+
 
