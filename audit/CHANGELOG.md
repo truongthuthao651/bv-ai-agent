@@ -64,7 +64,7 @@ already interrupts the server-side generator before it reaches its completion/lo
 separate `request.is_disconnected()` poll was needed (this resolves Phase 4's unverified
 suspicion #4, not just the client-side half of the finding).
 
-### `<pending>` — feat: persist the conversation across refresh (P2-F1)
+### `241ea90` — feat: persist the conversation across refresh (P2-F1)
 **Fixed.** `messages` now round-trips through `sessionStorage` (keyed per tab, cleared when the
 thread is emptied or a new chat is started) — no backend change, nothing leaves the browser.
 Verified live twice: (1) reload mid-request (before any token arrived) — the interrupted,
@@ -72,5 +72,19 @@ still-empty assistant turn is dropped on load rather than persisted as a permane
 (a small polish addition beyond the minimal fix, since the plain version of this fix would have
 shown exactly that); (2) reload after a full completed answer — text, citations, and the citation
 chips all survive intact. Screenshot: `audit/screenshots/after/chat-persistence-after-reload.png`.
+
+### `<pending>` — fix: Modal consistency — themed delete confirm, Enter-submit, Esc-close (P2-C1/C2/C3)
+**Fixed, all three.** (1) Delete-document confirmation now uses the app's own `Modal` +
+`Button variant="danger"` instead of native `window.confirm`/`window.alert` — verified live with
+a screenshot (`audit/screenshots/after/admin-delete-confirmation-modal.png`) showing the themed,
+backdrop-blurred dialog, not an OS dialog. (2) `EditModal`'s text fields now submit on Enter
+(IME-safe, matches `Composer`/the Overview quick-ask panel), verified live: pressing Enter in the
+title field closed the modal (save succeeded) without touching the Save button. (3) `Modal.jsx`
+gained an Escape-to-close handler (one fix, every modal in the app benefits) — verified live:
+Escape closed the delete-confirmation dialog.
+
+**Deferred, not in scope for this commit**: P2-C4 (focus trap / focus-return on modal close) is
+a real M-effort implementation (Tab-cycling within the modal, not a one-liner like C3) —
+audit/REPORT.md places it in Wave 4 alongside the rest of the accessibility batch, not Wave 1.
 
 

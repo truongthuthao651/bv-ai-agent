@@ -1,6 +1,18 @@
-import React from "react";
+import React, { useEffect } from "react";
 
 export function Modal({ open, title, hint, children, onClose, actions }) {
+  // P2-C3 (audit/REPORT.md): the only prior dismiss path was clicking the
+  // backdrop — no Escape handling at all, which is the standard expectation
+  // for any modal. One listener here benefits every Modal in the app at once.
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e) {
+      if (e.key === "Escape") onClose?.();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(12,42,69,.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "var(--space-5)", zIndex: 50 }} onClick={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>

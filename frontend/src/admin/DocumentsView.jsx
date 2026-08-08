@@ -149,6 +149,17 @@ function EditModal({ doc, onClose, onSaved }) {
 
   const toneColor = { ok: "var(--success)", bad: "var(--danger)", warn: "var(--warning)", "": "var(--text-secondary)" }[status.tone];
 
+  // P2-C2 (audit/REPORT.md): Enter submits everywhere else in the app
+  // (Composer, the Overview quick-ask panel) but not here — one handler on
+  // the form's own text inputs, same IME-safe guard as those. Excludes
+  // <select> so its own native Enter/keyboard behavior isn't hijacked.
+  function onFieldKeyDown(e) {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing && e.target.tagName !== "SELECT") {
+      e.preventDefault();
+      if (!busy) save();
+    }
+  }
+
   return (
     <Modal
       open
@@ -166,7 +177,7 @@ function EditModal({ doc, onClose, onSaved }) {
         </>
       }
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+      <div onKeyDown={onFieldKeyDown} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div>
           <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Tên tài liệu</label>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -215,6 +226,8 @@ export function DocumentsView({ canManage = true }) {
   const [loadError, setLoadError] = useState(null);
   const [editingDoc, setEditingDoc] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
+  const [confirmDeleteDoc, setConfirmDeleteDoc] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
 
   async function load() {
     try {
@@ -230,14 +243,28 @@ export function DocumentsView({ canManage = true }) {
     load();
   }, []);
 
-  async function handleDelete(doc) {
-    if (!window.confirm(`Xoá tài liệu "${doc.doc_title}" khỏi hệ thống? Thao tác này không thể hoàn tác.`)) return;
+  function closeDeleteConfirm() {
+    setConfirmDeleteDoc(null);
+    setDeleteError(null);
+  }
+
+  // P2-C1 (audit/REPORT.md): this used to be window.confirm/window.alert —
+  // native dialogs render outside the app's theme (light/dark, brand colors),
+  // freeze the tab while shown, and look like nothing else in the product.
+  // The app already has a themed Modal (used two lines away for Edit) and a
+  // Button variant="danger" (used on the row's own "Xoá" button) — this is a
+  // drop-in swap onto both, not a new pattern.
+  async function confirmDelete() {
+    const doc = confirmDeleteDoc;
+    if (!doc) return;
     setDeletingId(doc.doc_id);
+    setDeleteError(null);
     try {
       await deleteDocument(doc.doc_id);
+      setConfirmDeleteDoc(null);
       load();
     } catch (err) {
-      window.alert("Không xoá được: " + err.message);
+      setDeleteError(err.message);
     } finally {
       setDeletingId(null);
     }
@@ -296,7 +323,7 @@ export function DocumentsView({ canManage = true }) {
                   <Button size="sm" variant="secondary" onClick={() => setEditingDoc(d)}>
                     Sửa
                   </Button>
-                  <Button size="sm" variant="danger" disabled={deletingId === d.doc_id} onClick={() => handleDelete(d)}>
+                  <Button size="sm" variant="danger" disabled={deletingId === d.doc_id} onClick={() => setConfirmDeleteDoc(d)}>
                     Xoá
                   </Button>
                 </div>,
@@ -316,6 +343,27 @@ export function DocumentsView({ canManage = true }) {
             load();
           }}
         />
+      )}
+
+      {canManage && confirmDeleteDoc && (
+        <Modal
+          open
+          title="Xoá tài liệu?"
+          hint={`Xoá tài liệu "${confirmDeleteDoc.doc_title}" khỏi hệ thống? Thao tác này không thể hoàn tác.`}
+          onClose={closeDeleteConfirm}
+          actions={
+            <>
+              <Button variant="secondary" onClick={closeDeleteConfirm} disabled={deletingId === confirmDeleteDoc.doc_id}>
+                Huỷ
+              </Button>
+              <Button variant="danger" onClick={confirmDelete} disabled={deletingId === confirmDeleteDoc.doc_id}>
+                Xoá
+              </Button>
+            </>
+          }
+        >
+          {deleteError && <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>Lỗi: {deleteError}</div>}
+        </Modal>
       )}
     </div>
   );
