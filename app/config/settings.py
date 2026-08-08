@@ -34,7 +34,12 @@ class Settings(BaseSettings):
     )
 
     # ---- Application server (FastAPI) ----
-    api_host: str = "0.0.0.0"
+    # Loopback-only by default (fail-safe: a fresh install with no .env, or an
+    # .env missing this line, must NOT come up LAN-exposed with an empty
+    # API_SHARED_SECRET — see SEC-B, audit/01-engineering.md §1.4). Set to
+    # 0.0.0.0 explicitly in .env once employees need to reach /chat over the
+    # LAN, alongside API_SHARED_SECRET per .env.example's guidance.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     log_level: str = "INFO"
     # Base URL the API is actually reachable at, used to build citation links
