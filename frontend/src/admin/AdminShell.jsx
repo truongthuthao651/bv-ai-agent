@@ -77,12 +77,31 @@ function navFromHash() {
   return NAV_KEYS.has(key) ? key : "overview";
 }
 
+// F3-4 (audit/REPORT.md): the rail was a fixed var(--rail-width) with no
+// responsive handling at all — unusable below ~900px (KPI labels truncated
+// to "Số...", the rail alone ate 70% of a phone screen). Same 640px
+// threshold and slide-over-drawer pattern already proven in
+// chat/ChatScreen.jsx's useIsMobile/Sidebar — ported here rather than
+// invented fresh.
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 640px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const onChange = () => setMobile(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return mobile;
+}
+
 export function AdminShell() {
   const [theme, setTheme] = useTheme();
   const [active, setActive] = useState(navFromHash);
   const [hoverNav, setHoverNav] = useState(null);
   const [health, setHealth] = useState(null);
   const [me, setMe] = useState(null);
+  const [railOpen, setRailOpen] = useState(false);
+  const mobile = useIsMobile();
 
   useEffect(() => {
     fetchMe()
@@ -101,6 +120,7 @@ export function AdminShell() {
   function selectNav(key) {
     window.location.hash = key;
     setActive(key);
+    setRailOpen(false);
   }
 
   useEffect(() => {
@@ -146,107 +166,145 @@ export function AdminShell() {
     window.location.href = "/login";
   }
 
+  // Rendered both as the static desktop rail and, unchanged, inside the
+  // mobile slide-over drawer below — a closure variable rather than a
+  // separate component so it keeps direct access to all the state/handlers
+  // above without threading eight props through.
+  const railContent = (
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", padding: "var(--space-5) var(--space-4) var(--space-6)" }}>
+        <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>
+          Trợ lý AI Bảo Việt Life
+        </div>
+        <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>Quản trị tài liệu</div>
+      </div>
+
+      <nav style={{ flex: 1, overflowY: "auto", padding: "0 var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-6)", minHeight: 0 }}>
+        {NAV_GROUPS.map((g) => (
+          <div key={g.title} style={{ display: "flex", flexDirection: "column", gap: "var(--space-half)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-2xs)",
+                fontWeight: "var(--weight-bold)",
+                color: "var(--text-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "var(--tracking-wide)",
+                padding: "0 var(--space-3)",
+                marginBottom: "var(--space-1)",
+              }}
+            >
+              {g.title}
+            </div>
+            {g.items.map((it) => (
+              <button
+                key={it.key}
+                onClick={() => selectNav(it.key)}
+                onMouseEnter={() => setHoverNav(it.key)}
+                onMouseLeave={() => setHoverNav(null)}
+                style={navBtn(it.key)}
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+
+      <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+        {me?.email && (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                background: "var(--brand-navy)",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "var(--text-xs)",
+                fontWeight: "var(--weight-bold)",
+                flexShrink: 0,
+              }}
+            >
+              {me.email[0].toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {me.email}
+              </div>
+              <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{me.role === "admin" ? "Quản trị viên" : "Nhân viên"}</div>
+            </div>
+            <button
+              onClick={handleLogout}
+              title="Đăng xuất"
+              aria-label="Đăng xuất"
+              style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 4, flexShrink: 0 }}
+            >
+              ⏻
+            </button>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <Badge label={`Ollama: ${ollamaStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={ollamaStatus === "up" ? "ok" : "bad"} />
+          <Badge label={`Qdrant: ${qdrantStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={qdrantStatus === "up" ? "ok" : "bad"} />
+        </div>
+        <a
+          href="/chat/"
+          style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
+        >
+          Mở giao diện trò chuyện ↗
+        </a>
+      </div>
+    </>
+  );
+
   return (
     <div
       data-theme={theme}
       style={{ height: "100vh", background: "var(--bg)", fontFamily: "var(--font-sans)", display: "flex", overflow: "hidden" }}
     >
-      <aside
-        style={{
-          width: "var(--rail-width)",
-          flexShrink: 0,
-          borderRight: "1px solid var(--border)",
-          background: "var(--surface)",
-          display: "flex",
-          flexDirection: "column",
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", padding: "var(--space-5) var(--space-4) var(--space-6)" }}>
-          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>
-            Trợ lý AI Bảo Việt Life
-          </div>
-          <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>Quản trị tài liệu</div>
-        </div>
-
-        <nav style={{ flex: 1, overflowY: "auto", padding: "0 var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-6)", minHeight: 0 }}>
-          {NAV_GROUPS.map((g) => (
-            <div key={g.title} style={{ display: "flex", flexDirection: "column", gap: "var(--space-half)" }}>
-              <div
-                style={{
-                  fontSize: "var(--text-2xs)",
-                  fontWeight: "var(--weight-bold)",
-                  color: "var(--text-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "var(--tracking-wide)",
-                  padding: "0 var(--space-3)",
-                  marginBottom: "var(--space-1)",
-                }}
-              >
-                {g.title}
-              </div>
-              {g.items.map((it) => (
-                <button
-                  key={it.key}
-                  onClick={() => selectNav(it.key)}
-                  onMouseEnter={() => setHoverNav(it.key)}
-                  onMouseLeave={() => setHoverNav(null)}
-                  style={navBtn(it.key)}
-                >
-                  {it.label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </nav>
-
-        <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-          {me?.email && (
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "var(--brand-navy)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: "var(--weight-bold)",
-                  flexShrink: 0,
-                }}
-              >
-                {me.email[0].toUpperCase()}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {me.email}
-                </div>
-                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{me.role === "admin" ? "Quản trị viên" : "Nhân viên"}</div>
-              </div>
-              <button
-                onClick={handleLogout}
-                title="Đăng xuất"
-                style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 4, flexShrink: 0 }}
-              >
-                ⏻
-              </button>
-            </div>
-          )}
-          <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-            <Badge label={`Ollama: ${ollamaStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={ollamaStatus === "up" ? "ok" : "bad"} />
-            <Badge label={`Qdrant: ${qdrantStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={qdrantStatus === "up" ? "ok" : "bad"} />
-          </div>
-          <a
-            href="/chat/"
-            style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
+      {!mobile && (
+        <aside
+          style={{
+            width: "var(--rail-width)",
+            flexShrink: 0,
+            borderRight: "1px solid var(--border)",
+            background: "var(--surface)",
+            display: "flex",
+            flexDirection: "column",
+            boxSizing: "border-box",
+          }}
+        >
+          {railContent}
+        </aside>
+      )}
+      {mobile && railOpen && (
+        <div
+          onClick={() => setRailOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(6,18,30,.5)", backdropFilter: "blur(2px)", zIndex: 20 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: "var(--rail-width)",
+              maxWidth: "85vw",
+              background: "var(--surface)",
+              display: "flex",
+              flexDirection: "column",
+              boxSizing: "border-box",
+              boxShadow: "var(--shadow-lg)",
+            }}
           >
-            Mở giao diện trò chuyện ↗
-          </a>
+            {railContent}
+          </div>
         </div>
-      </aside>
+      )}
 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <header
@@ -256,12 +314,21 @@ export function AdminShell() {
             gap: "var(--space-4)",
             height: 56,
             flexShrink: 0,
-            padding: "0 var(--pad-page)",
+            padding: mobile ? "0 var(--space-4)" : "0 var(--pad-page)",
             borderBottom: "1px solid var(--border)",
             background: "var(--bg)",
           }}
         >
-          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)" }}>
+          {mobile && (
+            <button
+              onClick={() => setRailOpen(true)}
+              aria-label="Mở menu"
+              style={{ border: "none", background: "transparent", fontSize: 17, cursor: "pointer", color: "var(--text-primary)", padding: 0, width: 32, height: 32, flexShrink: 0 }}
+            >
+              ☰
+            </button>
+          )}
+          <div style={{ minWidth: 0, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {NAV_GROUPS.flatMap((g) => g.items).find((it) => it.key === active)?.label}
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>

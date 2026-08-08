@@ -86,6 +86,7 @@ export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
             <button
               onClick={() => logout().then(() => (window.location.href = "/login"))}
               title="Đăng xuất"
+              aria-label="Đăng xuất"
               style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 4, flexShrink: 0 }}
             >
               ⏻

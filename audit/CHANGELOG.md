@@ -98,4 +98,28 @@ Screenshot: `audit/screenshots/after/chat-composer-autogrow.png`.
 **Wave 1 complete.** All 6 items fixed and verified live: WAIT-1, CHAT-1, REFUSAL-UI, P2-F1,
 P2-C1/C2/C3, CHAT-3.
 
+## Wave 2 — Visual polish and design-system compliance
+
+### `<pending>` — fix: admin console responsive layout (F3-4)
+**Fixed — the highest-value visual fix in the audit.** Ported `chat/ChatScreen.jsx`'s proven
+`useIsMobile()`/slide-over-drawer pattern to `AdminShell.jsx` (640px threshold, same as chat): the
+264px rail now collapses to a hamburger-triggered drawer below that width instead of eating 70%
+of a phone screen. `OverviewView.jsx`'s 5-card KPI grid changed from a fixed `repeat(5, 1fr)` to
+`repeat(auto-fit, minmax(150px, 1fr))` — reflows continuously instead of truncating every label to
+"Số...". The 12-column panel grid keeps its exact desktop spans (deliberately, per
+`audit/02-product.md`'s "don't touch the structure") but each `Panel` now stacks to a full-width
+single column below 640px via its own `useIsMobile()` call, so no prop-threading through the 8
+call sites was needed.
+
+Verified live at the exact viewports the audit screenshotted: 375px mobile (KPI labels now fully
+readable, hamburger drawer opens correctly with the full nav+footer) and 768px tablet (KPI grid
+reflows to 2 columns, no truncation). Screenshots in `audit/screenshots/after/` —
+`admin-overview-mobile-responsive-fixed.png`, `admin-overview-tablet-responsive-fixed.png`,
+`admin-mobile-drawer-open.png` — compare directly against the original
+`audit/screenshots/admin-overview-{mobile,tablet}-light-full.png`.
+
+Bonus (found while touching the same button): added the missing `aria-label="Đăng xuất"` to both
+copies of the icon-only logout button (`AdminShell.jsx` and `chat/Sidebar.jsx`) — this is F5-1,
+originally slated for Wave 4, but one line each while already in this exact code.
+
 

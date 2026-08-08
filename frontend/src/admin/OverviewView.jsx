@@ -21,14 +21,33 @@ function fmtNum(x, digits = 1) {
   return x === null || x === undefined ? "—" : Number(x).toFixed(digits);
 }
 
+// F3-4 (audit/REPORT.md): the 12-column panel grid's explicit span={N} values
+// (deliberate, praised as "the strongest screen — don't touch the structure"
+// in audit/02-product.md) only make sense at desktop widths. Below 640px
+// they're exactly what produced the KPI-label truncation the audit
+// screenshotted — same threshold ChatScreen.jsx's sidebar collapse already
+// uses. Called from Panel itself so every one of the 8 call sites gets the
+// fix without threading a prop through each.
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 640px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const onChange = () => setMobile(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return mobile;
+}
+
 function Panel({ title, hint, action, children, span = 4, minHeight }) {
   const [hover, setHover] = useState(false);
+  const mobile = useIsMobile();
   return (
     <section
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        gridColumn: `span ${span}`,
+        gridColumn: mobile ? "1 / -1" : `span ${span}`,
         background: "var(--surface)",
         border: "1px solid var(--border)",
         boxShadow: hover ? "var(--shadow-md)" : "var(--shadow-sm)",
@@ -375,7 +394,11 @@ export function OverviewView() {
 
       {m && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "var(--gap-card)" }}>
+          {/* auto-fit/minmax instead of a fixed 5-up grid: reflows continuously
+              as width shrinks instead of truncating every label to "Số ..."
+              (F3-4, audit/REPORT.md) — no mobile check needed, this alone
+              fixes both the 375px and 768px cases the audit screenshotted. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--gap-card)" }}>
             <KpiCard label="Số câu hỏi" value={m.n_requests} hint="Số câu hỏi trong khoảng thời gian đã chọn." />
             <KpiCard label="Tài liệu đang có sẵn" value={m.n_documents} hint="Số tài liệu trợ lý có thể tìm kiếm hiện nay." />
             <KpiCard label={'Tỷ lệ "không tìm thấy"'} value={fmtPct(m.refusal_rate)} betterWhen="down" hint="Tỷ lệ câu hỏi trợ lý từ chối vì thiếu căn cứ." />
