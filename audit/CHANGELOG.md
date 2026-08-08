@@ -73,7 +73,7 @@ still-empty assistant turn is dropped on load rather than persisted as a permane
 shown exactly that); (2) reload after a full completed answer — text, citations, and the citation
 chips all survive intact. Screenshot: `audit/screenshots/after/chat-persistence-after-reload.png`.
 
-### `<pending>` — fix: Modal consistency — themed delete confirm, Enter-submit, Esc-close (P2-C1/C2/C3)
+### `fbaf3ca` — fix: Modal consistency — themed delete confirm, Enter-submit, Esc-close (P2-C1/C2/C3)
 **Fixed, all three.** (1) Delete-document confirmation now uses the app's own `Modal` +
 `Button variant="danger"` instead of native `window.confirm`/`window.alert` — verified live with
 a screenshot (`audit/screenshots/after/admin-delete-confirmation-modal.png`) showing the themed,
@@ -86,5 +86,16 @@ Escape closed the delete-confirmation dialog.
 **Deferred, not in scope for this commit**: P2-C4 (focus trap / focus-return on modal close) is
 a real M-effort implementation (Tab-cycling within the modal, not a one-liner like C3) —
 audit/REPORT.md places it in Wave 4 alongside the rest of the accessibility batch, not Wave 1.
+
+### `<pending>` — feat: composer autogrow (CHAT-3)
+**Fixed.** The textarea was a fixed `rows={2}` with no `scrollHeight`-driven resize — a long
+multi-line question scrolled inside a cramped box instead of the box growing with it. Added a
+`useEffect` that resizes on every `value` change, capped at 200px (scrolls internally past that
+rather than growing unbounded and pushing the send button off-screen). Verified live: height grew
+64px → 184px typing a long multi-paragraph question, and returned to 64px when cleared.
+Screenshot: `audit/screenshots/after/chat-composer-autogrow.png`.
+
+**Wave 1 complete.** All 6 items fixed and verified live: WAIT-1, CHAT-1, REFUSAL-UI, P2-F1,
+P2-C1/C2/C3, CHAT-3.
 
 

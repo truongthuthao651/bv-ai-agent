@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** Ported from ui_kits/chatbot/ChatParts.jsx's Composer. Attachment chips and
  * the "Scope"/model pickers are dropped — see the Phase 4 gap list: there is
@@ -6,8 +6,23 @@ import { useState } from "react";
  * only ever one model (settings.chat_model), so a picker with nothing to
  * pick would be exactly the "key hint that does nothing" the design system
  * warns against. The trust line is real, not decorative. */
+
+// CHAT-3 (audit/REPORT.md): the textarea was a fixed 2 rows with no autogrow
+// — a long multi-line question scrolled inside a cramped box instead of the
+// box growing with it. Capped so a very long paste still scrolls internally
+// rather than pushing the send button off-screen.
+const MAX_TEXTAREA_HEIGHT = 200;
+
 export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) {
   const [focus, setFocus] = useState(false);
+  const textareaRef = useRef(null);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT) + "px";
+  }, [value]);
 
   function submit() {
     if (!value.trim() || disabled) return;
@@ -28,6 +43,7 @@ export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) 
           }}
         >
           <textarea
+            ref={textareaRef}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
@@ -46,6 +62,8 @@ export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) 
               border: "none",
               outline: "none",
               resize: "none",
+              overflowY: "auto",
+              maxHeight: MAX_TEXTAREA_HEIGHT,
               background: "transparent",
               fontFamily: "var(--font-sans)",
               fontSize: "var(--text-md)",
