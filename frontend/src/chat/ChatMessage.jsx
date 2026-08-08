@@ -113,7 +113,13 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
     );
   }
 
-  const isRefusal = !streaming && text.trim() === REFUSAL_TEXT;
+  // Every finished answer gets a "\n\n_⏱ Thời gian trả lời: Ns_" footer
+  // appended server-side (app/query_timing.py's response_time_footer),
+  // refusals included — so an exact match against REFUSAL_TEXT alone was
+  // never true in production and NoAnswer() below was dead code. Strip the
+  // footer before comparing.
+  const isRefusal =
+    !streaming && text.replace(/\n\n_⏱[^_]*_\s*$/, "").trim() === REFUSAL_TEXT;
   const { body, citations } = streaming ? { body: text, citations: [] } : splitSources(text);
 
   return (
