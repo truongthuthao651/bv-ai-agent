@@ -235,3 +235,22 @@ this commit so it doesn't read as real user activity.
 **Wave 3 in progress.** Remaining: CHAT-4 (hybrid-mode scope — a product decision, being raised
 with the user rather than decided unilaterally, given its interaction with this app's documented
 false-refusal-rate history in `docs/audit/roadmap.md`).
+
+### docs: hybrid-mode scope — decided, no code change (CHAT-4)
+**Resolved as a product decision, raised with the user rather than decided unilaterally** (unlike
+F3-1, this one carries real behavioral risk, not just a documentation question). Confirmed while
+investigating: `HYBRID_SYSTEM_PROMPT` (`app/generation/prompts.py:473-488`) already *instructs*
+the model to only use general knowledge for "kiến thức bảo hiểm nhân thọ/định phí bảo hiểm TỔNG
+QUÁT" (general life-insurance/actuarial knowledge) — the poem case from `audit/04-chatbot.md` is
+the local model imperfectly following that instruction on one adversarial-ish prompt, not a
+missing scope gate. Asked the user whether to add a code-enforced check (this codebase's own
+pattern for "a small local model forgets" — see the coverage-gate's `verify.py`) on top of the
+existing prompt instruction.
+
+**Decision: leave as-is.** The `HYBRID_DISCLAIMER` already prevents anyone mistaking an
+off-topic answer for grounded company content, and this app has a documented history of hard-won
+false-refusal-rate fixes (`docs/audit/roadmap.md`'s AGENT1/AGENT4/AGENT5 items) that a new,
+possibly-overzealous topic gate risks undoing on legitimate borderline questions. No code changed.
+
+**Wave 3 complete.** All items resolved: P2-T1/T2 fixed, P2-T3 skipped (would require fabricating
+information), P2-F3/P2-J6/P2-F2 fixed and verified live, CHAT-4 decided (no change).
