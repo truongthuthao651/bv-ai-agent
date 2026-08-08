@@ -6,7 +6,7 @@ import { useState } from "react";
  * only ever one model (settings.chat_model), so a picker with nothing to
  * pick would be exactly the "key hint that does nothing" the design system
  * warns against. The trust line is real, not decorative. */
-export function Composer({ value, onChange, onSend, disabled, mobile }) {
+export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) {
   const [focus, setFocus] = useState(false);
 
   function submit() {
@@ -55,28 +55,59 @@ export function Composer({ value, onChange, onSend, disabled, mobile }) {
             }}
           />
           <div style={{ display: "flex", alignItems: "center", marginTop: "var(--space-2)" }}>
-            <button
-              onClick={submit}
-              disabled={!value.trim() || disabled}
-              title="Gửi"
-              style={{
-                marginLeft: "auto",
-                width: 36,
-                height: 36,
-                borderRadius: "var(--radius-md)",
-                border: "none",
-                background: value.trim() && !disabled ? "var(--accent)" : "var(--surface-sunken)",
-                color: value.trim() && !disabled ? "var(--text-on-accent)" : "var(--text-muted)",
-                cursor: value.trim() && !disabled ? "pointer" : "not-allowed",
-                fontSize: 15,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "background 150ms",
-              }}
-            >
-              ↑
-            </button>
+            {disabled && onStop ? (
+              // A generation is in flight — offer to cancel it instead of a
+              // disabled, dead send button (CHAT-1, audit/REPORT.md): the
+              // model's own answers routinely take 8-50s (audit/04-chatbot.md
+              // §4.2), and until now there was no way to back out of a wrong
+              // or regretted question short of closing the tab.
+              <button
+                onClick={onStop}
+                title="Dừng"
+                aria-label="Dừng tạo câu trả lời"
+                style={{
+                  marginLeft: "auto",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "var(--radius-md)",
+                  border: "none",
+                  background: "var(--danger)",
+                  color: "var(--text-on-accent)",
+                  cursor: "pointer",
+                  fontSize: 15,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 150ms",
+                }}
+              >
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: "currentColor" }} />
+              </button>
+            ) : (
+              <button
+                onClick={submit}
+                disabled={!value.trim() || disabled}
+                title="Gửi"
+                aria-label="Gửi câu hỏi"
+                style={{
+                  marginLeft: "auto",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "var(--radius-md)",
+                  border: "none",
+                  background: value.trim() && !disabled ? "var(--accent)" : "var(--surface-sunken)",
+                  color: value.trim() && !disabled ? "var(--text-on-accent)" : "var(--text-muted)",
+                  cursor: value.trim() && !disabled ? "pointer" : "not-allowed",
+                  fontSize: 15,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "background 150ms",
+                }}
+              >
+                ↑
+              </button>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>

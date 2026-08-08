@@ -29,6 +29,7 @@ export function ChatScreen() {
   const [railOpen, setRailOpen] = useState(false);
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
+  const abortRef = useRef(null);
   const mobile = useIsMobile();
 
   useEffect(() => {
@@ -49,17 +50,26 @@ export function ChatScreen() {
     const nextMessages = [...messages, { role: "user", text: query }, { role: "assistant", text: "", streaming: true }];
     setMessages(nextMessages);
     setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
-      await askStreaming([...history, { role: "user", content: query }], (delta) => {
-        setMessages((prev) => {
-          const copy = prev.slice();
-          const last = copy[copy.length - 1];
-          copy[copy.length - 1] = { ...last, text: last.text + delta };
-          return copy;
-        });
-      });
+      await askStreaming(
+        [...history, { role: "user", content: query }],
+        (delta) => {
+          setMessages((prev) => {
+            const copy = prev.slice();
+            const last = copy[copy.length - 1];
+            copy[copy.length - 1] = { ...last, text: last.text + delta };
+            return copy;
+          });
+        },
+        controller.signal,
+      );
     } catch (err) {
-      setError(err.message);
+      // A user-initiated stop (see stop() below) throws AbortError — that's
+      // the expected, silent outcome, not a failure to surface. Whatever
+      // partial text already streamed in stays on screen as-is.
+      if (err.name !== "AbortError") setError(err.message);
     } finally {
       setMessages((prev) => {
         const copy = prev.slice();
@@ -68,7 +78,12 @@ export function ChatScreen() {
         return copy;
       });
       setBusy(false);
+      abortRef.current = null;
     }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
   function regenerate(assistantIndex) {
@@ -142,7 +157,7 @@ export function ChatScreen() {
                 </div>
               )}
             </div>
-            <Composer value={input} onChange={setInput} onSend={() => send(input)} disabled={busy} mobile={mobile} />
+            <Composer value={input} onChange={setInput} onSend={() => send(input)} onStop={stop} disabled={busy} mobile={mobile} />
           </div>
           {!mobile && citation && <SourcePanel citation={citation} onClose={() => setCitation(null)} />}
         </div>

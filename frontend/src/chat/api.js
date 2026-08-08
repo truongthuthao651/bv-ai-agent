@@ -24,12 +24,19 @@ export async function fetchPromptSuggestions() {
 /** Streams one turn of POST /v1/chat/completions (SSE), calling `onDelta`
  *  with each text fragment as it arrives. `history` is the prior turns
  *  (in-memory only — see the Phase 4 gap list on persistence) so follow-up
- *  questions still get real conversational context within one page load. */
-export async function askStreaming(messages, onDelta) {
+ *  questions still get real conversational context within one page load.
+ *  `signal` (an AbortController's) lets the caller cancel an in-flight
+ *  generation — aborting the fetch closes the underlying connection, which
+ *  Starlette's StreamingResponse detects as a client disconnect and stops
+ *  the server-side generator (see CHAT-1, audit/REPORT.md). Throws the
+ *  browser's standard AbortError on cancellation; the caller decides
+ *  whether that's worth surfacing (it isn't — see ChatScreen.jsx's send()). */
+export async function askStreaming(messages, onDelta, signal) {
   const resp = await fetch("/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ stream: true, messages }),
+    signal,
   });
   if (!resp.ok || !resp.body) {
     const data = await asJson(resp);
