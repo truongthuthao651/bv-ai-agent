@@ -7,7 +7,7 @@ cases mirror what each of those callers actually relies on.
 
 from __future__ import annotations
 
-from app.text_utils import fold_text
+from app.text_utils import fold_text, sanitize_model_output
 
 
 def test_strips_diacritics_and_lowercases() -> None:
@@ -36,3 +36,23 @@ def test_folds_terms_from_every_former_call_site() -> None:
     assert fold_text("có được chi trả") == "co duoc chi tra"  # metric_guard/coverage
     assert fold_text("Loại trừ trách nhiệm") == "loai tru trach nhiem"  # coverage_gate
     assert fold_text("lãi suất cam kết") == "lai suat cam ket"  # metric_hints
+
+
+def test_sanitize_model_output_replaces_known_cjk_and_strips_runs() -> None:
+    assert "tham gia" in sanitize_model_output("người投保 có thể", strip_edges=True)
+    assert "投保" not in sanitize_model_output("người投保 có thể", strip_edges=True)
+    assert sanitize_model_output("纯中文", strip_edges=True) == ""
+
+
+def test_sanitize_model_output_replaces_and_strips_cjk() -> None:
+    assert (
+        sanitize_model_output("người投保 mua bảo hiểm", strip_edges=True)
+        == "người tham gia mua bảo hiểm"
+    )
+    assert sanitize_model_output("bình thường", strip_edges=True) == "bình thường"
+
+
+def test_sanitize_model_output_preserves_leading_space_on_stream_chunks() -> None:
+    """Stream tokens often arrive as ' thuần' — must not strip the word boundary."""
+    assert sanitize_model_output(" thuần") == " thuần"
+    assert sanitize_model_output("Phí") + sanitize_model_output(" thuần") == "Phí thuần"

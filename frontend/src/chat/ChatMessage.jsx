@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Triangle } from "../brand/Triangle.jsx";
 import { Button } from "../components/index.js";
-import { renderMarkdown, splitSources } from "./markdown.jsx";
+import { renderMarkdown, splitSources, citedSourcesOnly } from "./markdown.jsx";
 
 const REFUSAL_TEXT = "Tôi không tìm thấy thông tin trong tài liệu.";
 
@@ -172,7 +172,8 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
   // footer before comparing.
   const isRefusal =
     !streaming && text.replace(/\n\n_⏱[^_]*_\s*$/, "").trim() === REFUSAL_TEXT;
-  const { body, citations } = streaming ? { body: text, citations: [] } : splitSources(text);
+  const { body, citations: allCitations } = streaming ? { body: text, citations: [] } : splitSources(text);
+  const citations = citedSourcesOnly(body, allCitations);
 
   return (
     <div style={{ display: "flex", gap: "var(--space-4)" }}>

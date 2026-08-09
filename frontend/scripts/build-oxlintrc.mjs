@@ -1,6 +1,4 @@
-// Regenerates frontend/.oxlintrc.generated.json from the design system's
-// _adherence.oxlintrc.json (read-only source of truth, never hand-edited —
-// see REDESIGN_PROMPT.md Phase 4). oxlint's config parser rejects unknown
+// Regenerates frontend/.oxlintrc.generated.json from frontend/.oxlintrc.source.json.
 // top-level fields; the source file carries an `x-omelette` metadata block
 // for a different tool, so it's stripped here rather than removed at the
 // source.
@@ -9,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sourcePath = path.resolve(here, "../../../_adherence.oxlintrc.json");
+const sourcePath = path.resolve(here, "../.oxlintrc.source.json");
 const outPath = path.resolve(here, "../.oxlintrc.generated.json");
 
 const config = JSON.parse(readFileSync(sourcePath, "utf8"));

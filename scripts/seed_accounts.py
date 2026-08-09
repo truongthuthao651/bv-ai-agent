@@ -1,15 +1,14 @@
 #!/usr/bin/env python
-"""Provision an admin dashboard account (app/accounts.py).
+"""Provision an account (app/accounts.py).
 
-There is no self-service signup and no email-sending — an operator runs this
-by hand to create or reset one account at a time:
+Admin accounts must be created by an operator — employees self-register at
+/login ("Tạo tài khoản") with any @baoviet.com email.
 
     .venv/bin/python scripts/seed_accounts.py admin@baoviet.com S0meP@ss admin
     .venv/bin/python scripts/seed_accounts.py employee@baoviet.com S0meP@ss employee
 
 Email must end in app.accounts.EMAIL_DOMAIN (a format check only — there is
-no corporate identity provider to verify domain membership against; see the
-account-model note in REDESIGN_PROMPT.md §7).
+no corporate identity provider to verify domain membership against).
 """
 
 from __future__ import annotations

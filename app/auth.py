@@ -3,11 +3,11 @@
 Everything the employee-facing product needs — chat AND administration —
 now lives behind this one gate (Open WebUI has been retired; there is no
 second, separate login anymore). It USED TO be one shared ``ADMIN_PASSWORD``;
-per REDESIGN_PROMPT.md §7 (no reachable internal SSO), it now checks
 per-account email+password against ``app/accounts.py`` instead — every
 account email must end in ``accounts.EMAIL_DOMAIN``. Accounts are
-provisioned directly (``scripts/seed_accounts.py``); there is still no
-self-service signup. Role gates WHICH surfaces an account reaches: any
+provisioned directly (``scripts/seed_accounts.py``); employees may
+self-register at ``POST /register`` (``@baoviet.com`` only, employee role).
+Role gates WHICH surfaces an account reaches: any
 signed-in account can use ``/chat``; only ``role="admin"`` can reach
 ``/admin`` or its mutating endpoints (``app.main.admin_session_gate``,
 ``require_admin``).
@@ -54,10 +54,9 @@ SESSION_TTL_SECONDS = 60 * 60 * 12  # 12h — re-login roughly once a working da
 #  - /login, /logout: the auth flow itself (can't require auth to log in)
 #  - /health: polled unauthenticated by scripts/run_native.sh and
 #    scripts/healthcheck.sh (no cookie jar there)
-#  - "/" (exact match only — see is_public_path): the public landing page
-#    (REDESIGN_PROMPT.md §6). The admin console moved to "/admin" precisely so
-#    it could stay gated once "/" became public; "/admin" is deliberately
-#    NOT in this list.
+#  - "/" (exact match only — see is_public_path): the public landing page.
+#    The admin console lives at "/admin" and stays gated; "/admin" is NOT
+#    in this list.
 #  - /assets, /app-assets, /fonts, /tokens: static code/styles/fonts/images,
 #    never business data. These must be public or the public landing page
 #    (and the restyled /login, which loads /tokens directly) can't render
@@ -76,6 +75,7 @@ SESSION_TTL_SECONDS = 60 * 60 * 12  # 12h — re-login roughly once a working da
 # — which is exactly the access level they were always meant to have.
 PUBLIC_PREFIXES = (
     "/login",
+    "/register",
     "/logout",
     "/health",
     "/",

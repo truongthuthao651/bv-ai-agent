@@ -25,6 +25,14 @@ from app.config.settings import settings
 
 
 @pytest.fixture(autouse=True)
+def _isolated_conversations_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point conversation storage at an empty per-test DB."""
+    from app import conversations as conv_mod
+
+    monkeypatch.setattr(conv_mod, "_db_path", lambda: tmp_path / "conversations.db")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_accounts_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the accounts store at an empty per-test DB (see module docstring)."""
     monkeypatch.setattr(accounts, "_db_path", lambda: tmp_path / "accounts.db")

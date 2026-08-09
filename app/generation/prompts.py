@@ -281,6 +281,23 @@ Kết thúc phần gợi ý bằng lưu ý rằng đây là tổng hợp nội b
 chiếu, không thay thế Quy tắc và Điều khoản sản phẩm.\
 """
 
+_PRODUCT_NAMED_RULE = """\
+KHI CÂU HỎI ĐÃ NÊU TÊN SẢN PHẨM:
+Chỉ dùng các đoạn ngữ cảnh thuộc tài liệu của sản phẩm đó. TUYỆT ĐỐI không chèn \
+công thức định phí, quyền lợi hay điều khoản từ sản phẩm khác dù chúng tương tự. \
+Không thêm mục "Kiến thức chung" — câu hỏi đã gắn với tài liệu nội bộ cụ thể.\
+"""
+
+_PRODUCT_SUMMARY_RULE = """\
+KHI CÂU HỎI YÊU CẦU TÓM TẮT / GIỚI THIỆU SẢN PHẨM:
+Trình bày theo các mục ngắn (chỉ mục nào ngữ cảnh có thông tin): **Loại sản phẩm**; \
+**Quyền lợi chính**; **Cấu trúc phí**; **Loại trừ / lưu ý quan trọng**. \
+Ưu tiên trích dẫn tài liệu QUY TẮC / HỢP ĐỒNG của sản phẩm — KHÔNG lấy định nghĩa \
+actuarial từ Từ điển thuật ngữ làm nội dung chính. \
+KHÔNG chèn công thức actuarial (phí thuần, niên kim, dự phòng...) trừ khi câu hỏi \
+hỏi trực tiếp về công thức hoặc định phí.\
+"""
+
 # Optional supplement, appended to either variant when
 # settings.general_knowledge_supplement_enabled. Deliberately UNNUMBERED and
 # fenced behind a fixed heading so the generator can detect it and label it
@@ -381,6 +398,8 @@ def system_prompt(
     general_knowledge: bool | None = None,
     coverage: bool = False,
     coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
 ) -> str:
     """Assemble the grounded system prompt for one answer mode.
 
@@ -408,6 +427,11 @@ def system_prompt(
         # unconditional: an explicit general_knowledge=True must not reopen it
         # on the one question shape where it produces ungrounded verdicts.
         general_knowledge = False
+    if product_named:
+        # Product-specific questions should stay in document scope; the
+        # supplement often repeats textbook definitions (e.g. "phí thuần") that
+        # already appear in the grounded part and can contradict it.
+        general_knowledge = False
     parts = [
         _PERSONA,
         _RULE_1_ADVISORY if advisory else _RULE_1_STRICT,
@@ -423,6 +447,10 @@ def system_prompt(
     # read, and it must not be buried above the general-knowledge section.
     if coverage_undetermined:
         parts.append(_COVERAGE_UNDETERMINED_RULE)
+    if product_named:
+        parts.append(_PRODUCT_NAMED_RULE)
+    if product_summary:
+        parts.append(_PRODUCT_SUMMARY_RULE)
     if general_knowledge:
         parts.append(_GENERAL_KNOWLEDGE_RULE)
     parts.append(_FOOTER_COVERAGE if (coverage or coverage_undetermined) else _FOOTER)
@@ -531,9 +559,23 @@ def format_context(hits: list[Hit]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_user_prompt(query: str, hits: list[Hit]) -> str:
+def build_user_prompt(
+    query: str,
+    hits: list[Hit],
+    *,
+    product_labels: list[str] | None = None,
+) -> str:
     """Assemble the final user-turn content: numbered context + the question."""
-    return f"Ngữ cảnh:\n{format_context(hits)}\n\nCâu hỏi: {query}"
+    focus = ""
+    if product_labels:
+        names = ", ".join(product_labels)
+        focus = (
+            f"Lưu ý: câu hỏi về sản phẩm/tài liệu **{names}**. "
+            "Chỉ trả lời từ các đoạn ngữ cảnh thuộc sản phẩm đó; "
+            "không chèn công thức định phí hay điều khoản từ sản phẩm khác "
+            "dù lịch sử hội thoại trước có đề cập.\n\n"
+        )
+    return f"{focus}Ngữ cảnh:\n{format_context(hits)}\n\nCâu hỏi: {query}"
 
 
 def format_sources(hits: list[Hit]) -> str:

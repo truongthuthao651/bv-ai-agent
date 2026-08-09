@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { KpiCard, Input, Button } from "../components/index.js";
 import { fetchMetrics, askStreaming } from "./api.js";
 import { DOC_TYPE_LABEL } from "./DocumentsView.jsx";
+import { departmentDisplay } from "./departmentLabels.js";
 
 const MODE_LABELS = { grounded: "Có căn cứ", advisory: "Tư vấn", hybrid: "Kiến thức chung", refusal: "Từ chối", other: "Khác" };
 const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
@@ -431,7 +432,11 @@ export function OverviewView() {
                 <Empty>Chưa gắn phòng ban cho tài liệu nào.</Empty>
               ) : (
                 <Donut
-                  segments={m.documents_by_department.map((d, i) => ({ label: d.department, value: d.count, color: DONUT_COLORS[i % DONUT_COLORS.length] }))}
+                  segments={m.documents_by_department.map((d, i) => ({
+                    label: d.department === "Không đặt" ? d.department : departmentDisplay(d.department),
+                    value: d.count,
+                    color: DONUT_COLORS[i % DONUT_COLORS.length],
+                  }))}
                 />
               )}
             </Panel>

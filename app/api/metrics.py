@@ -4,9 +4,8 @@ Day 4 / 2026-08-05 audit (ADM1's follow-on): reads the same metadata-only
 JSONL ``app/query_timing.py`` already writes — never query/answer text, ever
 — and aggregates it into the numbers a non-technical manager actually wants:
 refusal rate, latency percentiles, answer-mode breakdown, retrieved-hit
-count. Feeds the "Chất lượng & hiệu năng" section of ``app/static/index.html``
-so nobody has to read a raw JSONL file by hand. Read-only, local-only, no
-external calls.
+count. Feeds the admin Overview dashboard (`frontend/src/admin/OverviewView.jsx`).
+Read-only, local-only, no external calls.
 """
 
 from __future__ import annotations
@@ -91,7 +90,7 @@ class MetricsSummary(BaseModel):
     top_documents: list[TopDocument]
     latency_histogram: list[LatencyBin]
     # Document-store snapshots (not time-windowed — there is no per-query
-    # department field to aggregate, see REDESIGN_PROMPT.md §Metrics).
+    # department field to aggregate when that metadata is logged).
     n_documents: int
     documents_by_department: list[DepartmentCount]
     recent_documents: list[DocumentInfo]

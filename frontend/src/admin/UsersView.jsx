@@ -27,7 +27,7 @@ export function UsersView() {
 
       <Card
         title="Tài khoản đã cấp"
-        hint="Chỉ xem — chưa có tạo/xoá tài khoản qua giao diện, dùng scripts/seed_accounts.py trên máy chủ."
+        hint="Chỉ xem — quản trị viên cấp bằng scripts/seed_accounts.py; nhân viên tự đăng ký tại /login."
         size="lg"
       >
         {error ? (

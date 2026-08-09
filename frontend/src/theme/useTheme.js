@@ -6,31 +6,44 @@ function systemTheme() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function initialTheme() {
+function initialPreference() {
   const stored = localStorage.getItem(STORAGE_KEY);
-  return stored === "light" || stored === "dark" ? stored : systemTheme();
+  if (stored === "light" || stored === "dark" || stored === "system") return stored;
+  return "system";
 }
 
-/** Drives data-theme on <html>, persisted to localStorage, defaulting to the OS preference. */
+function resolveTheme(preference) {
+  return preference === "system" ? systemTheme() : preference;
+}
+
+/** Theme preference (light/dark/system) + resolved theme for rendering. */
 export function useTheme() {
-  const [theme, setThemeState] = useState(initialTheme);
+  const [preference, setPreferenceState] = useState(initialPreference);
+  const [theme, setThemeState] = useState(() => resolveTheme(initialPreference()));
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
   useEffect(() => {
-    if (localStorage.getItem(STORAGE_KEY)) return;
+    setThemeState(resolveTheme(preference));
+    if (preference !== "system") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e) => setThemeState(e.matches ? "dark" : "light");
+    const onChange = () => setThemeState(media.matches ? "dark" : "light");
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
-  }, []);
+  }, [preference]);
 
   const setTheme = useCallback((next) => {
     localStorage.setItem(STORAGE_KEY, next);
-    setThemeState(next);
+    setPreferenceState(next);
+    setThemeState(resolveTheme(next));
   }, []);
 
-  return [theme, setTheme];
+  /** Toggle between light and dark (sets an explicit preference, not system). */
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [setTheme, theme]);
+
+  return { theme, preference, setTheme, toggleTheme };
 }

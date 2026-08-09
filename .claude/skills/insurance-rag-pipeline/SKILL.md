@@ -7,7 +7,7 @@ description: Development guide for the local Vietnamese insurance RAG assistant.
 
 This repo is a fully-local RAG assistant for a Vietnamese life insurance firm
 whose documents are math-heavy (actuarial formulas, notation, charts).
-Read `CLAUDE.md` first for architecture, structure, and the security rules.
+Read `TEAMMATE_GUIDE.md` first for architecture, structure, and the security rules.
 This skill covers HOW to implement and modify each stage correctly.
 
 ## Golden rules (repeat of the critical ones)

@@ -1,89 +1,19 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, Input, Modal, ThemeToggle } from "../components/index.js";
+import { Badge, RailCollapseButton, RailExpandButton, ResizableRail, ThemeToggle, UserAvatar, useRailLayout } from "../components/index.js";
 import { useTheme } from "../theme/useTheme.js";
-import { changePassword, fetchHealth, fetchMe, logout } from "./api.js";
+import { ProfileView } from "../user/ProfileView.jsx";
+import { roleLabel } from "../user/profilePrefs.js";
+import { useProfilePrefs } from "../user/useProfilePrefs.js";
+import { deleteAllConversationsOnServer } from "../chat/conversationStore.js";
+import { EvaluationView, LogsView, ModelsView, SettingsView } from "./AdminOpsViews.jsx";
+import { changePassword, fetchConversationCount, fetchHealth, fetchMe, logout } from "./api.js";
 import { OverviewView } from "./OverviewView.jsx";
 import { DocumentsView } from "./DocumentsView.jsx";
 import { UsersView } from "./UsersView.jsx";
 
-/** P2-J6 (audit/REPORT.md) — the minimum viable self-service surface: change
- * the signed-in account's own password. Exactly two fields, matching the
- * audit's own "minimum viable" framing rather than a full profile page.
- * Identical to chat/Sidebar.jsx's copy of the same modal — kept as two small
- * local components rather than a shared file, consistent with this
- * codebase's existing chat/admin api.js duplication (see that file's own
- * comment: separate on purpose so the two bundles stay independent). */
-function ChangePasswordModal({ onClose }) {
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [status, setStatus] = useState({ text: "", tone: "" });
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    if (!currentPassword || !newPassword) {
-      setStatus({ text: "Vui lòng nhập đủ cả hai mật khẩu.", tone: "bad" });
-      return;
-    }
-    setBusy(true);
-    setStatus({ text: "", tone: "" });
-    try {
-      await changePassword(currentPassword, newPassword);
-      setStatus({ text: "Đã đổi mật khẩu.", tone: "ok" });
-      setCurrentPassword("");
-      setNewPassword("");
-    } catch (err) {
-      setStatus({ text: err.message, tone: "bad" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const toneColor = { ok: "var(--success)", bad: "var(--danger)", "": "var(--text-secondary)" }[status.tone];
-
-  return (
-    <Modal
-      open
-      title="Đổi mật khẩu"
-      hint="Đổi mật khẩu cho tài khoản đang đăng nhập."
-      onClose={onClose}
-      actions={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Đóng
-          </Button>
-          <Button onClick={save} disabled={busy}>
-            Lưu
-          </Button>
-        </>
-      }
-    >
-      <div
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            if (!busy) save();
-          }
-        }}
-        style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
-      >
-        <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu hiện tại</label>
-          <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={{ width: "100%" }} />
-        </div>
-        <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu mới (ít nhất 8 ký tự)</label>
-          <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ width: "100%" }} />
-        </div>
-        {status.text && <div style={{ fontSize: "var(--text-xs)", color: toneColor }}>{status.text}</div>}
-      </div>
-    </Modal>
-  );
-}
-
-/* Grouped exactly as the kit has it (Monitor / Content / Configure —
- * REDESIGN_PROMPT.md §8), so nobody has to hunt for a moved item once a
- * section ships. Only "Tổng quan" and "Tài liệu" are real; every other item
- * renders an honest placeholder instead of the kit's fabricated pages. */
+/* Nav grouped Monitor / Content / Configure. Only Overview and Documents
+ * Overview and Documents are the main surfaces; Evaluation, Logs, Models, and
+ * Settings are read-only operational views. */
 const NAV_GROUPS = [
   {
     title: "Theo dõi",
@@ -109,45 +39,11 @@ const NAV_GROUPS = [
   },
 ];
 
-const PLACEHOLDER_COPY = {
-  evaluation: "Chưa được xây dựng trong bản này — số liệu đánh giá chất lượng (RAGAS) hiện chỉ chạy offline qua eval/run_ragas.py, chưa có màn hình riêng.",
-  logs: "Chưa được xây dựng trong bản này.",
-  models: "Chưa được xây dựng trong bản này — mô hình đang dùng được đặt qua biến CHAT_MODEL trong .env.",
-  settings: "Ứng dụng không có bảng cấu hình qua giao diện — mọi tham số (mô hình, ngưỡng, đường dẫn) được đặt trong tệp .env trên máy chủ và áp dụng khi khởi động lại dịch vụ.",
-};
-
-function Placeholder({ navKey, label }) {
-  return (
-    <div
-      style={{
-        textAlign: "center",
-        padding: "var(--space-20) var(--space-5)",
-        border: "1px dashed var(--border-strong)",
-        borderRadius: "var(--radius-xl)",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "var(--text-lg)",
-          fontWeight: "var(--weight-semibold)",
-          color: "var(--text-primary)",
-          marginBottom: "var(--space-2)",
-          letterSpacing: "var(--tracking-tight)",
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", maxWidth: 480, margin: "0 auto" }}>
-        {PLACEHOLDER_COPY[navKey] || "Chưa được xây dựng trong bản này."}
-      </div>
-    </div>
-  );
-}
-
 const NAV_KEYS = new Set(NAV_GROUPS.flatMap((g) => g.items).map((it) => it.key));
 
 function navFromHash() {
   const key = window.location.hash.slice(1);
+  if (key === "profile") return "profile";
   return NAV_KEYS.has(key) ? key : "overview";
 }
 
@@ -169,20 +65,25 @@ function useIsMobile() {
 }
 
 export function AdminShell() {
-  const [theme, setTheme] = useTheme();
+  const { theme, preference, setTheme, toggleTheme } = useTheme();
   const [active, setActive] = useState(navFromHash);
   const [hoverNav, setHoverNav] = useState(null);
   const [health, setHealth] = useState(null);
   const [me, setMe] = useState(null);
+  const [prefs, setPrefs, hydrateFromServer] = useProfilePrefs(me?.email);
+  const [conversationCount, setConversationCount] = useState(0);
   const [railOpen, setRailOpen] = useState(false);
-  const [showProfile, setShowProfile] = useState(false);
   const mobile = useIsMobile();
+  const railLayout = useRailLayout("bv-rail-admin");
 
   useEffect(() => {
     fetchMe()
-      .then(setMe)
+      .then((data) => {
+        setMe(data);
+        if (data?.email) hydrateFromServer(data);
+      })
       .catch(() => setMe(null));
-  }, []);
+  }, [hydrateFromServer]);
 
   // Deep-linkable tabs (#documents, #overview, ...) so a bookmark or refresh
   // lands back on the right screen instead of always resetting to Overview.
@@ -196,6 +97,28 @@ export function AdminShell() {
     window.location.hash = key;
     setActive(key);
     setRailOpen(false);
+  }
+
+  function openProfile() {
+    window.location.hash = "profile";
+    setActive("profile");
+    setRailOpen(false);
+  }
+
+  function closeProfile() {
+    if (window.location.hash === "#profile") {
+      window.location.hash = "overview";
+    }
+    setActive("overview");
+  }
+
+  useEffect(() => {
+    if (!me?.email) return;
+    fetchConversationCount().then(setConversationCount).catch(() => setConversationCount(0));
+  }, [me?.email, active]);
+
+  function clearAllConversations() {
+    return deleteAllConversationsOnServer().then(() => setConversationCount(0));
   }
 
   useEffect(() => {
@@ -245,13 +168,16 @@ export function AdminShell() {
   // mobile slide-over drawer below — a closure variable rather than a
   // separate component so it keeps direct access to all the state/handlers
   // above without threading eight props through.
-  const railContent = (
+  const railContent = (onCollapse) => (
     <>
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", padding: "var(--space-5) var(--space-4) var(--space-6)" }}>
-        <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>
-          Trợ lý AI Bảo Việt Life
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "var(--space-2)", padding: "var(--space-5) var(--space-4) var(--space-6)" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>
+            Trợ lý AI Bảo Việt Life
+          </div>
+          <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>Quản trị tài liệu</div>
         </div>
-        <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>Quản trị tài liệu</div>
+        {onCollapse && <RailCollapseButton onClick={onCollapse} label="Ẩn menu quản trị" />}
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: "0 var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-6)", minHeight: 0 }}>
@@ -285,37 +211,21 @@ export function AdminShell() {
         ))}
       </nav>
 
-      <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-4) var(--space-4) var(--space-5)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
         {me?.email && (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             <button
-              onClick={() => setShowProfile(true)}
-              title="Đổi mật khẩu"
-              aria-label="Tài khoản: đổi mật khẩu"
-              style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0, textAlign: "left" }}
+              onClick={openProfile}
+              title="Hồ sơ cá nhân"
+              aria-label="Hồ sơ cá nhân"
+              style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: "var(--space-1) 0", textAlign: "left", color: "var(--text-primary)" }}
             >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "var(--brand-navy)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: "var(--weight-bold)",
-                  flexShrink: 0,
-                }}
-              >
-                {me.email[0].toUpperCase()}
-              </div>
+              <UserAvatar email={me.email} swatchId={prefs.avatarSwatch} size={32} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {me.email}
+                  {prefs.displayName || me.email}
                 </div>
-                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{me.role === "admin" ? "Quản trị viên" : "Nhân viên"}</div>
+                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{roleLabel(me.role)}</div>
               </div>
             </button>
             <button
@@ -334,6 +244,8 @@ export function AdminShell() {
         </div>
         <a
           href="/chat/"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
         >
           Mở giao diện trò chuyện ↗
@@ -348,19 +260,9 @@ export function AdminShell() {
       style={{ height: "100vh", background: "var(--bg)", fontFamily: "var(--font-sans)", display: "flex", overflow: "hidden" }}
     >
       {!mobile && (
-        <aside
-          style={{
-            width: "var(--rail-width)",
-            flexShrink: 0,
-            borderRight: "1px solid var(--border)",
-            background: "var(--surface)",
-            display: "flex",
-            flexDirection: "column",
-            boxSizing: "border-box",
-          }}
-        >
-          {railContent}
-        </aside>
+        <ResizableRail layout={railLayout} collapseLabel="Ẩn menu quản trị">
+          {railContent(railLayout.collapse)}
+        </ResizableRail>
       )}
       {mobile && railOpen && (
         <div
@@ -374,16 +276,17 @@ export function AdminShell() {
               left: 0,
               top: 0,
               bottom: 0,
-              width: "var(--rail-width)",
+              width: `min(${railLayout.width}px, 85vw)`,
               maxWidth: "85vw",
               background: "var(--surface)",
               display: "flex",
               flexDirection: "column",
               boxSizing: "border-box",
               boxShadow: "var(--shadow-lg)",
+              borderRight: "1px solid var(--border)",
             }}
           >
-            {railContent}
+            {railContent(null)}
           </div>
         </div>
       )}
@@ -401,7 +304,7 @@ export function AdminShell() {
             background: "var(--bg)",
           }}
         >
-          {mobile && (
+          {mobile ? (
             <button
               onClick={() => setRailOpen(true)}
               aria-label="Mở menu"
@@ -409,27 +312,48 @@ export function AdminShell() {
             >
               ☰
             </button>
+          ) : (
+            railLayout.collapsed && <RailExpandButton onClick={railLayout.expand} label="Hiện menu quản trị" />
           )}
           <div style={{ minWidth: 0, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {NAV_GROUPS.flatMap((g) => g.items).find((it) => it.key === active)?.label}
+            {active === "profile"
+              ? "Hồ sơ cá nhân"
+              : NAV_GROUPS.flatMap((g) => g.items).find((it) => it.key === active)?.label}
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <ThemeToggle theme={theme} onChange={setTheme} iconOnly />
+            <ThemeToggle theme={theme} onChange={toggleTheme} iconOnly />
           </div>
         </header>
 
+        {active === "profile" ? (
+          <ProfileView
+            me={me}
+            prefs={prefs}
+            onPrefsChange={setPrefs}
+            theme={theme}
+            themePreference={preference}
+            onThemePreference={setTheme}
+            onChangePassword={changePassword}
+            onLogout={logout}
+            onBack={closeProfile}
+            backLabel="Quay lại quản trị"
+            conversationCount={conversationCount}
+            onClearConversations={clearAllConversations}
+          />
+        ) : (
         <div style={{ flex: 1, overflowY: "auto", padding: "var(--pad-page) var(--pad-page) var(--space-16)" }}>
           <div style={{ maxWidth: 1400, margin: "0 auto" }}>
             {active === "overview" && <OverviewView />}
             {active === "documents" && <DocumentsView canManage={me?.role === "admin"} />}
             {active === "users" && <UsersView />}
-            {!["overview", "documents", "users"].includes(active) && (
-              <Placeholder navKey={active} label={NAV_GROUPS.flatMap((g) => g.items).find((it) => it.key === active)?.label} />
-            )}
+            {active === "evaluation" && <EvaluationView />}
+            {active === "logs" && <LogsView />}
+            {active === "models" && <ModelsView />}
+            {active === "settings" && <SettingsView />}
           </div>
         </div>
+        )}
       </main>
-      {showProfile && <ChangePasswordModal onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

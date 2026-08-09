@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "description": "Vite + React frontend for the BV AI Agent admin console and chat UI. Built here (dev machine only); the built bundle in app/static/dist/ is what ships. See /Users/haphan/Desktop/bv-ai-agent/ for the design system this is vendored from.",
+  "description": "Vite + React frontend for the BV AI Agent admin console and chat UI. Built on the dev machine only; output goes to app/static/dist/.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

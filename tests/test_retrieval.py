@@ -1175,3 +1175,133 @@ def test_metric_guard_sees_the_parent_window_of_a_child_chunk() -> None:
     )
     q = "gặp tai nạn xe cộ và chết thì được claim bao nhiêu%?"
     assert filter_metric_mismatch(q, [child]) == []
+
+
+def test_filter_hits_to_named_products_drops_other_products() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hits = [
+        _cmp_hit("1", known[0]),
+        _cmp_hit("2", known[1]),
+        _cmp_hit("3", known[1]),
+    ]
+    q = "tóm tắt bảo hiểm an tâm hoạch định"
+    filtered = filter_hits_to_named_products(q, hits, known_titles=known)
+    assert [h.point_id for h in filtered] == ["1"]
+
+
+def test_filter_hits_uses_rewritten_query_when_raw_names_product() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hits = [_cmp_hit("1", known[0]), _cmp_hit("2", known[1])]
+    raw = "tóm tắt bảo hiểm an tâm hoạch định"
+    rewritten = "Tóm tắt sản phẩm liên kết chung"  # rewrite dropped the name
+    filtered = filter_hits_to_named_products(
+        raw, hits, known_titles=known, standalone_query=rewritten
+    )
+    assert [h.point_id for h in filtered] == ["1"]
+
+
+def test_named_product_labels_from_queries_unions_both_forms() -> None:
+    from app.retrieval.product_scope import named_product_labels_from_queries
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    raw = "tóm tắt bảo hiểm an tâm hoạch định"
+    rewritten = "Tóm tắt sản phẩm liên kết chung"
+    labels = named_product_labels_from_queries(raw, rewritten, titles=known)
+    assert any("Hoạch Định" in label for label in labels)
+
+
+def test_is_product_summary_turn() -> None:
+    from app.retrieval.product_scope import is_product_summary_turn
+
+    assert is_product_summary_turn(
+        "tóm tắt bảo hiểm an tâm hoạch định",
+        "Giới thiệu sản phẩm liên kết chung",
+    )
+    assert not is_product_summary_turn("phí thuần là gì", "phí thuần là gì")
+
+
+def test_filter_hits_to_named_products_noop_without_product_name() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = ["Bảo hiểm Liên kết chung An Tâm Hoạch Định"]
+    hits = [_cmp_hit("1", known[0])]
+    assert (
+        filter_hits_to_named_products("phí thuần là gì", hits, known_titles=known)
+        == hits
+    )
+
+
+def test_is_product_summary_query() -> None:
+    from app.retrieval.product_scope import is_product_summary_query
+
+    assert is_product_summary_query("tóm tắt bảo hiểm an tâm hoạch định")
+    assert is_product_summary_query("tóm tắt chi tiết bảo hiểm an tâm hoạch định")
+    assert not is_product_summary_query("phí thuần là gì")
+
+
+def test_filter_hits_for_product_summary_drops_glossary_when_policy_present() -> None:
+    from app.models.schemas import DocType, QdrantPayload
+    from app.models.schemas import Hit
+    from app.retrieval.product_scope import filter_hits_for_product_summary
+
+    athd = "Bảo hiểm Liên kết chung An Tâm Hoạch Định"
+    glossary = "Từ điển thuật ngữ định phí bảo hiểm"
+    known = [athd, glossary]
+    policy = Hit(
+        point_id="1",
+        score=1.0,
+        payload=QdrantPayload(
+            doc_id="p1",
+            doc_title=athd,
+            section_path="Phí",
+            doc_type=DocType.POLICY,
+            display_text="phí ban đầu",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    glossary_hit = Hit(
+        point_id="2",
+        score=0.9,
+        payload=QdrantPayload(
+            doc_id="g1",
+            doc_title=glossary,
+            section_path="phí thuần",
+            doc_type=DocType.GLOSSARY,
+            display_text="định nghĩa",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    out = filter_hits_for_product_summary(
+        [policy, glossary_hit], ["An Tâm Hoạch Định"], known_titles=known
+    )
+    assert [h.point_id for h in out] == ["1"]
+
+
+def test_resolve_product_titles_distinguishes_an_tam_family() -> None:
+    from app.retrieval.product_scope import resolve_product_titles, title_covers_product
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hoach = resolve_product_titles("An Tâm Hoạch Định", known)
+    assert hoach == [known[0]]
+    assert title_covers_product(known[0], "An Tâm Hoạch Định", known_titles=known)
+    assert not title_covers_product(known[1], "An Tâm Hoạch Định", known_titles=known)
+    bao_ve = resolve_product_titles("An Tâm Bảo Vệ", known)
+    assert bao_ve == [known[1]]

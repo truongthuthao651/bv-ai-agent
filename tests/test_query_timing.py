@@ -87,6 +87,25 @@ def test_log_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
     assert "text" not in line.lower()
 
 
+def test_log_forces_refusal_mode_when_answer_text_is_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    from app.generation.prompts import REFUSAL_MESSAGE
+
+    path = tmp_path / "query_timings.jsonl"
+    monkeypatch.setattr(settings, "query_timing_log_enabled", True)
+    monkeypatch.setattr(settings, "query_timing_log_path", path)
+
+    log_query_timing(
+        _ctx("hybrid", elapsed_s=5),
+        answer_chars=len(REFUSAL_MESSAGE),
+        answer_text=REFUSAL_MESSAGE,
+    )
+
+    record = json.loads(path.read_text(encoding="utf-8").strip())
+    assert record["mode"] == "refusal"
+
+
 def _stub_hit(doc_id: str = "d1", section_path: str = "Điều 5", score: float = 0.876):
     from app.models.schemas import DocType, Hit, QdrantPayload
 

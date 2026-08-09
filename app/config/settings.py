@@ -223,6 +223,14 @@ class Settings(BaseSettings):
     # product (near-identical benefit clauses fool the reranker), refuse instead
     # of answering from the wrong product. False disables the guard.
     product_scope_guard_enabled: bool = True
+    # When a query names exactly one indexed product, scope hybrid search to
+    # that product's doc_id(s) before reranking — same isolation as conversation
+    # scope, but for the opening turn that already names the product.
+    single_product_retrieval_enabled: bool = True
+    # After rerank on single-product turns, drop chunks whose doc_title does not
+    # cover the named product(s). Belt-and-braces when scoping misses abbreviated
+    # titles or a rewrite reintroduces a product name the search filter skipped.
+    product_hit_filter_enabled: bool = True
     # Comparison / multi-product questions (app/retrieval/comparison.py): when
     # the query names ≥2 products, retrieve + rerank per product and merge so
     # one product's overview chunks cannot crowd the other out of the global
@@ -325,8 +333,8 @@ class Settings(BaseSettings):
 
     # ---- Departments (phòng ban) ----
     # Selectable when uploading a document and editable per document. This is the
-    # source of truth for validation; the admin UI (static/index.html) mirrors
-    # the same list in its <select> options — keep the two in sync.
+    # Source of truth for validation. Frontend upload forms mirror this list
+    # (frontend/src/documents/documentUploadOptions.js) — keep in sync.
     departments: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["PTSP", "DP", "DVA"]
     )

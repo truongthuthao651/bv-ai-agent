@@ -3,8 +3,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // Build output is committed to git (app/static/dist/) so the deployment
-// machine ships the built bundle and never runs npm — see
-// bv-ai-agent/REDESIGN_PROMPT.md and CLAUDE.md's deployment paragraph.
+// machine ships the built bundle and never runs npm — see TEAMMATE_GUIDE.md.
 //
 // Three-page build: "/" is the public landing page, "/admin" and "/chat" are
 // gated (any signed-in account) — separate real HTML documents (not

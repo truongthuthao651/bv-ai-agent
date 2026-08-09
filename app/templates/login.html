@@ -12,8 +12,7 @@
 <title>Đăng nhập — Trợ lý AI Bảo Việt Life</title>
 <!-- Same vendored token CSS the React bundle uses (frontend/src/tokens/,
      served raw at /tokens — see app/main.py). This page stays a plain Jinja
-     template on purpose (REDESIGN_PROMPT.md §7), so it loads the tokens
-     directly with a <link>, no build step, no React. -->
+     template on purpose — pre-auth page loads tokens via <link>, no React bundle. -->
 <link rel="stylesheet" href="/tokens/styles.css" />
 <style>
   * { box-sizing: border-box; }
@@ -165,6 +164,25 @@
     line-height: var(--leading-normal);
     text-align: center;
   }
+  .switch-mode {
+    margin-top: var(--space-5);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .switch-mode button {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: inherit;
+    font-weight: var(--weight-semibold);
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -184,19 +202,26 @@
 
   <div class="form-side">
     <div class="panel">
-      <h2>Đăng nhập</h2>
-      <p class="hint">Dùng tài khoản email @baoviet.com được cấp cho bạn.</p>
+      <h2 id="panelTitle">Đăng nhập</h2>
+      <p class="hint" id="panelHint">Dùng tài khoản email @baoviet.com của bạn.</p>
 
       <form id="loginForm">
         <label for="email">Email</label>
         <input type="email" id="email" name="email" autofocus autocomplete="username" placeholder="ten.nhanvien@baoviet.com" required style="margin-bottom: var(--space-5);" />
         <label for="password">Mật khẩu</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required />
+        <label for="confirmPassword" id="confirmLabel" class="hidden" style="margin-top: var(--space-5);">Nhập lại mật khẩu</label>
+        <input type="password" id="confirmPassword" class="hidden" autocomplete="new-password" style="margin-top: var(--space-2);" />
         <button id="submitBtn" type="submit">Đăng nhập</button>
         <div id="err"></div>
       </form>
 
-      <p class="note">Hệ thống chạy hoàn toàn nội bộ, không gọi dịch vụ bên ngoài.</p>
+      <p class="switch-mode">
+        <span id="switchPrompt">Chưa có tài khoản?</span>
+        <button type="button" id="modeToggle">Tạo tài khoản</button>
+      </p>
+
+      <p class="note" id="panelNote">Hệ thống chạy hoàn toàn nội bộ, không gọi dịch vụ bên ngoài.</p>
     </div>
   </div>
 </div>
@@ -207,32 +232,71 @@
   const btn = document.getElementById("submitBtn");
   const params = new URLSearchParams(location.search);
   const next = params.get("next");
+  const modeToggle = document.getElementById("modeToggle");
+  const panelTitle = document.getElementById("panelTitle");
+  const panelHint = document.getElementById("panelHint");
+  const panelNote = document.getElementById("panelNote");
+  const switchPrompt = document.getElementById("switchPrompt");
+  const confirmLabel = document.getElementById("confirmLabel");
+  const confirmPassword = document.getElementById("confirmPassword");
+  const passwordInput = document.getElementById("password");
+  let signupMode = false;
+
+  function setMode(signup) {
+    signupMode = signup;
+    panelTitle.textContent = signup ? "Tạo tài khoản" : "Đăng nhập";
+    panelHint.textContent = signup
+      ? "Chỉ dùng email @baoviet.com. Tài khoản mới có quyền trò chuyện (nhân viên)."
+      : "Dùng tài khoản email @baoviet.com của bạn.";
+    btn.textContent = signup ? "Tạo tài khoản" : "Đăng nhập";
+    switchPrompt.textContent = signup ? "Đã có tài khoản?" : "Chưa có tài khoản?";
+    modeToggle.textContent = signup ? "Đăng nhập" : "Tạo tài khoản";
+    confirmLabel.classList.toggle("hidden", !signup);
+    confirmPassword.classList.toggle("hidden", !signup);
+    confirmPassword.required = signup;
+    passwordInput.autocomplete = signup ? "new-password" : "current-password";
+    panelNote.textContent = signup
+      ? "Mật khẩu tối thiểu 8 ký tự. Quản trị viên vẫn được cấp riêng qua máy chủ."
+      : "Hệ thống chạy hoàn toàn nội bộ, không gọi dịch vụ bên ngoài.";
+    err.textContent = "";
+  }
+
+  modeToggle.addEventListener("click", () => setMode(!signupMode));
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     btn.disabled = true;
     err.textContent = "";
     try {
-      const email = document.getElementById("email").value;
-      const password = document.getElementById("password").value;
-      const resp = await fetch("/login", {
+      const email = document.getElementById("email").value.trim();
+      const password = passwordInput.value;
+      if (signupMode) {
+        if (password !== confirmPassword.value) {
+          err.textContent = "Hai mật khẩu không khớp.";
+          return;
+        }
+        if (!email.toLowerCase().endsWith("@baoviet.com")) {
+          err.textContent = "Email phải thuộc miền @baoviet.com.";
+          return;
+        }
+      }
+      const endpoint = signupMode ? "/register" : "/login";
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "email=" + encodeURIComponent(email) + "&password=" + encodeURIComponent(password),
       });
       if (resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        // Default landing is /chat/ for everyone; an admin who was actually
-        // headed to /admin gets sent there, but an employee who somehow had
-        // "?next=/admin/..." (e.g. an old bookmark) goes to /chat/ instead —
-        // the server would just redirect them right back out anyway.
         let dest = next || "/chat/";
         if (dest.startsWith("/admin") && data.role !== "admin") dest = "/chat/";
         location.href = dest;
         return;
       }
       const data = await resp.json().catch(() => ({}));
-      err.textContent = data.detail || "Sai email hoặc mật khẩu. Vui lòng thử lại.";
+      err.textContent = data.detail || (signupMode
+        ? "Không thể tạo tài khoản. Vui lòng thử lại."
+        : "Sai email hoặc mật khẩu. Vui lòng thử lại.");
     } catch (e2) {
       err.textContent = "Lỗi mạng: " + e2.message;
     } finally {

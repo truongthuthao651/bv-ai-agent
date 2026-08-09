@@ -370,6 +370,19 @@ def test_general_knowledge_label_added_only_when_the_section_is_present() -> Non
     assert _general_knowledge_suffix(REFUSAL_MESSAGE) == ""
 
 
+def test_product_named_prompt_suppresses_general_knowledge() -> None:
+    named = system_prompt(product_named=True, general_knowledge=True)
+    assert GENERAL_KNOWLEDGE_HEADING not in named
+    assert "Chỉ dùng các đoạn ngữ cảnh thuộc tài liệu của sản phẩm đó" in named
+
+
+def test_product_summary_prompt_adds_structure_rule() -> None:
+    summary = system_prompt(product_named=True, product_summary=True)
+    assert "TÓM TẮT / GIỚI THIỆU SẢN PHẨM" in summary
+    assert "KHÔNG chèn công thức actuarial" in summary
+    assert "Từ điển thuật ngữ" in summary
+
+
 # --------------------------------------------------------------------------- #
 # Sources block ("Nguồn tham khảo")
 # --------------------------------------------------------------------------- #

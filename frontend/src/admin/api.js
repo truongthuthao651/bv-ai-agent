@@ -1,6 +1,5 @@
-/** Thin fetch wrappers over the real FastAPI admin endpoints. No new behavior
- *  beyond what app/static/index.html already did — same paths, same methods,
- *  same error shapes — just called from React instead of vanilla JS. */
+/** Thin fetch wrappers over the FastAPI admin endpoints. Same paths and
+ *  error shapes the backend exposes — called from the React admin console. */
 
 async function asJson(resp) {
   return resp.json().catch(() => ({}));
@@ -37,18 +36,7 @@ export async function fetchDocuments() {
   return resp.json();
 }
 
-export async function uploadDocument({ file, docType, department, docTitle, sourceUrl }) {
-  const fd = new FormData();
-  fd.append("file", file);
-  if (docType) fd.append("doc_type", docType);
-  if (department) fd.append("department", department);
-  if (docTitle) fd.append("doc_title", docTitle);
-  if (sourceUrl) fd.append("source_url", sourceUrl);
-  const resp = await fetch("/ingest", { method: "POST", body: fd });
-  const data = await asJson(resp);
-  if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
-  return data;
-}
+export { uploadDocument } from "../documents/uploadApi.js";
 
 export async function updateDocument(docId, patch) {
   const resp = await fetch(`/documents/${encodeURIComponent(docId)}`, {
@@ -87,8 +75,38 @@ export async function changePassword(currentPassword, newPassword) {
   }
 }
 
-/** Streams `/v1/chat/completions` (SSE) and calls `onDelta` with each text
- *  fragment as it arrives — the same parsing app/static/index.html did. */
+export async function fetchAdminConfig() {
+  const resp = await fetch("/admin/config");
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function fetchFeedbackLog(hours = 168) {
+  const resp = await fetch(`/admin/logs/feedback?hours=${encodeURIComponent(hours)}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function fetchQueryTimingLog(hours = 24) {
+  const resp = await fetch(`/admin/logs/queries?hours=${encodeURIComponent(hours)}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function fetchEvalRuns() {
+  const resp = await fetch("/admin/eval-runs");
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+export async function fetchConversationCount() {
+  const resp = await fetch("/conversations");
+  if (!resp.ok) return 0;
+  const data = await resp.json();
+  return (data.conversations ?? []).filter((c) => (c.messages ?? []).length > 0).length;
+}
+
+/** Streams `/v1/chat/completions` (SSE) and calls `onDelta` with each text chunk. */
 export async function askStreaming(query, onDelta) {
   const resp = await fetch("/v1/chat/completions", {
     method: "POST",

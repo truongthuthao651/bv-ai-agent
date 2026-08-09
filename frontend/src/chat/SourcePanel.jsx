@@ -1,10 +1,40 @@
 import { Button } from "../components/index.js";
 
-/** Ported from ui_kits/chatbot/ChatParts.jsx's SourcePanel, reduced to what
- * the real API actually exposes: document title, section/page, and a real
- * link to the source. The kit's "% similarity" and passage preview need
- * structured per-citation metadata /v1/chat/completions doesn't return
- * separately — see the Phase 4 gap list. Not fabricated here. */
+/** Citation detail body — shared by the desktop side panel and mobile modal. */
+export function SourcePanelContent({ citation }) {
+  return (
+    <>
+      <div style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)", letterSpacing: "var(--tracking-tight)" }}>
+        {citation.title}
+      </div>
+      {citation.meta && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: "var(--space-1)" }}>{citation.meta}</div>}
+
+      <a
+        href={citation.url}
+        target="_blank"
+        rel="noopener"
+        style={{
+          display: "block",
+          textAlign: "center",
+          marginTop: "var(--space-5)",
+          height: "var(--control-h-sm)",
+          lineHeight: "var(--control-h-sm)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-md)",
+          fontSize: "var(--text-xs)",
+          fontWeight: "var(--weight-semibold)",
+          color: "var(--text-secondary)",
+          textDecoration: "none",
+        }}
+      >
+        Mở tài liệu
+      </a>
+    </>
+  );
+}
+
+/** Desktop side panel for citation details. On mobile, ChatScreen renders
+ * the same content inside a Modal instead — see SourcePanelContent above. */
 export function SourcePanel({ citation, onClose }) {
   return (
     <aside style={{ width: "var(--panel-width)", flexShrink: 0, borderLeft: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
@@ -22,31 +52,7 @@ export function SourcePanel({ citation, onClose }) {
         </Button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-5)" }}>
-        <div style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)", letterSpacing: "var(--tracking-tight)" }}>
-          {citation.title}
-        </div>
-        {citation.meta && <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: "var(--space-1)" }}>{citation.meta}</div>}
-
-        <a
-          href={citation.url}
-          target="_blank"
-          rel="noopener"
-          style={{
-            display: "block",
-            textAlign: "center",
-            marginTop: "var(--space-5)",
-            height: "var(--control-h-sm)",
-            lineHeight: "var(--control-h-sm)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            fontSize: "var(--text-xs)",
-            fontWeight: "var(--weight-semibold)",
-            color: "var(--text-secondary)",
-            textDecoration: "none",
-          }}
-        >
-          Mở tài liệu
-        </a>
+        <SourcePanelContent citation={citation} />
       </div>
     </aside>
   );

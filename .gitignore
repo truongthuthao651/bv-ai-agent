@@ -2,7 +2,6 @@
 .env
 *.env
 !.env.example
-/TEAM_GUIDE.md
 
 # ---- Data (confidential) ----
 # The whole data/ tree is ignored EXCEPT the public glossary and the
@@ -32,7 +31,7 @@ data/knowledge_pack/*
 # ---- Python ----
 # Anchored to repo root: an unanchored "dist/" would also match
 # app/static/dist/, the frontend build output, which IS committed
-# (REDESIGN_PROMPT.md — deployment ships the built bundle, no Node required).
+# (deployment ships the built bundle from frontend/; no Node on deploy machine).
 __pycache__/
 *.py[cod]
 *$py.class

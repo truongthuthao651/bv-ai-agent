@@ -14,8 +14,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
-from app import accounts, auth
-from app.models.schemas import ChangePasswordRequest
+from app import accounts, auth, user_prefs
+from app.models.schemas import ChangePasswordRequest, UpdateMeRequest
 
 router = APIRouter(tags=["auth"])
 
@@ -55,6 +55,29 @@ async def login_submit(
     return {"ok": True, "role": account.role}
 
 
+def _set_session_cookie(response: Response, account: accounts.Account) -> None:
+    response.set_cookie(
+        auth.COOKIE_NAME,
+        auth.create_session_token(account),
+        max_age=auth.SESSION_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+@router.post("/register")
+async def register_submit(
+    response: Response, email: str = Form(...), password: str = Form(...)
+) -> dict[str, bool | str]:
+    """Self-service employee signup — ``@baoviet.com`` only, never ``admin`` role."""
+    try:
+        account = accounts.register_employee(email, password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    _set_session_cookie(response, account)
+    return {"ok": True, "role": account.role}
+
+
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, bool]:
     response.delete_cookie(auth.COOKIE_NAME)
@@ -70,8 +93,41 @@ async def me(request: Request) -> dict[str, str | None]:
     """
     account = auth.current_account(request)
     if account is None:
-        return {"email": None, "role": None}
-    return {"email": account.email, "role": account.role}
+        return {
+            "email": None,
+            "role": None,
+            "display_name": None,
+            "avatar_swatch": None,
+        }
+    prefs = user_prefs.get_prefs(account.email)
+    return {
+        "email": account.email,
+        "role": account.role,
+        "display_name": prefs.display_name,
+        "avatar_swatch": prefs.avatar_swatch,
+    }
+
+
+@router.patch("/me")
+async def update_me(request: Request, body: UpdateMeRequest) -> dict[str, str | None]:
+    """Update display name / avatar swatch for the signed-in account."""
+    account = auth.current_account(request)
+    if account is None:
+        raise HTTPException(status_code=401, detail="Yêu cầu đăng nhập.")
+    try:
+        prefs = user_prefs.update_prefs(
+            account.email,
+            display_name=body.display_name,
+            avatar_swatch=body.avatar_swatch,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {
+        "email": account.email,
+        "role": account.role,
+        "display_name": prefs.display_name,
+        "avatar_swatch": prefs.avatar_swatch,
+    }
 
 
 @router.post("/change-password")

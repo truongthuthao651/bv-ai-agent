@@ -1,19 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { Card, Dropzone, Input, Select, Button, Table, Tag, Modal } from "../components/index.js";
-import { fetchDocuments, uploadDocument, updateDocument, deleteDocument } from "./api.js";
-
-const DOC_TYPE_OPTIONS = [
-  { value: "", label: "Loại tài liệu: tự động theo phần mở rộng" },
-  { value: "policy", label: "Hợp đồng / Quy tắc bảo hiểm (policy)" },
-  { value: "procedure", label: "Quy trình (procedure)" },
-  { value: "form", label: "Biểu mẫu (form)" },
-  { value: "spreadsheet", label: "Bảng tính (spreadsheet)" },
-  { value: "image", label: "Hình ảnh scan (image)" },
-  { value: "figure", label: "Hình vẽ / biểu đồ (figure)" },
-  { value: "glossary", label: "Từ điển thuật ngữ (glossary)" },
-  { value: "reference", label: "Tham khảo công khai (reference)" },
-  { value: "other", label: "Khác (other)" },
-];
+import { useEffect, useState } from "react";
+import { Card, Input, Select, Button, Table, Tag, Modal } from "../components/index.js";
+import { DocumentUploadForm } from "../documents/DocumentUploadForm.jsx";
+import { UPLOAD_HINT } from "../documents/documentUploadOptions.js";
+import { departmentDisplay, departmentOptionLabel } from "./departmentLabels.js";
+import { fetchDocuments, updateDocument, deleteDocument } from "./api.js";
 
 const EDIT_DOC_TYPE_OPTIONS = [
   { value: "policy", label: "policy — Hợp đồng / Quy tắc bảo hiểm" },
@@ -38,94 +28,12 @@ export const DOC_TYPE_LABEL = Object.fromEntries(
   EDIT_DOC_TYPE_OPTIONS.map((o) => [o.value, o.label.split(" — ")[1]]),
 );
 
-// Options mirror settings.departments (source of truth for validation).
 const DEPARTMENTS = ["PTSP", "DP", "DVA"];
 
 function UploadCard({ onUploaded }) {
-  const fileInputRef = useRef(null);
-  const [file, setFile] = useState(null);
-  const [dragging, setDragging] = useState(false);
-  const [docTitle, setDocTitle] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [docType, setDocType] = useState("");
-  const [department, setDepartment] = useState("");
-  const [status, setStatus] = useState({ text: "", tone: "" });
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    if (!file) {
-      setStatus({ text: "Chọn một tệp trước.", tone: "bad" });
-      return;
-    }
-    setBusy(true);
-    setStatus({ text: `Đang nạp "${file.name}"… (có thể mất một lúc do enrichment công thức)`, tone: "" });
-    try {
-      const data = await uploadDocument({ file, docType, department, docTitle, sourceUrl });
-      const summary = `Đã nạp "${data.doc_title}" (${data.doc_type}) — ${data.n_chunks} đoạn` + (data.n_figures ? `, ${data.n_figures} hình` : "") + ".";
-      setStatus(data.title_warning ? { text: summary + "\n⚠️ " + data.title_warning, tone: "warn" } : { text: summary, tone: "ok" });
-      setFile(null);
-      setDocTitle("");
-      setSourceUrl("");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      onUploaded();
-    } catch (err) {
-      setStatus({ text: "Lỗi: " + err.message, tone: "bad" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const toneColor = { ok: "var(--success)", bad: "var(--danger)", warn: "var(--warning)", "": "var(--text-muted)" }[status.tone];
-
   return (
-    <Card title="Nạp tài liệu" hint="Hỗ trợ hiện tại: Markdown (.md), Word (.docx), Excel (.xlsx), PDF (có lớp chữ), từ điển thuật ngữ (.yaml/.yml). PDF scan / hình ảnh đang được phát triển (sẽ báo lỗi rõ ràng nếu chọn nhầm).">
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-        <Dropzone
-          label={file ? file.name : "Kéo thả tệp vào đây, hoặc bấm để chọn"}
-          hint=".md · .docx · .xlsx · .pdf · .yaml · .yml"
-          dragging={dragging}
-          onClick={() => fileInputRef.current?.click()}
-          onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={(e) => { e.preventDefault(); setDragging(false); }}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
-          }}
-        />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".md,.docx,.yaml,.yml,.pdf,.xlsx,.xls,.png,.jpg,.jpeg"
-          style={{ display: "none" }}
-          onChange={(e) => setFile(e.target.files[0] || null)}
-        />
-        <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="Tên tài liệu (tuỳ chọn — ghi đè tên tự trích từ file, nên ghi kèm tên sản phẩm)" />
-        {/* Knowledge pack: chỉ điền cho tài liệu CÔNG KHAI. Địa chỉ này không bao giờ được ứng dụng truy cập, chỉ dùng làm liên kết trích dẫn. */}
-        <Input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="Nguồn URL công khai (tuỳ chọn — chỉ cho tài liệu công khai; trích dẫn sẽ trỏ tới địa chỉ này)" />
-        <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
-          <Select value={docType} onChange={(e) => setDocType(e.target.value)} style={{ flex: 1, minWidth: 260 }}>
-            {DOC_TYPE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-          <Select value={department} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">Phòng ban: (không đặt)</option>
-            {DEPARTMENTS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </Select>
-          <Button onClick={submit} disabled={busy}>
-            Nạp tài liệu
-          </Button>
-        </div>
-        {status.text && <div style={{ fontSize: "var(--text-xs)", color: toneColor, whiteSpace: "pre-wrap" }}>{status.text}</div>}
-      </div>
+    <Card title="Nạp tài liệu" hint={UPLOAD_HINT}>
+      <DocumentUploadForm onUploaded={onUploaded} />
     </Card>
   );
 }
@@ -220,9 +128,9 @@ function EditModal({ doc, onClose, onSaved }) {
           <Select value={department} onChange={(e) => setDepartment(e.target.value)} style={{ width: "100%" }}>
             <option value="">(không đặt)</option>
             {DEPARTMENTS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+            <option key={d} value={d}>
+              {departmentOptionLabel(d)}
+            </option>
             ))}
           </Select>
         </div>
@@ -356,7 +264,7 @@ export function DocumentsView({ canManage = true }) {
                 {d.source_url && <Tag tone="muted">nguồn công khai</Tag>}
               </div>,
               <Tag key="type">{DOC_TYPE_LABEL[d.doc_type] || d.doc_type}</Tag>,
-              d.department || "—",
+              departmentDisplay(d.department),
               d.n_chunks,
               d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—",
             ];

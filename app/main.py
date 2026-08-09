@@ -27,7 +27,16 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app import auth
-from app.api import chat, chat_ui, health, ingest, login, metrics
+from app.api import (
+    admin_ops,
+    chat,
+    chat_ui,
+    conversations,
+    health,
+    ingest,
+    login,
+    metrics,
+)
 from app.config.settings import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -133,6 +142,15 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
+
+@app.middleware("http")
 async def admin_session_gate(request: Request, call_next):
     """Require a valid account session for everything except the public
     surface, and restrict /admin to the "admin" role (§ RBAC).
@@ -141,13 +159,8 @@ async def admin_session_gate(request: Request, call_next):
     the public landing page, static assets, and the public doc-view routes.
     A no-op when no account has been provisioned yet (auth.auth_enabled()).
 
-    /v1 has no session of its own historically (it was called server-to-server
-    by Open WebUI, now removed) — it now accepts EITHER a valid account
-    session (so /chat's same-origin fetch calls just work, cookie attached
-    automatically) OR the opt-in API_SHARED_SECRET bearer token (SEC1 — for
-    any other direct caller). check_shared_secret() returns True unconditionally
-    when the secret is unset, so this is unchanged from before when no secret
-    is configured.
+    /v1 accepts a valid account session (same-origin /chat calls) OR
+    API_SHARED_SECRET bearer token when configured.
     """
     path = request.url.path
     # Attached for every request (gated or not) so downstream endpoints can
@@ -176,7 +189,7 @@ async def admin_session_gate(request: Request, call_next):
 
     # RBAC: /admin is admin-only. Employees are signed in (they can use /chat)
     # but sent back there rather than shown an error for a page they'll never
-    # be allowed into — see REDESIGN_PROMPT.md's account-model follow-up.
+    # but sent back there rather than shown an error for a page they can't use.
     if (path == "/admin" or path.startswith("/admin/")) and account.role != "admin":
         if "text/html" in request.headers.get("accept", ""):
             return RedirectResponse(url="/chat/", status_code=303)
@@ -196,6 +209,8 @@ app.include_router(chat_ui.router)
 app.include_router(ingest.router)
 app.include_router(login.router)
 app.include_router(metrics.router)
+app.include_router(conversations.router)
+app.include_router(admin_ops.router)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 

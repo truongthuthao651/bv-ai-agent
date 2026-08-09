@@ -1,107 +1,217 @@
-import { useState } from "react";
-import { Button, Input, Modal, ThemeToggle } from "../components/index.js";
-import { changePassword, logout } from "./api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Input, RailCollapseButton } from "../components/index.js";
+import { UserAvatar } from "../components/user/UserAvatar.jsx";
+import { roleLabel } from "../user/profilePrefs.js";
+import { logout } from "./api.js";
+import { conversationLabel, filterConversations, groupConversationsByDate } from "./conversations.js";
 
-/** P2-J6 (audit/REPORT.md) — the minimum viable self-service surface: change
- * the signed-in account's own password. Exactly two fields, matching the
- * audit's own "minimum viable" framing rather than a full profile page. */
-function ChangePasswordModal({ onClose }) {
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [status, setStatus] = useState({ text: "", tone: "" });
-  const [busy, setBusy] = useState(false);
+function ConversationItem({ conv, active, streaming, onSelect, onRename, onDelete }) {
+  const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(conversationLabel(conv));
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const label = conversationLabel(conv);
 
-  async function save() {
-    if (!currentPassword || !newPassword) {
-      setStatus({ text: "Vui lòng nhập đủ cả hai mật khẩu.", tone: "bad" });
-      return;
-    }
-    setBusy(true);
-    setStatus({ text: "", tone: "" });
-    try {
-      await changePassword(currentPassword, newPassword);
-      setStatus({ text: "Đã đổi mật khẩu.", tone: "ok" });
-      setCurrentPassword("");
-      setNewPassword("");
-    } catch (err) {
-      setStatus({ text: err.message, tone: "bad" });
-    } finally {
-      setBusy(false);
-    }
+  function commitRename() {
+    const next = draft.trim();
+    if (next && next !== label) onRename(conv.id, next);
+    setEditing(false);
   }
 
-  const toneColor = { ok: "var(--success)", bad: "var(--danger)", "": "var(--text-secondary)" }[status.tone];
+  if (editing) {
+    return (
+      <div style={{ padding: "var(--space-1) var(--space-2)" }}>
+        <Input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          onBlur={commitRename}
+          style={{ width: "100%", fontSize: "var(--text-sm)" }}
+        />
+      </div>
+    );
+  }
 
   return (
-    <Modal
-      open
-      title="Đổi mật khẩu"
-      hint="Đổi mật khẩu cho tài khoản đang đăng nhập."
-      onClose={onClose}
-      actions={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Đóng
-          </Button>
-          <Button onClick={save} disabled={busy}>
-            Lưu
-          </Button>
-        </>
-      }
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => {
+        setHover(false);
+        setConfirmDelete(false);
+      }}
+      style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", minWidth: 0 }}
     >
-      <div
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            if (!busy) save();
-          }
+      <button
+        type="button"
+        onClick={() => onSelect(conv.id)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flex: 1,
+          minWidth: 0,
+          textAlign: "left",
+          border: "none",
+          background: active ? "var(--active)" : hover ? "var(--hover)" : "transparent",
+          color: active ? "var(--text-primary)" : "var(--text-secondary)",
+          padding: "var(--space-2) var(--space-3)",
+          borderRadius: "var(--radius-md)",
+          fontSize: "var(--text-sm)",
+          fontWeight: active ? "var(--weight-semibold)" : "var(--weight-regular)",
+          fontFamily: "var(--font-sans)",
+          cursor: "pointer",
+          transition: "background 150ms",
+          overflow: "hidden",
         }}
-        style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
       >
-        <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu hiện tại</label>
-          <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={{ width: "100%" }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{label}</span>
+        {streaming && (
+          <span
+            title="Đang trả lời…"
+            aria-label="Đang trả lời"
+            style={{
+              flexShrink: 0,
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--accent)",
+              animation: "bv-sidebar-stream-pulse 1.2s ease-in-out infinite",
+            }}
+          />
+        )}
+      </button>
+      {(hover || confirmDelete) && (
+        <div style={{ display: "flex", gap: 2, flexShrink: 0, paddingRight: "var(--space-1)" }}>
+          {!confirmDelete ? (
+            <>
+              <button
+                type="button"
+                title="Đổi tên"
+                aria-label="Đổi tên cuộc trò chuyện"
+                onClick={() => {
+                  setDraft(label);
+                  setEditing(true);
+                }}
+                style={iconBtnStyle}
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                title="Xóa"
+                aria-label="Xóa cuộc trò chuyện"
+                onClick={() => setConfirmDelete(true)}
+                style={iconBtnStyle}
+              >
+                ✕
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              title="Xác nhận xóa"
+              aria-label="Xác nhận xóa cuộc trò chuyện"
+              onClick={() => onDelete(conv.id)}
+              style={{ ...iconBtnStyle, color: "var(--danger)" }}
+            >
+              🗑
+            </button>
+          )}
         </div>
-        <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Mật khẩu mới (ít nhất 8 ký tự)</label>
-          <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ width: "100%" }} />
-        </div>
-        {status.text && <div style={{ fontSize: "var(--text-xs)", color: toneColor }}>{status.text}</div>}
-      </div>
-    </Modal>
+      )}
+    </div>
   );
 }
 
-/** Ported from ui_kits/chatbot/ChatParts.jsx's Sidebar, with the fabricated
- * "Pinned/Today/Yesterday" thread list and the dead "Search chats ⌘K" hint
- * dropped — there is no conversation persistence yet (Phase 4 gap list), so
- * a thread list would either be empty forever or lie. The bottom user block
- * shows the real signed-in account instead of the kit's "Nguyễn Vân". */
-export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
-  const [showProfile, setShowProfile] = useState(false);
+const iconBtnStyle = {
+  border: "none",
+  background: "transparent",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  fontSize: 12,
+  padding: "2px 4px",
+  lineHeight: 1,
+};
+
+function ConversationGroup({ title, children }) {
   return (
-    <aside
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-half)" }}>
+      <div
+        style={{
+          fontSize: "var(--text-2xs)",
+          fontWeight: "var(--weight-bold)",
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "var(--tracking-wide)",
+          padding: "0 var(--space-3)",
+          marginBottom: "var(--space-1)",
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function Sidebar({
+  me,
+  prefs,
+  conversations,
+  activeId,
+  onSelectConversation,
+  onRenameConversation,
+  onDeleteConversation,
+  onClose,
+  onNewChat,
+  onOpenProfile,
+  onCollapse,
+}) {
+  const [search, setSearch] = useState("");
+  const searchRef = useRef(null);
+  const filtered = useMemo(() => filterConversations(conversations, search), [conversations, search]);
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+  const groups = groupConversationsByDate(filtered);
+
+  return (
+    <div
       style={{
-        width: "var(--rail-width)",
-        flexShrink: 0,
-        borderRight: "1px solid var(--border)",
-        background: "var(--surface)",
+        width: "100%",
         display: "flex",
         flexDirection: "column",
         height: "100%",
         boxSizing: "border-box",
+        minWidth: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-5) var(--space-4) var(--space-4)" }}>
-        <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>Trợ lý AI Bảo Việt Life</div>
-        {onClose && (
-          <button onClick={onClose} aria-label="Đóng menu" style={{ border: "none", background: "transparent", color: "var(--text-muted)", fontSize: 16, cursor: "pointer" }}>
-            ✕
-          </button>
-        )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-5) var(--space-4) var(--space-4)", gap: "var(--space-2)" }}>
+        <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          Trợ lý AI Bảo Việt Life
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", flexShrink: 0 }}>
+          {onCollapse && <RailCollapseButton onClick={onCollapse} label="Ẩn danh sách trò chuyện" />}
+          {onClose && (
+            <button onClick={onClose} aria-label="Đóng menu" style={{ border: "none", background: "transparent", color: "var(--text-muted)", fontSize: 16, cursor: "pointer" }}>
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={{ padding: "0 var(--space-4)" }}>
+      <div style={{ padding: "0 var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         <button
           onClick={onNewChat}
           style={{
@@ -123,43 +233,93 @@ export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
         >
           <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> Cuộc trò chuyện mới
         </button>
+        <Input
+          ref={searchRef}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm cuộc trò chuyện… (⌘K)"
+          style={{ width: "100%", fontSize: "var(--text-sm)" }}
+        />
       </div>
 
-      <div style={{ flex: 1 }} />
+      <nav
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "var(--space-4) var(--space-4) var(--space-6)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-5)",
+          minHeight: 0,
+        }}
+      >
+        {groups.length === 0 ? (
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", padding: "0 var(--space-3)" }}>
+            {search.trim() ? "Không tìm thấy cuộc trò chuyện nào." : "Chưa có cuộc trò chuyện."}
+          </div>
+        ) : (
+          groups.map((group) => (
+            <ConversationGroup key={group.title} title={group.title}>
+              {group.items.map((conv) => (
+                <ConversationItem
+                  key={conv.id}
+                  conv={conv}
+                  active={conv.id === activeId}
+                  streaming={conv.messages.some((m) => m.streaming)}
+                  onSelect={onSelectConversation}
+                  onRename={onRenameConversation}
+                  onDelete={onDeleteConversation}
+                />
+              ))}
+            </ConversationGroup>
+          ))
+        )}
+      </nav>
 
-      <div style={{ borderTop: "1px solid var(--border)", padding: "var(--space-3) var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <ThemeToggle theme={theme} onChange={onTheme} />
-        </div>
+      <div
+        style={{
+          borderTop: "1px solid var(--border)",
+          padding: "var(--space-4) var(--space-4) var(--space-5)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-3)",
+        }}
+      >
         {me?.email && (
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             <button
-              onClick={() => setShowProfile(true)}
-              title="Đổi mật khẩu"
-              aria-label="Tài khoản: đổi mật khẩu"
-              style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: 0, textAlign: "left" }}
+              onClick={onOpenProfile}
+              title="Hồ sơ cá nhân"
+              aria-label="Hồ sơ cá nhân"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--space-3)",
+                flex: 1,
+                minWidth: 0,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                padding: "var(--space-1) 0",
+                textAlign: "left",
+                color: "var(--text-primary)",
+              }}
             >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: "50%",
-                  background: "var(--brand-navy)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: "var(--weight-bold)",
-                  flexShrink: 0,
-                }}
-              >
-                {me.email[0].toUpperCase()}
-              </div>
+              <UserAvatar email={me.email} swatchId={prefs?.avatarSwatch} size={32} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {me.email}
+                <div
+                  style={{
+                    fontSize: "var(--text-xs)",
+                    fontWeight: "var(--weight-semibold)",
+                    color: "var(--text-primary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {prefs?.displayName || me.email}
                 </div>
+                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{roleLabel(me.role)}</div>
               </div>
             </button>
             <button
@@ -173,12 +333,25 @@ export function Sidebar({ me, theme, onTheme, onClose, onNewChat }) {
           </div>
         )}
         {me?.role === "admin" && (
-          <a href="/admin/" style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}>
+          <a
+            href="/admin/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
+          >
             Mở trang quản trị ↗
           </a>
         )}
       </div>
-      {showProfile && <ChangePasswordModal onClose={() => setShowProfile(false)} />}
-    </aside>
+      <style>{`
+        @keyframes bv-sidebar-stream-pulse {
+          0%, 80%, 100% { opacity: 0.35; transform: scale(0.85); }
+          40% { opacity: 1; transform: scale(1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [aria-label="Đang trả lời"] { animation: none !important; opacity: 0.8; }
+        }
+      `}</style>
+    </div>
   );
 }

@@ -29,8 +29,7 @@ def test_gate_disabled_when_no_account_provisioned(monkeypatch) -> None:
 
 
 def test_protected_path_redirects_html_request_without_session(monkeypatch) -> None:
-    # "/admin/" is the gated console; "/" is the public landing page (see
-    # test_root_is_public_landing_page below) — REDESIGN_PROMPT.md §6/§8.
+    # "/admin/" is the gated console; "/" is the public landing page.
     accounts.create_account("admin@baoviet.com", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
@@ -103,7 +102,12 @@ def test_correct_password_grants_session_cookie_access(monkeypatch) -> None:
         assert resp2.status_code == 200
 
         me = client.get("/me").json()
-        assert me == {"email": "admin@baoviet.com", "role": "admin"}
+        assert me == {
+            "email": "admin@baoviet.com",
+            "role": "admin",
+            "display_name": None,
+            "avatar_swatch": None,
+        }
 
 
 def test_logout_clears_session(monkeypatch) -> None:
@@ -393,3 +397,99 @@ def test_change_password_only_ever_targets_the_callers_own_account(monkeypatch) 
             "/login", data={"email": "user@baoviet.com", "password": "s3cret"}
         )
         assert still_works.status_code == 200
+
+
+def test_me_includes_profile_prefs_when_set(monkeypatch, tmp_path) -> None:
+    from app import user_prefs
+
+    monkeypatch.setattr(user_prefs.settings, "data_dir", tmp_path)
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    user_prefs.update_prefs(
+        "user@baoviet.com", display_name="Hà Test", avatar_swatch="navy"
+    )
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        resp = client.get("/me")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["email"] == "user@baoviet.com"
+        assert body["display_name"] == "Hà Test"
+        assert body["avatar_swatch"] == "navy"
+
+
+def test_patch_me_updates_profile_prefs(monkeypatch, tmp_path) -> None:
+    from app import user_prefs
+
+    monkeypatch.setattr(user_prefs.settings, "data_dir", tmp_path)
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        resp = client.patch(
+            "/me",
+            json={"display_name": "Lan Admin", "avatar_swatch": "success"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["display_name"] == "Lan Admin"
+        assert body["avatar_swatch"] == "success"
+        prefs = user_prefs.get_prefs("user@baoviet.com")
+        assert prefs.display_name == "Lan Admin"
+        assert prefs.avatar_swatch == "success"
+
+
+def test_patch_me_requires_session(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        resp = client.patch("/me", json={"display_name": "X"})
+        assert resp.status_code == 401
+
+
+def test_register_creates_employee_and_logs_in(monkeypatch) -> None:
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/register",
+            data={"email": "new.user@baoviet.com", "password": "newpass123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "role": "employee"}
+        assert auth_module.COOKIE_NAME in resp.cookies
+        me = client.get("/me").json()
+        assert me["email"] == "new.user@baoviet.com"
+        assert me["role"] == "employee"
+
+
+def test_register_rejects_non_baoviet_email(monkeypatch) -> None:
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/register",
+            data={"email": "user@gmail.com", "password": "newpass123"},
+        )
+        assert resp.status_code == 400
+        assert "@baoviet.com" in resp.json()["detail"]
+
+
+def test_register_rejects_duplicate_email(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/register",
+            data={"email": "user@baoviet.com", "password": "otherpass1"},
+        )
+        assert resp.status_code == 400
+        assert "đã được đăng ký" in resp.json()["detail"]
+
+
+def test_register_rejects_short_password(monkeypatch) -> None:
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/register",
+            data={"email": "short@baoviet.com", "password": "abc"},
+        )
+        assert resp.status_code == 400

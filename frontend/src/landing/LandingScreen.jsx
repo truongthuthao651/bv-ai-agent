@@ -13,15 +13,8 @@ import { Lift } from "../brand/Lift.jsx";
  * hex values, but that's a deliberate redesign decision to make later, not a
  * bug to fix now.
  *
- * Ported from ui_kits/landing/LandingScreen.jsx, translated, with one
- * deliberate structural simplification: the kit's header/hero each carry two
- * CTAs (a "sign in" and a "request access"/"start" pair) because its auth kit
- * assumes a signup flow. This app has exactly one real gate today — the
- * shared admin password — and no signup, so shipping a second, differently
- * labeled button pointing at the same /login would either be redundant or,
- * worse, imply an account-request flow that does not exist. Both surfaces
- * collapse to a single CTA into /login until REDESIGN_PROMPT.md §7's account
- * model decision lands and there is a second, real destination to send it to. */
+ * Ported from ui_kits/landing/LandingScreen.jsx. Single CTA to /login; signup
+ * is available on the login page ("Tạo tài khoản") for @baoviet.com emails. */
 
 const INK = "var(--brand-ink)"; // matches the kit's local INK constant (#0C2A45) exactly
 const onInk = {

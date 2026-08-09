@@ -2,8 +2,8 @@
 
 ``POST /v1/chat/completions`` implements the full query flow (skill, sections
 5-6): standalone-question rewrite -> glossary expansion -> hybrid search ->
-rerank -> generation. Streams SSE in OpenAI format by default so Open WebUI
-works unmodified; also supports ``stream: false`` for plain API clients.
+rerank -> generation. Streams SSE in OpenAI format by default; also supports
+``stream: false`` for plain API clients.
 """
 
 from __future__ import annotations
@@ -50,8 +50,13 @@ from app.retrieval.coverage import (
 )
 from app.retrieval.metric_guard import filter_metric_mismatch
 from app.retrieval.product_scope import (
-    named_product_labels,
-    query_names_absent_product,
+    backfill_product_policy_hits,
+    filter_hits_for_product_summary,
+    filter_hits_to_named_products,
+    is_product_summary_turn,
+    named_product_labels_from_queries,
+    policy_hits_first,
+    query_names_absent_product_from_queries,
 )
 from app.retrieval.query_expansion import expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
@@ -148,7 +153,7 @@ def _static_response(
         from app.query_timing import log_query_timing, response_time_footer
 
         footer = response_time_footer(timing)
-        log_query_timing(timing, answer_chars=len(text))
+        log_query_timing(timing, answer_chars=len(text), answer_text=text)
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
         created=int(time.time()),
@@ -215,8 +220,63 @@ def _advisory_followup_labels(query: str, history: list[ChatMessage]) -> list[st
     return titles if len(titles) >= 2 else []
 
 
+def _named_product_filter(
+    standalone_query: str,
+    raw_query: str = "",
+    *,
+    product_summary: bool = False,
+) -> dict[str, list[str]] | None:
+    """Scope search to the one product named in the query (first-turn isolation)."""
+    if not settings.single_product_retrieval_enabled:
+        return None
+    docs = _load_indexed_docs()
+    titles = [t for _, t in docs]
+    labels = named_product_labels_from_queries(
+        raw_query or standalone_query, standalone_query, titles=titles
+    )
+    if len(labels) != 1:
+        return None
+    doc_ids = set(product_doc_ids(labels[0], docs))
+    if not doc_ids:
+        return None
+    if not product_summary:
+        # Glossary / guides are not product policies but are needed for actuarial Q&A.
+        try:
+            from app.ingestion import indexer
+            from app.models.schemas import DocType
+
+            for doc in indexer.list_documents():
+                if doc.doc_type != DocType.POLICY:
+                    doc_ids.add(doc.doc_id)
+        except Exception:  # pragma: no cover - Qdrant offline
+            pass
+    logger.info(
+        "named-product scope: restricting search to %d doc(s) for %r summary=%s",
+        len(doc_ids),
+        labels[0],
+        product_summary,
+    )
+    return {"doc_id": list(doc_ids)}
+
+
+def _retrieval_filters(
+    scope: str | None,
+    standalone_query: str,
+    raw_query: str = "",
+    *,
+    product_summary: bool = False,
+) -> dict[str, list[str]] | None:
+    """Conversation sticky scope first; else single named-product scope."""
+    scoped = _scope_filter(scope, standalone_query, raw_query=raw_query)
+    if scoped:
+        return scoped
+    return _named_product_filter(
+        standalone_query, raw_query=raw_query, product_summary=product_summary
+    )
+
+
 def _scope_filter(
-    scope: str | None, standalone_query: str
+    scope: str | None, standalone_query: str, *, raw_query: str = ""
 ) -> dict[str, list[str]] | None:
     """Restrict retrieval to the product this conversation is already about.
 
@@ -233,7 +293,10 @@ def _scope_filter(
     if not scope or not settings.conversation_scope_enabled:
         return None
     docs = _load_indexed_docs()
-    if named_product_labels(standalone_query, titles=[t for _, t in docs]):
+    titles = [t for _, t in docs]
+    if named_product_labels_from_queries(
+        raw_query or standalone_query, standalone_query, titles=titles
+    ):
         return None
     doc_ids = product_doc_ids(scope, docs)
     if not doc_ids:
@@ -270,11 +333,24 @@ def _retrieve(
     scope = (
         None
         if multi
-        else (active_scope(history) if settings.conversation_scope_enabled else None)
+        else (
+            active_scope(history, current_query=query)
+            if settings.conversation_scope_enabled
+            else None
+        )
     )
     t0 = time.perf_counter()
     standalone_query = rewrite_standalone(history, query, scope=scope)
     t1 = time.perf_counter()
+
+    indexed_docs = _load_indexed_docs()
+    indexed_titles = [t for _, t in indexed_docs]
+    product_labels = named_product_labels_from_queries(
+        query, standalone_query, titles=indexed_titles
+    )
+    product_summary = bool(product_labels) and is_product_summary_turn(
+        query, standalone_query
+    )
 
     # Re-check on the rewritten question (rewrite may surface a second product
     # from history, or drop one — prefer the standalone form for routing).
@@ -325,10 +401,38 @@ def _retrieve(
         )
         t2 = time.perf_counter()
         fused = hybrid_search(
-            search_query, filters=_scope_filter(scope, standalone_query)
+            search_query,
+            filters=_retrieval_filters(
+                scope, standalone_query, query, product_summary=product_summary
+            ),
         )
         t3 = time.perf_counter()
         hits = rerank(standalone_query, fused)
+        if settings.product_hit_filter_enabled and not use_multi:
+            before = len(hits)
+            hits = filter_hits_to_named_products(
+                query, hits, standalone_query=standalone_query
+            )
+            if before and not hits:
+                logger.info(
+                    "product hit filter: dropped all %d hit(s) from other products",
+                    before,
+                )
+        if product_summary and product_labels:
+            hits = filter_hits_for_product_summary(
+                hits, product_labels, known_titles=indexed_titles
+            )
+            hits = backfill_product_policy_hits(
+                hits,
+                product_labels,
+                search_fn=lambda q, doc_ids: hybrid_search(
+                    q, filters={"doc_id": doc_ids}
+                ),
+                budget=settings.rerank_top_k,
+                known_titles=indexed_titles,
+                docs=indexed_docs,
+            )
+            hits = policy_hits_first(hits, product_labels, known_titles=indexed_titles)
         t4 = time.perf_counter()
 
     if settings.metric_guard_enabled:
@@ -393,6 +497,9 @@ class ResponsePlan:
     # (query_timing.py) so an operator can tell whether a wrong answer traces
     # to a scope-carry decision, without logging the query/answer text itself.
     scope_labels: list[str] = field(default_factory=list)
+    product_named: bool = False
+    product_summary: bool = False
+    product_labels: list[str] = field(default_factory=list)
 
 
 def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
@@ -425,8 +532,10 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
     if (
         hits
         and settings.product_scope_guard_enabled
-        and query_names_absent_product(
-            standalone_query, [hit.payload.doc_title for hit in hits]
+        and query_names_absent_product_from_queries(
+            query,
+            standalone_query,
+            [hit.payload.doc_title for hit in hits],
         )
     ):
         logger.info(
@@ -449,7 +558,10 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
     # general-knowledge answer or refuse deterministically. Scoped follow-ups
     # (prior turn pinned a company product/document) always refuse.
     if not hits:
-        scoped = bool(settings.conversation_scope_enabled and active_scope(history))
+        scoped = bool(
+            settings.conversation_scope_enabled
+            and active_scope(history, current_query=query)
+        )
         if not settings.hybrid_fallback_enabled or scoped:
             if scoped:
                 logger.info(
@@ -514,6 +626,24 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
         # with the exclusions page at rank 1 it cited only that and denied a
         # covered death, ignoring the benefit clauses lower in the same context.
         hits = payout_clauses_first(hits)
+    indexed_titles = [t for _, t in _load_indexed_docs()]
+    product_labels = named_product_labels_from_queries(
+        query, standalone_query, titles=indexed_titles
+    )
+    product_named = bool(product_labels)
+    product_summary = product_named and is_product_summary_turn(query, standalone_query)
+    if product_named and len(product_labels) == 1:
+        from app.generation.product_answer import foreign_policy_hits
+
+        stray = foreign_policy_hits(hits, product_labels, known_titles=indexed_titles)
+        if stray:
+            stray_ids = {h.point_id for h in stray}
+            hits = [h for h in hits if h.point_id not in stray_ids]
+            logger.info(
+                "product hit filter: dropped %d foreign-policy chunk(s) for %r",
+                len(stray),
+                product_labels[0],
+            )
     return ResponsePlan(
         kind="grounded",
         query=query,
@@ -525,6 +655,9 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
         coverage=coverage,
         coverage_undetermined=coverage_undetermined,
         scope_labels=carried_labels,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=product_labels,
     )
 
 
@@ -605,6 +738,9 @@ async def chat_completions(request: ChatCompletionRequest):
                     advisory=plan.advisory,
                     coverage=plan.coverage,
                     coverage_undetermined=plan.coverage_undetermined,
+                    product_named=plan.product_named,
+                    product_summary=plan.product_summary,
+                    product_labels=plan.product_labels,
                     timing=timing,
                 ),
                 media_type="text/event-stream",
@@ -617,6 +753,9 @@ async def chat_completions(request: ChatCompletionRequest):
             plan.advisory,
             coverage=plan.coverage,
             coverage_undetermined=plan.coverage_undetermined,
+            product_named=plan.product_named,
+            product_summary=plan.product_summary,
+            product_labels=plan.product_labels,
             timing=timing,
         )
     return ChatCompletionResponse(

@@ -1,5 +1,5 @@
-"""Per-employee accounts for the admin session gate (replaces the single
-shared ``ADMIN_PASSWORD`` as the login check — see REDESIGN_PROMPT.md §7).
+"""Per-employee accounts for the admin session gate (replaces the old single
+shared ``ADMIN_PASSWORD``).
 
 This is a deliberately small, self-hosted account store: SQLite (stdlib,
 already gitignored under ``data/``, never committed) and PBKDF2-HMAC-SHA256
@@ -7,8 +7,9 @@ password hashing (stdlib ``hashlib``, no new dependency — reasonable for a
 handful of internal accounts; would not be the right call at real
 enterprise scale, but there is no SSO available to integrate against here).
 
-There is no self-service signup and no email-sending: accounts are
-provisioned directly (see ``scripts/seed_accounts.py``), not requested. Every
+There is no email-sending: admin accounts are provisioned directly (see
+``scripts/seed_accounts.py``); employees may self-register with any
+``@baoviet.com`` email via ``POST /register`` (employee role only). Every
 account's email must end in ``EMAIL_DOMAIN`` — a format check only, since
 there is no corporate identity provider to actually verify domain membership
 against; it keeps out typos and obviously-wrong addresses, nothing more.
@@ -179,3 +180,30 @@ def list_accounts() -> list[Account]:
     finally:
         con.close()
     return [Account(email=email, role=role) for email, role in rows]  # type: ignore[misc]
+
+
+def register_employee(email: str, password: str) -> Account:
+    """Self-service signup — ``employee`` role only, ``@baoviet.com`` emails.
+
+    Domain check is format-only (no corporate IdP). Raises ``ValueError`` on
+    bad email, weak password, or duplicate account — never reveals whether the
+    email existed vs wrong password beyond a generic duplicate message.
+    """
+    email = email.strip().lower()
+    if not is_valid_domain(email):
+        raise ValueError(f"Email phải thuộc miền {EMAIL_DOMAIN}.")
+    if not password:
+        raise ValueError("Mật khẩu không được để trống.")
+    if len(password) < 8:
+        raise ValueError("Mật khẩu phải có ít nhất 8 ký tự.")
+    con = _connect()
+    try:
+        exists = con.execute(
+            "SELECT 1 FROM accounts WHERE email = ?", (email,)
+        ).fetchone()
+    finally:
+        con.close()
+    if exists:
+        raise ValueError("Email này đã được đăng ký. Hãy đăng nhập.")
+    create_account(email, password, "employee", overwrite=False)
+    return Account(email=email, role="employee")

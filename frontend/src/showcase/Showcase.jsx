@@ -46,7 +46,7 @@ function ThemeFrame({ theme, title }) {
 }
 
 export function Showcase() {
-  const [theme, setTheme] = useTheme();
+  const { theme, setTheme } = useTheme();
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", fontFamily: "var(--font-sans)" }}>

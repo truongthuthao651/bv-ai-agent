@@ -8,7 +8,7 @@ Two layers live here:
 * **Qdrant payload + API models** (pydantic) — what gets stored per point and
   what the HTTP surface accepts/returns.
 
-The Qdrant payload fields MUST stay in sync with CLAUDE.md (Chunk fields /
+The Qdrant payload fields MUST stay in sync with TEAMMATE_GUIDE.md (Chunk fields /
 "Qdrant payload") — change both together.
 """
 
@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocType(str, Enum):
-    """Allowed document types (CLAUDE.md: ``doc_type`` domain)."""
+    """Allowed document types (TEAMMATE_GUIDE.md: ``doc_type`` domain)."""
 
     POLICY = "policy"
     PROCEDURE = "procedure"
@@ -156,7 +156,7 @@ class Chunk:
 class QdrantPayload(BaseModel):
     """Payload stored alongside each vector point.
 
-    Mirrors CLAUDE.md's field list. ``display_text`` — and, under parent-child
+    Mirrors TEAMMATE_GUIDE.md's field list. ``display_text`` — and, under parent-child
     chunking, ``parent_text`` — are included so retrieval can assemble the
     generation context without a second lookup. Both parent fields default to
     None, so points indexed before parent-child chunking existed still load.
@@ -359,3 +359,10 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str
     new_password: str
+
+
+class UpdateMeRequest(BaseModel):
+    """``PATCH /me`` — server-side profile prefs for the signed-in account."""
+
+    display_name: str | None = None
+    avatar_swatch: str | None = None

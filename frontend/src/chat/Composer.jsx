@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/index.js";
 
-/** Ported from ui_kits/chatbot/ChatParts.jsx's Composer. Attachment chips and
- * the "Scope"/model pickers are dropped — see the Phase 4 gap list: there is
- * no employee-facing ingest pipe (that endpoint is admin-only), and there is
- * only ever one model (settings.chat_model), so a picker with nothing to
- * pick would be exactly the "key hint that does nothing" the design system
- * warns against. The trust line is real, not decorative. */
+/** Ported from ui_kits/chatbot/ChatParts.jsx's Composer. Employee-facing
+ * attachment chips are dropped (ingest is admin-only); admins get an optional
+ * `onUpload` hook rendered as a "+" beside the send row. Scope/model pickers
+ * are also dropped — only one model (settings.chat_model). The trust line is
+ * real, not decorative. */
 
 // CHAT-3 (audit/REPORT.md): the textarea was a fixed 2 rows with no autogrow
 // — a long multi-line question scrolled inside a cramped box instead of the
@@ -14,7 +13,7 @@ import { Button } from "../components/index.js";
 // rather than pushing the send button off-screen.
 const MAX_TEXTAREA_HEIGHT = 200;
 
-export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) {
+export function Composer({ value, onChange, onSend, onStop, onUpload, disabled, mobile }) {
   const [focus, setFocus] = useState(false);
   const textareaRef = useRef(null);
 
@@ -73,7 +72,27 @@ export function Composer({ value, onChange, onSend, onStop, disabled, mobile }) 
               padding: "var(--space-2) var(--space-3)",
             }}
           />
-          <div style={{ display: "flex", alignItems: "center", marginTop: "var(--space-2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
+            {onUpload && (
+              <Button
+                variant="ghost"
+                onClick={onUpload}
+                title="Nạp tài liệu"
+                aria-label="Nạp tài liệu"
+                style={{
+                  width: 36,
+                  height: 36,
+                  padding: 0,
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-pill)",
+                  fontSize: 20,
+                  lineHeight: 1,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                +
+              </Button>
+            )}
             {disabled && onStop ? (
               // A generation is in flight — offer to cancel it instead of a
               // disabled, dead send button (CHAT-1, audit/REPORT.md): the

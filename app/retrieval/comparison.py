@@ -18,7 +18,11 @@ from collections.abc import Callable
 
 from app.config.settings import settings
 from app.models.schemas import Hit
-from app.retrieval.product_scope import named_product_labels, title_covers_product
+from app.retrieval.product_scope import (
+    named_product_labels,
+    resolve_product_titles,
+    title_covers_product,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +45,9 @@ def _title_backed_labels(labels: list[str], titles: list[str]) -> list[str]:
     kept: list[str] = []
     used: set[str] = set()
     for label in labels:
-        matched = {t for t in titles if title_covers_product(t, label)}
+        matched = {
+            t for t in titles if title_covers_product(t, label, known_titles=titles)
+        }
         if matched and not matched <= used:
             used |= matched
             kept.append(label)
@@ -110,8 +116,15 @@ def product_doc_ids(product_label: str, docs: list[tuple[str, str]]) -> list[str
     title match (abbreviated filenames) — callers then search unfiltered and fall
     back to title post-filtering.
     """
+    known_titles = [title for _, title in docs]
+    resolved = resolve_product_titles(product_label, known_titles)
+    if resolved:
+        resolved_cf = {t.casefold() for t in resolved}
+        return [doc_id for doc_id, title in docs if title.casefold() in resolved_cf]
     return [
-        doc_id for doc_id, title in docs if title_covers_product(title, product_label)
+        doc_id
+        for doc_id, title in docs
+        if title_covers_product(title, product_label, known_titles=known_titles)
     ]
 
 
@@ -125,15 +138,23 @@ def _load_indexed_docs() -> list[tuple[str, str]]:
         return []
 
 
-def prefer_matching_titles(hits: list[Hit], product_label: str) -> list[Hit]:
+def prefer_matching_titles(
+    hits: list[Hit],
+    product_label: str,
+    *,
+    known_titles: list[str] | None = None,
+) -> list[Hit]:
     """Keep hits whose doc title covers ``product_label``; else leave unchanged.
 
     Cross-product benefit clauses can still clear the rerank floor; preferring
     title matches stops the wrong product's chunks from filling this product's
     quota. Falls back to the full list when nothing matches (abbreviated titles).
     """
+    titles = known_titles or list({h.payload.doc_title for h in hits})
     matched = [
-        h for h in hits if title_covers_product(h.payload.doc_title, product_label)
+        h
+        for h in hits
+        if title_covers_product(h.payload.doc_title, product_label, known_titles=titles)
     ]
     return matched if matched else hits
 
@@ -198,7 +219,9 @@ def retrieve_multi_product(
         raw = search_fn(expand(focused), doc_ids or None)
         # Belt-and-braces: the doc filter already scopes the pool when doc_ids
         # resolved; this also handles the unfiltered fallback (no title match).
-        same_product = prefer_matching_titles(raw, label)
+        same_product = prefer_matching_titles(
+            raw, label, known_titles=[t for _, t in known_docs]
+        )
         ranked = rerank_fn(focused, same_product, per_k)
         buckets.append(ranked[:per_k])
         logger.info(

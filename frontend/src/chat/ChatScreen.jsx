@@ -1,13 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
 import { useTheme } from "../theme/useTheme.js";
-import { Button } from "../components/index.js";
+import { Button, Modal, RailExpandButton, ResizableRail, ThemeToggle, useRailLayout } from "../components/index.js";
+import { ProfileView } from "../user/ProfileView.jsx";
+import { useProfilePrefs } from "../user/useProfilePrefs.js";
 import { Sidebar } from "./Sidebar.jsx";
 import { EmptyState } from "./EmptyState.jsx";
-import { SourcePanel } from "./SourcePanel.jsx";
+import { SourcePanel, SourcePanelContent } from "./SourcePanel.jsx";
 import { Composer } from "./Composer.jsx";
 import { ChatMessage } from "./ChatMessage.jsx";
-import { fetchMe, askStreaming, sendFeedback } from "./api.js";
+import { changePassword, fetchMe, askStreaming, logout, sendFeedback } from "./api.js";
+import { DocumentUploadModal } from "./DocumentUploadModal.jsx";
+import {
+  exportAllConversationsJson,
+  exportConversationJson,
+  exportConversationMarkdown,
+} from "./conversationExport.js";
+import { deleteConversationOnServer } from "./conversationApi.js";
+import {
+  deleteAllConversationsOnServer,
+  loadServerConversationsState,
+  persistConversationsState,
+} from "./conversationStore.js";
+import {
+  clearAllConversationsState,
+  conversationLabel,
+  deriveTitle,
+  generateConversationId,
+  pruneEmptyConversations,
+  sanitizeMessages,
+} from "./conversations.js";
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 640px)").matches);
@@ -20,121 +42,155 @@ function useIsMobile() {
   return mobile;
 }
 
-// Per-tab conversation persistence (P2-F1, audit/REPORT.md): messages lived
-// in plain useState with nothing backing it, so a refresh, accidental
-// back-button, or tab close silently destroyed the whole thread — including
-// a long multi-turn conversation an employee may have spent several minutes
-// building context in. sessionStorage is the smallest fix that closes this:
-// no new backend surface, no schema, nothing leaves the browser, and it
-// clears itself when the tab closes (matching what a user expects from "the
-// chat I currently have open", not a permanent server-side history).
-const STORAGE_KEY = "bv-chat-messages";
+function viewFromHash() {
+  return window.location.hash === "#profile" ? "profile" : "chat";
+}
 
-function loadStoredMessages() {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // A message still marked "streaming" was mid-flight when the tab closed
-    // or the page was left — that request is gone now, so it must not be
-    // rendered as still-in-progress (it would show the "Đang tìm..."
-    // indicator forever with no fetch behind it).
-    const restored = parsed.map((m) => ({ ...m, streaming: false }));
-    // If the very last turn was an assistant message that never received any
-    // content (reload/close landed before the first token), drop it rather
-    // than show a permanently blank bubble with only "Tạo lại" — the user's
-    // question is still there to resend or the regenerate flow still needs
-    // a real prior turn to work from.
-    const last = restored[restored.length - 1];
-    if (last && last.role === "assistant" && !last.text) restored.pop();
-    return restored;
-  } catch {
-    return [];
-  }
+function isConversationStreaming(conv) {
+  return conv?.messages?.some((m) => m.streaming) ?? false;
 }
 
 export function ChatScreen() {
-  const [theme, setTheme] = useTheme();
+  const { theme, preference, setTheme, toggleTheme } = useTheme();
   const [me, setMe] = useState(null);
-  const [messages, setMessages] = useState(loadStoredMessages);
+  const [prefs, setPrefs, hydrateFromServer] = useProfilePrefs(me?.email);
+  const [convState, setConvState] = useState({ conversations: [], activeId: null, loaded: false });
+  const { conversations, activeId, loaded } = convState;
+  const [view, setView] = useState(viewFromHash);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
   const [citation, setCitation] = useState(null);
   const [railOpen, setRailOpen] = useState(false);
   const [error, setError] = useState(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const scrollRef = useRef(null);
-  const abortRef = useRef(null);
+  /** In-flight streams keyed by conversation — survives navigation within chat. */
+  const streamsRef = useRef(new Map());
   const mobile = useIsMobile();
+  const railLayout = useRailLayout("bv-rail-chat");
+
+  const activeConversation = conversations.find((c) => c.id === activeId);
+  const messages = activeConversation?.messages ?? [];
+  const activeConvStreaming = isConversationStreaming(activeConversation);
+  const anyStreaming = conversations.some(isConversationStreaming);
 
   useEffect(() => {
-    fetchMe().then(setMe).catch(() => setMe(null));
+    fetchMe()
+      .then((data) => {
+        setMe(data);
+        if (data?.email) hydrateFromServer(data);
+      })
+      .catch(() => setMe(null));
+    loadServerConversationsState().then(({ conversations, activeId }) => {
+      setConvState({ conversations, activeId, loaded: true });
+    });
+  }, [hydrateFromServer]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const timer = setTimeout(() => {
+      persistConversationsState(conversations, activeId);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [conversations, activeId, loaded]);
+
+  useEffect(() => {
+    const base = "Trợ lý AI Bảo Việt Life";
+    document.title = anyStreaming ? `● ${base}` : base;
+  }, [anyStreaming]);
+
+  useEffect(() => {
+    const onHash = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  const scrollKey = `${activeId}:${messages.length}:${messages[messages.length - 1]?.text?.length ?? 0}`;
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+  }, [scrollKey]);
 
-  useEffect(() => {
-    try {
-      if (messages.length === 0) sessionStorage.removeItem(STORAGE_KEY);
-      else sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch {
-      // Private-browsing quota or storage disabled — persistence is a
-      // nice-to-have degradation, not a reason to break the chat itself.
+  function patchConversation(convId, patchFn) {
+    setConvState((prev) => ({
+      ...prev,
+      conversations: prev.conversations.map((c) => (c.id === convId ? patchFn(c) : c)),
+    }));
+  }
+
+  function abortConversationStream(convId) {
+    streamsRef.current.get(convId)?.abort();
+  }
+
+  function openProfile() {
+    window.location.hash = "profile";
+    setView("profile");
+    setRailOpen(false);
+  }
+
+  function closeProfile() {
+    if (window.location.hash === "#profile") {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
     }
-  }, [messages]);
+    setView("chat");
+  }
 
   async function send(queryText) {
     const query = queryText.trim();
-    if (!query || busy) return;
+    if (!query || isConversationStreaming(activeConversation)) return;
+    const convId = activeId;
+    if (!convId) return;
+
     setInput("");
     setCitation(null);
     setError(null);
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
     const nextMessages = [...messages, { role: "user", text: query }, { role: "assistant", text: "", streaming: true }];
-    setMessages(nextMessages);
-    setBusy(true);
+    patchConversation(convId, (c) => ({
+      ...c,
+      messages: nextMessages,
+      title: c.customTitle ? c.title : deriveTitle(nextMessages),
+      updatedAt: Date.now(),
+    }));
     const controller = new AbortController();
-    abortRef.current = controller;
+    streamsRef.current.set(convId, controller);
     let completionId = null;
     try {
       completionId = await askStreaming(
         [...history, { role: "user", content: query }],
         (delta) => {
-          setMessages((prev) => {
-            const copy = prev.slice();
+          patchConversation(convId, (c) => {
+            const copy = c.messages.slice();
             const last = copy[copy.length - 1];
             copy[copy.length - 1] = { ...last, text: last.text + delta };
-            return copy;
+            return { ...c, messages: copy, updatedAt: Date.now() };
           });
         },
         controller.signal,
       );
     } catch (err) {
-      // A user-initiated stop (see stop() below) throws AbortError — that's
-      // the expected, silent outcome, not a failure to surface. Whatever
-      // partial text already streamed in stays on screen as-is.
       if (err.name !== "AbortError") setError(err.message);
     } finally {
-      setMessages((prev) => {
-        const copy = prev.slice();
+      streamsRef.current.delete(convId);
+      patchConversation(convId, (c) => {
+        const copy = c.messages.slice();
         const last = copy[copy.length - 1];
-        copy[copy.length - 1] = { ...last, streaming: false, completionId };
-        return copy;
+        if (last?.role === "assistant") {
+          copy[copy.length - 1] = { ...last, streaming: false, completionId };
+        }
+        const sanitized = sanitizeMessages(copy);
+        return {
+          ...c,
+          messages: sanitized,
+          title: c.customTitle ? c.title : deriveTitle(sanitized),
+          updatedAt: Date.now(),
+        };
       });
-      setBusy(false);
-      abortRef.current = null;
     }
   }
 
   function stop() {
-    abortRef.current?.abort();
+    if (activeId) abortConversationStream(activeId);
   }
 
-  // P2-F2 (audit/REPORT.md): thumbs-down on one answer, identified by the
-  // completion id captured above — never the query/answer text itself (see
-  // chat/api.js's sendFeedback and the backend's FeedbackRequest model).
   const [feedbackSent, setFeedbackSent] = useState({});
   async function giveFeedback(index) {
     const msg = messages[index];
@@ -143,34 +199,145 @@ export function ChatScreen() {
     try {
       await sendFeedback(msg.completionId, null);
     } catch {
-      // Best-effort UI signal — a failed feedback POST isn't worth
-      // interrupting the person who just tried to flag a bad answer with a
-      // second error message. Allow retrying by rolling the flag back.
       setFeedbackSent((prev) => ({ ...prev, [index]: false }));
     }
   }
 
   function regenerate(assistantIndex) {
     const userMessage = messages[assistantIndex - 1];
-    if (!userMessage || userMessage.role !== "user") return;
-    setMessages(messages.slice(0, assistantIndex - 1));
+    if (!userMessage || userMessage.role !== "user" || activeConvStreaming) return;
+    patchConversation(activeId, (c) => ({
+      ...c,
+      messages: c.messages.slice(0, assistantIndex - 1),
+      updatedAt: Date.now(),
+    }));
     send(userMessage.text);
   }
 
   function newChat() {
-    setMessages([]);
+    const id = generateConversationId();
+    setConvState((prev) => ({
+      ...prev,
+      activeId: id,
+      conversations: pruneEmptyConversations(
+        [{ id, title: "Cuộc trò chuyện mới", messages: [], updatedAt: Date.now() }, ...prev.conversations],
+        id,
+      ),
+    }));
     setCitation(null);
+    setError(null);
+    setFeedbackSent({});
     setRailOpen(false);
+    closeProfile();
   }
 
-  const sidebarProps = { me, theme, onTheme: setTheme, onNewChat: newChat };
+  function selectConversation(id) {
+    if (id === activeId) {
+      setRailOpen(false);
+      return;
+    }
+    setConvState((prev) => ({
+      ...prev,
+      activeId: id,
+      conversations: pruneEmptyConversations(prev.conversations, id),
+    }));
+    setCitation(null);
+    setError(null);
+    setFeedbackSent({});
+    setRailOpen(false);
+    closeProfile();
+  }
+
+  function renameConversation(id, title) {
+    setConvState((prev) => ({
+      ...prev,
+      conversations: prev.conversations.map((c) =>
+        c.id === id ? { ...c, customTitle: title, title, updatedAt: Date.now() } : c,
+      ),
+    }));
+  }
+
+  function deleteConversation(id) {
+    abortConversationStream(id);
+    streamsRef.current.delete(id);
+    deleteConversationOnServer(id).catch(() => {});
+    setConvState((prev) => {
+      const remaining = prev.conversations.filter((c) => c.id !== id);
+      if (remaining.length === 0) {
+        const newId = generateConversationId();
+        return {
+          ...prev,
+          activeId: newId,
+          conversations: [{ id: newId, title: "Cuộc trò chuyện mới", messages: [], updatedAt: Date.now() }],
+        };
+      }
+      const nextActive = id === prev.activeId ? remaining[0].id : prev.activeId;
+      return { ...prev, activeId: nextActive, conversations: remaining };
+    });
+    setCitation(null);
+    setFeedbackSent({});
+  }
+
+  function clearAllConversations() {
+    for (const controller of streamsRef.current.values()) {
+      controller.abort();
+    }
+    streamsRef.current.clear();
+    deleteAllConversationsOnServer()
+      .catch(() => {})
+      .finally(() => {
+        setConvState({ ...clearAllConversationsState(), loaded: true });
+        setCitation(null);
+        setError(null);
+        setFeedbackSent({});
+      });
+  }
+
+  const sidebarProps = {
+    me,
+    prefs,
+    conversations,
+    activeId,
+    onSelectConversation: selectConversation,
+    onRenameConversation: renameConversation,
+    onDeleteConversation: deleteConversation,
+    onNewChat: newChat,
+    onOpenProfile: openProfile,
+  };
+
+  const headerTitle =
+    view === "profile"
+      ? "Hồ sơ cá nhân"
+      : messages.length === 0
+        ? "Cuộc trò chuyện mới"
+        : activeConversation
+          ? conversationLabel(activeConversation)
+          : messages[0]?.text;
+
+  const conversationCount = conversations.filter((c) => c.messages.length > 0).length;
 
   return (
     <div data-theme={theme} style={{ height: "100vh", display: "flex", fontFamily: "var(--font-sans)", background: "var(--bg)", overflow: "hidden" }}>
-      {!mobile && <Sidebar {...sidebarProps} />}
+      {!mobile && (
+        <ResizableRail layout={railLayout} collapseLabel="Ẩn danh sách trò chuyện">
+          <Sidebar {...sidebarProps} onCollapse={railLayout.collapse} />
+        </ResizableRail>
+      )}
       {mobile && railOpen && (
         <div onClick={() => setRailOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(6,18,30,.5)", backdropFilter: "blur(2px)", zIndex: 20 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", left: 0, top: 0, bottom: 0, boxShadow: "var(--shadow-lg)" }}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: `min(${railLayout.width}px, 85vw)`,
+              boxShadow: "var(--shadow-lg)",
+              background: "var(--surface)",
+              borderRight: "1px solid var(--border)",
+            }}
+          >
             <Sidebar {...sidebarProps} onClose={() => setRailOpen(false)} />
           </div>
         </div>
@@ -178,7 +345,7 @@ export function ChatScreen() {
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%" }}>
         <header style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", height: 56, flexShrink: 0, padding: mobile ? "0 var(--space-4)" : "0 var(--space-5) 0 var(--space-8)", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
-          {mobile && (
+          {mobile ? (
             <Button
               variant="ghost"
               onClick={() => setRailOpen(true)}
@@ -187,52 +354,99 @@ export function ChatScreen() {
             >
               ☰
             </Button>
+          ) : (
+            railLayout.collapsed && <RailExpandButton onClick={railLayout.expand} label="Hiện danh sách trò chuyện" />
           )}
-          <div style={{ minWidth: 0, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {messages.length === 0 ? "Cuộc trò chuyện mới" : messages[0]?.text}
+          <div style={{ minWidth: 0, flex: 1, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {headerTitle}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+            <ThemeToggle theme={theme} onChange={toggleTheme} iconOnly />
           </div>
         </header>
 
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-              {messages.length === 0 ? (
-                <EmptyState me={me} onPick={send} />
-              ) : (
-                <div
-                  style={{
-                    width: "100%",
-                    maxWidth: "var(--content-max)",
-                    margin: "0 auto",
-                    boxSizing: "border-box",
-                    padding: mobile ? "var(--space-5) var(--space-4)" : "var(--space-8)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "var(--space-8)",
-                  }}
-                >
-                  {messages.map((m, i) => (
-                    <ChatMessage
-                      key={i}
-                      role={m.role}
-                      text={m.text}
-                      streaming={m.streaming}
-                      active={citation}
-                      onOpen={setCitation}
-                      onRegenerate={m.role === "assistant" && !m.streaming ? () => regenerate(i) : null}
-                      onFeedback={m.role === "assistant" && !m.streaming && m.completionId ? () => giveFeedback(i) : null}
-                      feedbackSent={!!feedbackSent[i]}
-                    />
-                  ))}
-                  {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>Lỗi: {error}</p>}
-                </div>
-              )}
-            </div>
-            <Composer value={input} onChange={setInput} onSend={() => send(input)} onStop={stop} disabled={busy} mobile={mobile} />
+        <DocumentUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} />
+
+        {view === "profile" ? (
+          <ProfileView
+            me={me}
+            prefs={prefs}
+            onPrefsChange={setPrefs}
+            theme={theme}
+            themePreference={preference}
+            onThemePreference={setTheme}
+            onChangePassword={changePassword}
+            onLogout={logout}
+            onBack={closeProfile}
+            backLabel="Quay lại trò chuyện"
+            conversationCount={conversationCount}
+            onClearConversations={clearAllConversations}
+            conversations={conversations.filter((c) => c.messages.length > 0)}
+            activeConversation={activeConversation?.messages?.length ? activeConversation : null}
+            onExportAll={() => exportAllConversationsJson(conversations.filter((c) => c.messages.length > 0))}
+            onExportActiveMarkdown={() => activeConversation && exportConversationMarkdown(activeConversation)}
+            onExportActiveJson={() => activeConversation && exportConversationJson(activeConversation)}
+          />
+        ) : !loaded ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+            Đang tải cuộc trò chuyện…
           </div>
-          {!mobile && citation && <SourcePanel citation={citation} onClose={() => setCitation(null)} />}
-        </div>
+        ) : (
+          <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+              <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+                {messages.length === 0 ? (
+                  <EmptyState me={me} displayName={prefs.displayName} onPick={send} />
+                ) : (
+                  <div
+                    style={{
+                      width: "100%",
+                      maxWidth: "var(--content-max)",
+                      margin: "0 auto",
+                      boxSizing: "border-box",
+                      padding: mobile ? "var(--space-5) var(--space-4)" : "var(--space-8)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "var(--space-8)",
+                    }}
+                  >
+                    {messages.map((m, i) => (
+                      <ChatMessage
+                        key={i}
+                        role={m.role}
+                        text={m.text}
+                        streaming={m.streaming}
+                        active={citation}
+                        onOpen={setCitation}
+                        onRegenerate={m.role === "assistant" && !m.streaming ? () => regenerate(i) : null}
+                        onFeedback={m.role === "assistant" && !m.streaming && m.completionId ? () => giveFeedback(i) : null}
+                        feedbackSent={!!feedbackSent[i]}
+                      />
+                    ))}
+                    {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>Lỗi: {error}</p>}
+                  </div>
+                )}
+              </div>
+              <Composer
+                value={input}
+                onChange={setInput}
+                onSend={() => send(input)}
+                onStop={stop}
+                onUpload={me?.role === "admin" ? () => setUploadOpen(true) : undefined}
+                disabled={activeConvStreaming}
+                mobile={mobile}
+              />
+            </div>
+            {!mobile && citation && <SourcePanel citation={citation} onClose={() => setCitation(null)} />}
+          </div>
+        )}
       </main>
+
+      {citation && mobile && (
+        <Modal open title={`Nguồn ${citation.n}`} onClose={() => setCitation(null)}>
+          <SourcePanelContent citation={citation} />
+        </Modal>
+      )}
     </div>
   );
 }

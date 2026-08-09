@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# ---- Pick a Python: pinned to 3.11/3.12 (see CLAUDE.md) ----
+# ---- Pick a Python: pinned to 3.11/3.12 (see TEAMMATE_GUIDE.md) ----
 PYTHON=""
 for cand in python3.12 python3.11 python3; do
   if command -v "$cand" >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ echo "==> Creating app venv (.venv) and installing pinned requirements"
 .venv/bin/pip install torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/pip install -r requirements-pdf.txt
 
-# ---- Frontend build (dev-machine only — see frontend/, CLAUDE.md) ----
+# ---- Frontend build (dev-machine only — see frontend/, TEAMMATE_GUIDE.md) ----
 # Skipped here if Node isn't installed: the committed app/static/dist/ still
 # works for deployment; only rebuild when you've actually changed frontend/.
 if command -v npm >/dev/null 2>&1; then

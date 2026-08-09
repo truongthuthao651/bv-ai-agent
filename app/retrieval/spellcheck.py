@@ -334,6 +334,52 @@ def _span_has_typo(
     return False
 
 
+def find_fuzzy_product_titles(
+    query: str,
+    titles: list[str],
+    *,
+    typo_ratio: float = 0.82,
+) -> list[str]:
+    """Indexed product titles whose distinctive tokens fuzzy-match a garbled query."""
+    from app.retrieval.product_scope import (
+        _distinctive_title_tokens,
+        _fold_tokens,
+        is_glossary_title,
+    )
+
+    if not query.strip() or not titles:
+        return []
+    q_toks = _fold_tokens(query)
+    if len(q_toks) < 2:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for title in titles:
+        if is_glossary_title(title):
+            continue
+        dist = _distinctive_title_tokens(title, other_titles=titles)
+        if len(dist) < 2:
+            continue
+        matched = 0
+        for dt in dist:
+            if dt in q_toks:
+                matched += 1
+                continue
+            if any(
+                len(qt) >= 3 and SequenceMatcher(None, dt, qt).ratio() >= typo_ratio
+                for qt in q_toks
+            ):
+                matched += 1
+        needed = max(2, (len(dist) + 1) // 2)
+        if matched < needed:
+            continue
+        key = title.casefold()
+        if key not in seen:
+            seen.add(key)
+            out.append(title)
+    return out
+
+
 def find_suggestions(
     query: str,
     *,
@@ -511,8 +557,20 @@ def maybe_suggest_correction(
     Returns a Vietnamese clarification message when the query likely garbles a
     known glossary term or document title, or None to proceed with retrieval
     unchanged. Disabled entirely via ``settings.spellcheck_enabled``.
+
+    Garbled product-name requests (especially tóm tắt/giới thiệu) auto-pass when
+    a fuzzy match to an indexed product title is found — the typo gate must not
+    block them with unrelated glossary suggestions.
     """
     if not settings.spellcheck_enabled:
+        return None
+    if titles is None:
+        indexed_titles, _ = _indexed_corpus()
+        titles = indexed_titles
+    from app.retrieval.product_scope import is_product_summary_query
+
+    fuzzy_products = find_fuzzy_product_titles(query, titles)
+    if fuzzy_products and is_product_summary_query(query):
         return None
     suggestions = find_suggestions(query, titles=titles)
     if not suggestions:

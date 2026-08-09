@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from app.config.settings import settings
+from app.generation.prompts import REFUSAL_MESSAGE
 from app.models.schemas import Hit
 
 logger = logging.getLogger("bv-ai-agent.query_timing")
@@ -86,22 +87,35 @@ def response_time_footer(ctx: TimingContext | None) -> str:
     return f"\n\n_⏱ Thời gian trả lời: {format_elapsed(ctx.elapsed_s())}_"
 
 
+def _answer_is_refusal(answer: str) -> bool:
+    """True when the answer contains the mandated refusal sentence (MODE-1)."""
+    return REFUSAL_MESSAGE.rstrip(".") in answer
+
+
 def log_query_timing(
     ctx: TimingContext | None,
     *,
     answer_chars: int,
     first_token_s: float | None = None,
+    answer_text: str | None = None,
 ) -> None:
     """Append one metadata-only JSONL timing record. Best-effort, never raises.
 
     No-op when timing wasn't requested or ``query_timing_log_enabled`` is off.
     Records coarse metadata only — never the query or answer text.
+
+    When ``answer_text`` is supplied and matches the refusal sentence, the
+    logged ``mode`` is forced to ``refusal`` even if the route was hybrid
+    (MODE-1, audit/REPORT.md) so admin KPIs count hybrid-path refusals.
     """
     if ctx is None or not settings.query_timing_log_enabled:
         return
+    mode = ctx.mode
+    if answer_text is not None and _answer_is_refusal(answer_text):
+        mode = "refusal"
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
-        "mode": ctx.mode,
+        "mode": mode,
         "stream": ctx.stream,
         "elapsed_ms": round(ctx.elapsed_s() * 1000),
         "first_token_ms": (

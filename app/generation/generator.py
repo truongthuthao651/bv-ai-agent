@@ -54,7 +54,9 @@ from app.generation.prompts import (
     system_prompt,
 )
 from app.models.schemas import ChatMessage, Hit
+from app.generation.product_answer import polish_product_answer
 from app.query_timing import TimingContext, log_query_timing, response_time_footer
+from app.text_utils import sanitize_model_output
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,34 @@ def _partial_tail_len(text: str, tag: str) -> int:
         if tag.startswith(text[-k:]):
             return k
     return 0
+
+
+class GeneralKnowledgeTruncator:
+    """Drop a model-written general-knowledge section on product-named turns."""
+
+    def __init__(self, marker: str = GENERAL_KNOWLEDGE_HEADING) -> None:
+        self._marker = marker
+        self._buf = ""
+        self._truncated = False
+
+    def feed(self, text: str) -> str:
+        if self._truncated:
+            return ""
+        self._buf += text
+        idx = self._buf.find(self._marker)
+        if idx != -1:
+            out, self._buf, self._truncated = self._buf[:idx], "", True
+            return out
+        keep = _partial_tail_len(self._buf, self._marker)
+        out = self._buf[: len(self._buf) - keep]
+        self._buf = self._buf[len(self._buf) - keep :]
+        return out
+
+    def flush(self) -> str:
+        if self._truncated:
+            return ""
+        out, self._buf = self._buf, ""
+        return out
 
 
 class ThinkStripper:
@@ -176,6 +206,9 @@ def build_messages(
     advisory: bool = False,
     coverage: bool = False,
     coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn.
 
@@ -197,6 +230,8 @@ def build_messages(
                 advisory=advisory,
                 coverage=coverage,
                 coverage_undetermined=coverage_undetermined,
+                product_named=product_named,
+                product_summary=product_summary,
             ),
         }
     ]
@@ -207,7 +242,14 @@ def build_messages(
             if not content:
                 continue
         messages.append({"role": turn.role, "content": content})
-    messages.append({"role": "user", "content": build_user_prompt(query, hits)})
+    messages.append(
+        {
+            "role": "user",
+            "content": build_user_prompt(
+                query, hits, product_labels=product_labels or None
+            ),
+        }
+    )
     return messages
 
 
@@ -393,7 +435,7 @@ async def stream_static_answer(
     footer = response_time_footer(timing)
     if footer:
         yield _sse_chunk(completion_id, model, {"content": footer}, None)
-    log_query_timing(timing, answer_chars=len(text))
+    log_query_timing(timing, answer_chars=len(text), answer_text=text)
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
 
@@ -403,6 +445,9 @@ async def _stream_chat(
     suffix_fn: Callable[[str], str],
     *,
     timing: TimingContext | None = None,
+    product_named: bool = False,
+    buffer_for_polish: bool = False,
+    polish_fn: Callable[[str], str] | None = None,
 ) -> AsyncIterator[str]:
     """Shared Ollama-streaming core: SSE chunks + a deterministic suffix.
 
@@ -414,6 +459,10 @@ async def _stream_chat(
     ``timing``, when provided, appends the "⏱ Thời gian trả lời" footer as the
     final content chunk (after the sources block, so it reads as a footer) and
     writes one metadata-only timing record once streaming completes.
+
+    When ``buffer_for_polish`` is set (product-summary turns), the model output
+    is buffered and post-processed before anything reaches the client — same
+    trade-off as the coverage gate.
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
@@ -422,6 +471,7 @@ async def _stream_chat(
 
     stripper = ThinkStripper()
     truncator = SourcesTruncator()
+    gk_truncator = GeneralKnowledgeTruncator() if product_named else None
     answer_parts: list[str] = []
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -438,21 +488,34 @@ async def _stream_chat(
                         continue
                     content, done = parse_ollama_line(line)
                     if content:
-                        visible = truncator.feed(stripper.feed(content))
+                        visible = sanitize_model_output(stripper.feed(content))
+                        if gk_truncator is not None:
+                            visible = gk_truncator.feed(visible)
+                        visible = truncator.feed(visible)
                         if visible:
                             if first_token_at is None:
                                 first_token_at = time.perf_counter()
                             answer_parts.append(visible)
-                            yield _sse_chunk(
-                                completion_id, model, {"content": visible}, None
-                            )
+                            if not buffer_for_polish:
+                                yield _sse_chunk(
+                                    completion_id, model, {"content": visible}, None
+                                )
                     if done:
                         break
-        tail = truncator.feed(stripper.flush()) + truncator.flush()
+        tail = sanitize_model_output(stripper.flush())
+        if gk_truncator is not None:
+            tail = gk_truncator.feed(tail) + gk_truncator.flush()
+        tail = sanitize_model_output(truncator.feed(tail) + truncator.flush())
         if tail:
             answer_parts.append(tail)
-            yield _sse_chunk(completion_id, model, {"content": tail}, None)
+            if not buffer_for_polish:
+                yield _sse_chunk(completion_id, model, {"content": tail}, None)
         body = "".join(answer_parts)
+        if polish_fn is not None:
+            body = polish_fn(body)
+        body = sanitize_model_output(body, strip_edges=True)
+        if buffer_for_polish and body:
+            yield _sse_chunk(completion_id, model, {"content": body}, None)
         suffix = suffix_fn(body)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
@@ -466,7 +529,10 @@ async def _stream_chat(
             else None
         )
         log_query_timing(
-            timing, answer_chars=len(body) + len(suffix), first_token_s=first_token_s
+            timing,
+            answer_chars=len(body) + len(suffix),
+            first_token_s=first_token_s,
+            answer_text=body + suffix,
         )
         total_ms = (time.perf_counter() - started) * 1000
         first_ms = (
@@ -485,7 +551,9 @@ async def _stream_chat(
     yield "data: [DONE]\n\n"
 
 
-def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]:
+def _grounded_suffix_fn(
+    hits: list[Hit], advisory: bool, *, product_named: bool = False
+) -> Callable[[str], str]:
     """Suffixes appended after a grounded answer, in reading order.
 
     Calculation disclaimer, then the advisory label, then the general-knowledge
@@ -505,7 +573,8 @@ def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]
         out = _disclaimer_suffix(body)
         if advisory:
             out += _advisory_disclaimer_suffix(body)
-        out += _general_knowledge_suffix(body)
+        if not product_named:
+            out += _general_knowledge_suffix(body)
         if hits and has_dangling_citation(body, hits):
             logger.warning("dangling citation in streamed answer; flagging")
             out += f"\n\n{DANGLING_CITATION_NOTICE}"
@@ -522,6 +591,9 @@ async def stream_answer(
     advisory: bool = False,
     coverage: bool = False,
     coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
     timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream the assistant's grounded answer as SSE lines.
@@ -531,6 +603,17 @@ async def stream_answer(
     "Không được claim." before checking means the employee has already read a
     verdict we are about to reject.
     """
+    labels = product_labels or []
+
+    def _polish(body: str) -> str:
+        return polish_product_answer(
+            body,
+            hits=hits,
+            product_labels=labels,
+            product_named=product_named,
+            product_summary=product_summary,
+        )
+
     messages = build_messages(
         query,
         hits,
@@ -538,15 +621,25 @@ async def stream_answer(
         advisory=advisory,
         coverage=coverage,
         coverage_undetermined=coverage_undetermined,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=labels,
     )
-    suffix_fn = _grounded_suffix_fn(hits, advisory)
+    suffix_fn = _grounded_suffix_fn(hits, advisory, product_named=product_named)
     if coverage and settings.coverage_verdict_gate_enabled:
         async for chunk in _stream_gated_coverage(
             messages, hits, suffix_fn, question=query, timing=timing
         ):
             yield chunk
         return
-    async for chunk in _stream_chat(messages, suffix_fn, timing=timing):
+    async for chunk in _stream_chat(
+        messages,
+        suffix_fn,
+        timing=timing,
+        product_named=product_named,
+        buffer_for_polish=product_summary,
+        polish_fn=_polish if (product_named or product_summary) else None,
+    ):
         yield chunk
 
 
@@ -583,7 +676,9 @@ async def _stream_gated_coverage(
     footer = response_time_footer(timing)
     if footer:
         yield _sse_chunk(completion_id, model, {"content": footer}, None)
-    log_query_timing(timing, answer_chars=len(answer) + len(suffix))
+    log_query_timing(
+        timing, answer_chars=len(answer) + len(suffix), answer_text=answer + suffix
+    )
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
 
@@ -663,7 +758,9 @@ def _chat_raw(messages: list[dict[str, str]]) -> str:
     )
     resp.raise_for_status()
     content = resp.json().get("message", {}).get("content", "")
-    return truncate_at_sources_heading(strip_think(content))
+    return sanitize_model_output(
+        truncate_at_sources_heading(strip_think(content)), strip_edges=True
+    )
 
 
 async def _achat_raw(messages: list[dict[str, str]]) -> str:
@@ -675,7 +772,9 @@ async def _achat_raw(messages: list[dict[str, str]]) -> str:
         )
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
-    return truncate_at_sources_heading(strip_think(content))
+    return sanitize_model_output(
+        truncate_at_sources_heading(strip_think(content)), strip_edges=True
+    )
 
 
 def _resolve_verdict(answer: str, hits: list[Hit]) -> VerdictProblem | None:
@@ -775,7 +874,9 @@ def _gated_coverage_answer(
     # Strip BEFORE checking: a leaked "…kết thúc bằng những gì còn cần kiểm tra
     # để kết luận" heading is the last "kết luận" in the text, so it captures
     # ``verdict_region`` and hides the real conclusion underneath it.
-    answer = strip_leaked_instructions(_chat_raw(messages))
+    answer = sanitize_model_output(
+        strip_leaked_instructions(_chat_raw(messages)), strip_edges=True
+    )
     problem = _resolve_verdict(answer, hits)
     if problem is not None:
         retry = _chat_raw(correction_messages(messages, answer, problem))
@@ -799,7 +900,9 @@ async def _agated_coverage_answer(
     timing: TimingContext | None = None,
 ) -> str:
     """Async twin of ``_gated_coverage_answer``."""
-    answer = strip_leaked_instructions(await _achat_raw(messages))
+    answer = sanitize_model_output(
+        strip_leaked_instructions(await _achat_raw(messages)), strip_edges=True
+    )
     problem = _resolve_verdict(answer, hits)
     if problem is not None:
         retry = await _achat_raw(correction_messages(messages, answer, problem))
@@ -818,6 +921,7 @@ def _generate_chat(
     suffix_fn: Callable[[str], str],
     *,
     hits: list[Hit] | None = None,
+    polish_fn: Callable[[str], str] | None = None,
 ) -> str:
     """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``).
 
@@ -827,7 +931,9 @@ def _generate_chat(
     stripping runs; there's no citation concept to check there).
     """
     try:
-        answer = _chat_raw(messages)
+        answer = sanitize_model_output(_chat_raw(messages), strip_edges=True)
+        if polish_fn is not None:
+            answer = polish_fn(answer)
         if hits:
             answer = strip_dangling_citations(answer, hits)
         return answer + suffix_fn(answer)
@@ -844,7 +950,7 @@ def _with_timing(answer: str, timing: TimingContext | None) -> str:
     monkeypatch — while both non-streaming answer paths still get the footer.
     """
     footer = response_time_footer(timing)
-    log_query_timing(timing, answer_chars=len(answer))
+    log_query_timing(timing, answer_chars=len(answer), answer_text=answer)
     return answer + footer
 
 
@@ -856,9 +962,23 @@ def generate_answer(
     *,
     coverage: bool = False,
     coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
     timing: TimingContext | None = None,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
+    labels = product_labels or []
+
+    def _polish(body: str) -> str:
+        return polish_product_answer(
+            body,
+            hits=hits,
+            product_labels=labels,
+            product_named=product_named,
+            product_summary=product_summary,
+        )
+
     messages = build_messages(
         query,
         hits,
@@ -866,16 +986,24 @@ def generate_answer(
         advisory=advisory,
         coverage=coverage,
         coverage_undetermined=coverage_undetermined,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=labels,
     )
-    suffix_fn = _grounded_suffix_fn(hits, advisory)
+    suffix_fn = _grounded_suffix_fn(hits, advisory, product_named=product_named)
+    polish = _polish if (product_named or product_summary) else None
     if coverage and settings.coverage_verdict_gate_enabled:
         try:
             answer = _gated_coverage_answer(messages, hits, query, timing=timing)
         except (httpx.HTTPError, ValueError) as exc:
             logger.error("Generation failed: %s", exc)
             return _with_timing(_CONNECTION_ERROR_MESSAGE, timing)
+        if polish is not None:
+            answer = polish(answer)
         return _with_timing(answer + suffix_fn(answer), timing)
-    return _with_timing(_generate_chat(messages, suffix_fn, hits=hits), timing)
+    return _with_timing(
+        _generate_chat(messages, suffix_fn, hits=hits, polish_fn=polish), timing
+    )
 
 
 def generate_hybrid_answer(

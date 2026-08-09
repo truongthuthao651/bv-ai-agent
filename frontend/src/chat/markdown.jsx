@@ -33,6 +33,22 @@ export function splitSources(text) {
   return { body, citations };
 }
 
+/** Inline [n] markers the model actually cited in the prose (P2-J2). */
+export function inlineCitationNumbers(body) {
+  const nums = new Set();
+  const re = /\[(\d+)\]/g;
+  let m;
+  while ((m = re.exec(body))) nums.add(Number(m[1]));
+  return nums;
+}
+
+/** Keep only sources whose [n] appears in the answer body. */
+export function citedSourcesOnly(body, citations) {
+  const cited = inlineCitationNumbers(body);
+  if (cited.size === 0) return [];
+  return citations.filter((c) => cited.has(c.n));
+}
+
 function Math({ tex, display }) {
   let html;
   try {

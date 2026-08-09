@@ -2,14 +2,9 @@ import { useEffect, useState } from "react";
 import { Triangle } from "../brand/Triangle.jsx";
 import { fetchPromptSuggestions } from "./api.js";
 
-/** Ported from ui_kits/chatbot/ChatParts.jsx's EmptyState. The kit groups
- * suggestions into three named categories ("Policy lookup", "Actuarial",
- * "Products & circulars") that don't match the real six suggestions in
- * scripts/open_webui/prompt_suggestions.json (Open WebUI's actual copy), so
- * this renders them as a flat grid instead of inventing category labels the
- * source file doesn't have. Greeting uses the real signed-in email, not the
- * kit's fabricated "Vân". */
-export function EmptyState({ me, onPick }) {
+/** Chat empty state: flat grid of prompt suggestions from GET /prompt-suggestions
+ * (backed by scripts/prompt_suggestions.json). Greeting uses the signed-in user. */
+export function EmptyState({ me, displayName, onPick }) {
   const [suggestions, setSuggestions] = useState([]);
 
   useEffect(() => {
@@ -23,7 +18,7 @@ export function EmptyState({ me, onPick }) {
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
         <Triangle size={18} />
         <div style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", lineHeight: "var(--leading-tight)" }}>
-          Xin chào{me?.email ? `, ${me.email.split("@")[0]}` : ""}
+          Xin chào{displayName ? `, ${displayName}` : me?.email ? `, ${me.email.split("@")[0]}` : ""}
         </div>
       </div>
       <p style={{ margin: "0 0 var(--space-8)", fontSize: "var(--text-md)", color: "var(--text-secondary)", lineHeight: "var(--leading-normal)", maxWidth: 560 }}>
