@@ -19,14 +19,18 @@ from app.models.schemas import ChangePasswordRequest, UpdateMeRequest
 
 router = APIRouter(tags=["auth"])
 
-_LOGIN_HTML = (Path(__file__).parent.parent / "templates" / "login.html").read_text(
-    encoding="utf-8"
-)
+_LOGIN_HTML_PATH = Path(__file__).parent.parent / "templates" / "login.html"
+
+
+def _load_login_html() -> str:
+    # Read on each request so template edits show up without a full process
+    # restart (uvicorn --reload is not the default in run_native.sh).
+    return _LOGIN_HTML_PATH.read_text(encoding="utf-8")
 
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page() -> str:
-    return _LOGIN_HTML
+    return _load_login_html()
 
 
 @router.post("/login")

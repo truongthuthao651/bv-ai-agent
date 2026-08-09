@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Badge, RailCollapseButton, RailExpandButton, ResizableRail, ThemeToggle, UserAvatar, useRailLayout } from "../components/index.js";
+import { useEffect, useMemo, useState } from "react";
+import { AppHeader, Badge, Icon, IconButton, RailCollapseButton, RailExpandButton, ResizableRail, SidebarBrand, UserAvatar, useRailLayout } from "../components/index.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
+import { localizedRoleLabel } from "../i18n/catalog.js";
 import { useTheme } from "../theme/useTheme.js";
 import { ProfileView } from "../user/ProfileView.jsx";
-import { roleLabel } from "../user/profilePrefs.js";
 import { useProfilePrefs } from "../user/useProfilePrefs.js";
 import { deleteAllConversationsOnServer } from "../chat/conversationStore.js";
 import { EvaluationView, LogsView, ModelsView, SettingsView } from "./AdminOpsViews.jsx";
@@ -11,40 +12,40 @@ import { OverviewView } from "./OverviewView.jsx";
 import { DocumentsView } from "./DocumentsView.jsx";
 import { UsersView } from "./UsersView.jsx";
 
-/* Nav grouped Monitor / Content / Configure. Only Overview and Documents
- * Overview and Documents are the main surfaces; Evaluation, Logs, Models, and
- * Settings are read-only operational views. */
-const NAV_GROUPS = [
-  {
-    title: "Theo dõi",
-    items: [
-      { key: "overview", label: "Tổng quan" },
-      { key: "evaluation", label: "Đánh giá chất lượng" },
-      { key: "logs", label: "Nhật ký" },
-    ],
-  },
-  {
-    title: "Nội dung",
-    items: [
-      { key: "documents", label: "Tài liệu" },
-      { key: "users", label: "Người dùng" },
-    ],
-  },
-  {
-    title: "Cấu hình",
-    items: [
-      { key: "models", label: "Mô hình" },
-      { key: "settings", label: "Thiết lập" },
-    ],
-  },
-];
+const NAV_KEYS = new Set(["overview", "evaluation", "logs", "documents", "users", "models", "settings"]);
 
-const NAV_KEYS = new Set(NAV_GROUPS.flatMap((g) => g.items).map((it) => it.key));
+function navGroups(t) {
+  return [
+    {
+      title: t("nav.monitor"),
+      items: [
+        { key: "overview", label: t("nav.overview") },
+        { key: "evaluation", label: t("nav.evaluation") },
+        { key: "logs", label: t("nav.logs") },
+      ],
+    },
+    {
+      title: t("nav.content"),
+      items: [
+        { key: "documents", label: t("nav.documents") },
+        { key: "users", label: t("nav.users") },
+      ],
+    },
+    {
+      title: t("nav.configure"),
+      items: [
+        { key: "models", label: t("nav.models") },
+        { key: "settings", label: t("nav.settings") },
+      ],
+    },
+  ];
+}
 
 function navFromHash() {
   const key = window.location.hash.slice(1);
   if (key === "profile") return "profile";
-  return NAV_KEYS.has(key) ? key : "overview";
+  const base = key.split("/")[0];
+  return NAV_KEYS.has(base) ? base : "overview";
 }
 
 // F3-4 (audit/REPORT.md): the rail was a fixed var(--rail-width) with no
@@ -65,7 +66,9 @@ function useIsMobile() {
 }
 
 export function AdminShell() {
+  const { t } = useLocale();
   const { theme, preference, setTheme, toggleTheme } = useTheme();
+  const nav = useMemo(() => navGroups(t), [t]);
   const [active, setActive] = useState(navFromHash);
   const [hoverNav, setHoverNav] = useState(null);
   const [health, setHealth] = useState(null);
@@ -171,17 +174,12 @@ export function AdminShell() {
   const railContent = (onCollapse) => (
     <>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "var(--space-2)", padding: "var(--space-5) var(--space-4) var(--space-6)" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)" }}>
-            Trợ lý AI Bảo Việt Life
-          </div>
-          <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>Quản trị tài liệu</div>
-        </div>
-        {onCollapse && <RailCollapseButton onClick={onCollapse} label="Ẩn menu quản trị" />}
+        <SidebarBrand title={t("productName")} subtitle={t("adminSubtitle")} />
+        {onCollapse && <RailCollapseButton onClick={onCollapse} label={t("nav.hideAdminRail")} />}
       </div>
 
       <nav style={{ flex: 1, overflowY: "auto", padding: "0 var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-6)", minHeight: 0 }}>
-        {NAV_GROUPS.map((g) => (
+        {nav.map((g) => (
           <div key={g.title} style={{ display: "flex", flexDirection: "column", gap: "var(--space-half)" }}>
             <div
               style={{
@@ -216,8 +214,8 @@ export function AdminShell() {
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             <button
               onClick={openProfile}
-              title="Hồ sơ cá nhân"
-              aria-label="Hồ sơ cá nhân"
+              title={t("nav.profile")}
+              aria-label={t("nav.profile")}
               style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", padding: "var(--space-1) 0", textAlign: "left", color: "var(--text-primary)" }}
             >
               <UserAvatar email={me.email} swatchId={prefs.avatarSwatch} size={32} />
@@ -225,22 +223,15 @@ export function AdminShell() {
                 <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {prefs.displayName || me.email}
                 </div>
-                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{roleLabel(me.role)}</div>
+                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{localizedRoleLabel(me.role, t)}</div>
               </div>
             </button>
-            <button
-              onClick={handleLogout}
-              title="Đăng xuất"
-              aria-label="Đăng xuất"
-              style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 4, flexShrink: 0 }}
-            >
-              ⏻
-            </button>
+            <IconButton icon="logout" label={t("chat.logout")} size={28} iconSize={16} onClick={handleLogout} />
           </div>
         )}
         <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-          <Badge label={`Ollama: ${ollamaStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={ollamaStatus === "up" ? "ok" : "bad"} />
-          <Badge label={`Qdrant: ${qdrantStatus === "up" ? "Hoạt động" : "Ngừng"}`} status={qdrantStatus === "up" ? "ok" : "bad"} />
+          <Badge label={`Ollama: ${ollamaStatus === "up" ? t("admin.serviceUp") : t("admin.serviceDown")}`} status={ollamaStatus === "up" ? "ok" : "bad"} />
+          <Badge label={`Qdrant: ${qdrantStatus === "up" ? t("admin.serviceUp") : t("admin.serviceDown")}`} status={qdrantStatus === "up" ? "ok" : "bad"} />
         </div>
         <a
           href="/chat/"
@@ -248,7 +239,7 @@ export function AdminShell() {
           rel="noopener noreferrer"
           style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
         >
-          Mở giao diện trò chuyện ↗
+          {t("nav.openChat")} <Icon name="external-link" size={12} style={{ display: "inline", verticalAlign: "middle", marginLeft: 4 }} />
         </a>
       </div>
     </>
@@ -260,7 +251,7 @@ export function AdminShell() {
       style={{ height: "100vh", background: "var(--bg)", fontFamily: "var(--font-sans)", display: "flex", overflow: "hidden" }}
     >
       {!mobile && (
-        <ResizableRail layout={railLayout} collapseLabel="Ẩn menu quản trị">
+        <ResizableRail layout={railLayout} collapseLabel={t("nav.hideAdminRail")}>
           {railContent(railLayout.collapse)}
         </ResizableRail>
       )}
@@ -292,38 +283,29 @@ export function AdminShell() {
       )}
 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-4)",
-            height: 56,
-            flexShrink: 0,
-            padding: mobile ? "0 var(--space-4)" : "0 var(--pad-page)",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--bg)",
-          }}
-        >
-          {mobile ? (
-            <button
-              onClick={() => setRailOpen(true)}
-              aria-label="Mở menu"
-              style={{ border: "none", background: "transparent", fontSize: 17, cursor: "pointer", color: "var(--text-primary)", padding: 0, width: 32, height: 32, flexShrink: 0 }}
-            >
-              ☰
-            </button>
-          ) : (
-            railLayout.collapsed && <RailExpandButton onClick={railLayout.expand} label="Hiện menu quản trị" />
-          )}
-          <div style={{ minWidth: 0, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {active === "profile"
-              ? "Hồ sơ cá nhân"
-              : NAV_GROUPS.flatMap((g) => g.items).find((it) => it.key === active)?.label}
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <ThemeToggle theme={theme} onChange={toggleTheme} iconOnly />
-          </div>
-        </header>
+        <AppHeader
+          title={
+            active === "profile"
+              ? t("nav.profile")
+              : nav.flatMap((g) => g.items).find((it) => it.key === active)?.label
+          }
+          theme={theme}
+          onTheme={toggleTheme}
+          menu={
+            mobile ? (
+              <IconButton
+                icon="menu"
+                label={t("nav.openMenu")}
+                onClick={() => setRailOpen(true)}
+                size={32}
+                iconSize={18}
+                color="var(--text-primary)"
+                style={{ background: "transparent" }}
+              />
+            ) : null
+          }
+          expand={!mobile && railLayout.collapsed ? <RailExpandButton onClick={railLayout.expand} label={t("nav.showAdminRail")} /> : null}
+        />
 
         {active === "profile" ? (
           <ProfileView
@@ -336,7 +318,7 @@ export function AdminShell() {
             onChangePassword={changePassword}
             onLogout={logout}
             onBack={closeProfile}
-            backLabel="Quay lại quản trị"
+            backLabel={t("nav.backAdmin")}
             conversationCount={conversationCount}
             onClearConversations={clearAllConversations}
           />

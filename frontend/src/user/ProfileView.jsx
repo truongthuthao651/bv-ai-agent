@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { Badge, Button, Card, Input, ThemeToggle } from "../components/index.js";
+import { Badge, Button, Card, Icon, Input, ThemeToggle } from "../components/index.js";
 import { UserAvatar } from "../components/user/UserAvatar.jsx";
-import { AVATAR_SWATCHES, roleLabel } from "./profilePrefs.js";
+import { localizedRoleLabel } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
+import { AVATAR_SWATCHES } from "./profilePrefs.js";
 
 function Section({ title, hint, children }) {
   return (
@@ -20,6 +22,7 @@ function Section({ title, hint, children }) {
 }
 
 function ChangePasswordForm({ onChangePassword }) {
+  const { t } = useLocale();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState({ text: "", tone: "" });
@@ -27,14 +30,14 @@ function ChangePasswordForm({ onChangePassword }) {
 
   async function save() {
     if (!currentPassword || !newPassword) {
-      setStatus({ text: "Vui lòng nhập đủ cả hai mật khẩu.", tone: "bad" });
+      setStatus({ text: t("profile.passwordRequired"), tone: "bad" });
       return;
     }
     setBusy(true);
     setStatus({ text: "", tone: "" });
     try {
       await onChangePassword(currentPassword, newPassword);
-      setStatus({ text: "Đã đổi mật khẩu.", tone: "ok" });
+      setStatus({ text: t("profile.passwordChanged"), tone: "ok" });
       setCurrentPassword("");
       setNewPassword("");
     } catch (err) {
@@ -58,19 +61,19 @@ function ChangePasswordForm({ onChangePassword }) {
     >
       <div>
         <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", marginBottom: "var(--space-1)" }}>
-          Mật khẩu hiện tại
+          {t("profile.currentPassword")}
         </label>
         <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} style={{ width: "100%" }} />
       </div>
       <div>
         <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", marginBottom: "var(--space-1)" }}>
-          Mật khẩu mới (ít nhất 8 ký tự)
+          {t("profile.newPassword")}
         </label>
         <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} style={{ width: "100%" }} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Button onClick={save} disabled={busy}>
-          Lưu mật khẩu
+          {t("profile.savePassword")}
         </Button>
         {status.text && <span style={{ fontSize: "var(--text-xs)", color: toneColor }}>{status.text}</span>}
       </div>
@@ -79,10 +82,11 @@ function ChangePasswordForm({ onChangePassword }) {
 }
 
 function ThemeChoice({ preference, onChange }) {
+  const { t } = useLocale();
   const options = [
-    { id: "light", label: "Sáng" },
-    { id: "dark", label: "Tối" },
-    { id: "system", label: "Theo hệ thống" },
+    { id: "light", label: t("theme.light") },
+    { id: "dark", label: t("theme.dark") },
+    { id: "system", label: t("theme.system") },
   ];
   return (
     <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
@@ -135,6 +139,7 @@ export function ProfileView({
   onExportActiveMarkdown,
   onExportActiveJson,
 }) {
+  const { t } = useLocale();
   const [clearConfirm, setClearConfirm] = useState(false);
   const [nameDraft, setNameDraft] = useState(prefs.displayName);
   const [nameStatus, setNameStatus] = useState({ text: "", tone: "" });
@@ -157,24 +162,24 @@ export function ProfileView({
   }, [nameDirty]);
 
   function handleBack() {
-    if (nameDirty && !window.confirm("Tên hiển thị chưa được lưu. Bỏ qua thay đổi?")) return;
+    if (nameDirty && !window.confirm(t("profile.unsavedConfirm"))) return;
     onBack();
   }
 
   function saveDisplayName() {
     const next = nameDraft.trim();
     if (!next) {
-      setNameStatus({ text: "Tên không được để trống.", tone: "bad" });
+      setNameStatus({ text: t("profile.nameRequired"), tone: "bad" });
       return;
     }
     onPrefsChange({ displayName: next });
-    setNameStatus({ text: "Đã lưu.", tone: "ok" });
+    setNameStatus({ text: t("profile.saved"), tone: "ok" });
   }
 
   if (!me?.email) {
     return (
       <div style={{ padding: "var(--space-8)", textAlign: "center", color: "var(--text-secondary)" }}>
-        Không thể tải thông tin tài khoản.
+        {t("profile.loadError")}
       </div>
     );
   }
@@ -190,8 +195,8 @@ export function ProfileView({
     >
       <div style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: "var(--space-6)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-          <Button variant="secondary" onClick={handleBack}>
-            ← {backLabel}
+          <Button variant="secondary" onClick={handleBack} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
+            <Icon name="arrow-left" size={14} /> {backLabel}
           </Button>
         </div>
 
@@ -203,16 +208,16 @@ export function ProfileView({
             </div>
             <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginTop: "var(--space-1)" }}>{me.email}</div>
             <div style={{ marginTop: "var(--space-2)" }}>
-              <Badge label={roleLabel(me.role)} status="neutral" />
+              <Badge label={localizedRoleLabel(me.role, t)} status="neutral" />
             </div>
           </div>
         </div>
 
-        <Section title="Cá nhân hoá" hint="Tên hiển thị và màu avatar được lưu trên máy chủ — đồng bộ giữa các thiết bị. Giao diện sáng/tối vẫn theo từng trình duyệt.">
+        <Section title={t("profile.personalization")} hint={t("profile.personalizationHint")}>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
             <div>
               <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", marginBottom: "var(--space-1)" }}>
-                Tên hiển thị
+                {t("profile.displayName")}
               </label>
               <Input
                 value={nameDraft}
@@ -226,12 +231,12 @@ export function ProfileView({
                     saveDisplayName();
                   }
                 }}
-                placeholder="Tên bạn muốn hiển thị"
+                placeholder={t("profile.displayNamePlaceholder")}
                 style={{ width: "100%" }}
               />
               <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginTop: "var(--space-3)", flexWrap: "wrap" }}>
                 <Button onClick={saveDisplayName} disabled={!nameDirty}>
-                  Lưu tên
+                  {t("profile.saveName")}
                 </Button>
                 {nameStatus.text && (
                   <span
@@ -247,17 +252,17 @@ export function ProfileView({
             </div>
             <div>
               <div style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", marginBottom: "var(--space-2)" }}>
-                Màu avatar
+                {t("profile.avatarColor")}
               </div>
               <div style={{ display: "flex", gap: "var(--space-2)" }}>
                 {AVATAR_SWATCHES.map((swatch) => (
                   <button
                     key={swatch.id}
                     type="button"
-                    aria-label={`Màu avatar ${swatch.id}`}
+                    aria-label={t("profile.avatarColorLabel", { id: swatch.id })}
                     onClick={() => {
                       onPrefsChange({ avatarSwatch: swatch.id });
-                      setAvatarStatus("Đã lưu.");
+                      setAvatarStatus(t("profile.saved"));
                       setTimeout(() => setAvatarStatus(""), 2000);
                     }}
                     style={{
@@ -289,43 +294,43 @@ export function ProfileView({
           </div>
         </Section>
 
-        <Section title="Giao diện" hint="Chọn chế độ sáng/tối hoặc theo cài đặt hệ thống.">
+        <Section title={t("profile.appearance")} hint={t("profile.appearanceHint")}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-4)", flexWrap: "wrap" }}>
             <ThemeChoice preference={themePreference} onChange={onThemePreference} />
             <ThemeToggle theme={theme} onChange={(next) => onThemePreference(next)} iconOnly />
           </div>
         </Section>
 
-        <Section title="Bảo mật" hint="Đổi mật khẩu cho tài khoản đang đăng nhập.">
+        <Section title={t("profile.security")} hint={t("profile.securityHint")}>
           <ChangePasswordForm onChangePassword={onChangePassword} />
         </Section>
 
         {onClearConversations != null && (
           <Section
-            title="Dữ liệu trò chuyện"
-            hint="Cuộc trò chuyện được lưu trên máy chủ, riêng từng tài khoản — quản trị viên không xem được nội dung chat của nhân viên."
+            title={t("profile.conversations")}
+            hint={t("profile.conversationsHint")}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
               <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
                 {conversationCount === 0
-                  ? "Chưa có cuộc trò chuyện nào trong tab này."
-                  : `${conversationCount} cuộc trò chuyện trong tab này.`}
+                  ? t("profile.noConversations")
+                  : t("profile.conversationCount", { n: conversationCount })}
               </div>
               {conversationCount > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
                   {activeConversation && onExportActiveMarkdown && (
                     <Button variant="secondary" onClick={onExportActiveMarkdown}>
-                      Xuất cuộc trò chuyện hiện tại (Markdown)
+                      {t("profile.exportMarkdown")}
                     </Button>
                   )}
                   {activeConversation && onExportActiveJson && (
                     <Button variant="secondary" onClick={onExportActiveJson}>
-                      Xuất cuộc trò chuyện hiện tại (JSON)
+                      {t("profile.exportJson")}
                     </Button>
                   )}
                   {onExportAll && conversations.length > 0 && (
                     <Button variant="secondary" onClick={onExportAll}>
-                      Xuất tất cả ({conversations.length}) — JSON
+                      {t("profile.exportAll", { n: conversations.length })}
                     </Button>
                   )}
                 </div>
@@ -334,11 +339,11 @@ export function ProfileView({
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
                   {!clearConfirm ? (
                     <Button variant="secondary" onClick={() => setClearConfirm(true)}>
-                      Xóa tất cả cuộc trò chuyện
+                      {t("profile.deleteAll")}
                     </Button>
                   ) : (
                     <>
-                      <span style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>Không thể hoàn tác.</span>
+                      <span style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>{t("profile.deleteIrreversible")}</span>
                       <Button
                         variant="secondary"
                         onClick={() => {
@@ -346,10 +351,10 @@ export function ProfileView({
                           setClearConfirm(false);
                         }}
                       >
-                        Xác nhận xóa
+                        {t("profile.confirmDelete")}
                       </Button>
                       <Button variant="ghost" onClick={() => setClearConfirm(false)}>
-                        Huỷ
+                        {t("common.cancel")}
                       </Button>
                     </>
                   )}
@@ -359,12 +364,12 @@ export function ProfileView({
           </Section>
         )}
 
-        <Section title="Phiên đăng nhập">
+        <Section title={t("profile.session")}>
           <Button
             variant="secondary"
             onClick={() => onLogout().then(() => (window.location.href = "/login"))}
           >
-            Đăng xuất
+            {t("profile.logout")}
           </Button>
         </Section>
       </div>

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Card, Table, Tag } from "../components/index.js";
+import { localizedRoleLabel } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { fetchAccounts } from "./api.js";
 
-const ROLE_LABEL = { admin: "Quản trị viên", employee: "Nhân viên" };
-
 export function UsersView() {
+  const { t } = useLocale();
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState(null);
 
@@ -18,26 +19,22 @@ export function UsersView() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--gap-section)" }}>
       <div>
         <h1 style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", margin: "0 0 var(--space-2)", lineHeight: "var(--leading-tight)" }}>
-          Người dùng
+          {t("users.title")}
         </h1>
-        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>
-          Tài khoản đăng nhập hệ thống (email @baoviet.com) — dùng cho trò chuyện, và cho trang quản trị nếu là quản trị viên.
-        </p>
+        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>{t("users.description")}</p>
       </div>
 
-      <Card
-        title="Tài khoản đã cấp"
-        hint="Chỉ xem — quản trị viên cấp bằng scripts/seed_accounts.py; nhân viên tự đăng ký tại /login."
-        size="lg"
-      >
+      <Card title={t("users.cardTitle")} hint={t("users.cardHint")} size="lg">
         {error ? (
-          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>Không tải được danh sách: {error}</p>
+          <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>
+            {t("admin.loadListError")} {error}
+          </p>
         ) : (
           <Table
-            columns={["Email", "Vai trò"]}
+            columns={[t("common.email"), t("common.role")]}
             rows={accounts}
-            emptyLabel="Chưa có tài khoản nào."
-            renderRow={(a) => [a.email, <Tag key="role">{ROLE_LABEL[a.role] || a.role}</Tag>]}
+            emptyLabel={t("users.empty")}
+            renderRow={(a) => [a.email, <Tag key="role">{localizedRoleLabel(a.role, t) || a.role}</Tag>]}
           />
         )}
       </Card>

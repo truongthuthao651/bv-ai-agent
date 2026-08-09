@@ -1,44 +1,33 @@
 import { useEffect, useState } from "react";
-import { Card, Input, Select, Button, Table, Tag, Modal } from "../components/index.js";
+import { Card, Input, Select, Button, Table, Tag, Modal, Icon } from "../components/index.js";
 import { DocumentUploadForm } from "../documents/DocumentUploadForm.jsx";
-import { UPLOAD_HINT } from "../documents/documentUploadOptions.js";
-import { departmentDisplay, departmentOptionLabel } from "./departmentLabels.js";
+import {
+  editDocTypeOptions,
+  docTypeLabel,
+  localizedDepartmentDisplay,
+  localizedDepartmentOption,
+} from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { fetchDocuments, updateDocument, deleteDocument } from "./api.js";
-
-const EDIT_DOC_TYPE_OPTIONS = [
-  { value: "policy", label: "policy — Hợp đồng / Quy tắc bảo hiểm" },
-  { value: "procedure", label: "procedure — Quy trình" },
-  { value: "form", label: "form — Biểu mẫu" },
-  { value: "spreadsheet", label: "spreadsheet — Bảng tính" },
-  { value: "image", label: "image — Hình ảnh scan" },
-  { value: "figure", label: "figure — Hình vẽ / biểu đồ" },
-  { value: "glossary", label: "glossary — Từ điển thuật ngữ" },
-  { value: "reference", label: "reference — Tham khảo công khai" },
-  { value: "other", label: "other — Khác" },
-];
-
-// P2-T2 (audit/REPORT.md): doc_type was shown as the raw English enum value
-// ("policy", "other", ...) in every table/chart, even though the upload and
-// edit dropdowns are already bilingual (EDIT_DOC_TYPE_OPTIONS above) — an
-// admin picks a Vietnamese-labeled option, then sees the bare English code
-// reflected back in every table and chart afterward. One shared lookup,
-// exported so OverviewView.jsx's recent-documents list uses the same labels
-// instead of its own copy drifting out of sync.
-export const DOC_TYPE_LABEL = Object.fromEntries(
-  EDIT_DOC_TYPE_OPTIONS.map((o) => [o.value, o.label.split(" — ")[1]]),
-);
+import { formatVnDateTime } from "./formatVnTime.js";
 
 const DEPARTMENTS = ["PTSP", "DP", "DVA"];
 
+export function docTypeLabelForOverview(value, t) {
+  return docTypeLabel(value, t);
+}
+
 function UploadCard({ onUploaded }) {
+  const { t } = useLocale();
   return (
-    <Card title="Nạp tài liệu" hint={UPLOAD_HINT}>
+    <Card title={t("upload.title")} hint={t("upload.hint")}>
       <DocumentUploadForm onUploaded={onUploaded} />
     </Card>
   );
 }
 
 function EditModal({ doc, onClose, onSaved }) {
+  const { t } = useLocale();
   const [title, setTitle] = useState(doc.doc_title);
   const [docType, setDocType] = useState(doc.doc_type);
   const [department, setDepartment] = useState(doc.department || "");
@@ -51,16 +40,16 @@ function EditModal({ doc, onClose, onSaved }) {
   async function save() {
     const newTitle = title.trim();
     if (!newTitle) {
-      setStatus({ text: "Tên tài liệu không được để trống.", tone: "bad" });
+      setStatus({ text: t("documents.titleRequired"), tone: "bad" });
       return;
     }
     setBusy(true);
-    setStatus(renaming ? { text: "Đang nạp lại tài liệu với tên mới… (có thể mất một lúc)", tone: "warn" } : { text: "Đang lưu…", tone: "" });
+    setStatus(renaming ? { text: t("documents.reingesting"), tone: "warn" } : { text: t("common.saving"), tone: "" });
     try {
       await updateDocument(doc.doc_id, { doc_title: newTitle, doc_type: docType, department, source_url: sourceUrl.trim() });
       onSaved();
     } catch (err) {
-      setStatus({ text: "Lỗi: " + err.message, tone: "bad" });
+      setStatus({ text: `${t("common.error")}: ${err.message}`, tone: "bad" });
     } finally {
       setBusy(false);
     }
@@ -82,34 +71,35 @@ function EditModal({ doc, onClose, onSaved }) {
   return (
     <Modal
       open
-      title="Sửa tài liệu"
-      hint="Chỉnh sửa tên, loại, phòng ban và nguồn công khai của tài liệu."
+      title={t("documents.editTitle")}
+      hint={t("documents.editHint")}
       onClose={onClose}
       actions={
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Huỷ
+            {t("common.cancel")}
           </Button>
           <Button onClick={save} disabled={busy}>
-            Lưu
+            {t("common.save")}
           </Button>
         </>
       }
     >
       <div onKeyDown={onFieldKeyDown} style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Tên tài liệu</label>
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>{t("documents.docTitleLabel")}</label>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} />
           {renaming && (
-            <p style={{ margin: "var(--space-2) 0 0", fontSize: "var(--text-2xs)", color: "var(--warning)" }}>
-              ⚠️ Đổi tên sẽ nạp lại tài liệu từ tệp gốc để tìm kiếm bám đúng tên mới — có thể mất một lúc (do enrichment công thức).
+            <p style={{ margin: "var(--space-2) 0 0", display: "flex", alignItems: "flex-start", gap: "var(--space-2)", fontSize: "var(--text-2xs)", color: "var(--warning)" }}>
+              <Icon name="alert-triangle" size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+              <span>{t("documents.renameWarning")}</span>
             </p>
           )}
         </div>
         <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Loại tài liệu</label>
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>{t("documents.docTypeLabel")}</label>
           <Select value={docType} onChange={(e) => setDocType(e.target.value)} style={{ width: "100%" }}>
-            {EDIT_DOC_TYPE_OPTIONS.map((o) => (
+            {editDocTypeOptions(t).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -117,19 +107,19 @@ function EditModal({ doc, onClose, onSaved }) {
           </Select>
         </div>
         <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Nguồn URL công khai</label>
-          <Input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://… (để trống nếu là tài liệu nội bộ)" />
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>{t("documents.sourceUrlLabel")}</label>
+          <Input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder={t("documents.sourceUrlPlaceholder")} />
           <p style={{ margin: "var(--space-2) 0 0", fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>
-            Chỉ dùng cho tài liệu công khai. Trích dẫn sẽ trỏ thẳng tới địa chỉ này và được gắn nhãn "nguồn công khai"; ứng dụng không bao giờ tự truy cập nó.
+            {t("documents.sourceUrlHint")}
           </p>
         </div>
         <div>
-          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>Phòng ban</label>
+          <label style={{ display: "block", fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", marginBottom: "var(--space-1)" }}>{t("documents.deptLabel")}</label>
           <Select value={department} onChange={(e) => setDepartment(e.target.value)} style={{ width: "100%" }}>
-            <option value="">(không đặt)</option>
+            <option value="">{t("common.unset")}</option>
             {DEPARTMENTS.map((d) => (
             <option key={d} value={d}>
-              {departmentOptionLabel(d)}
+              {localizedDepartmentOption(d, t)}
             </option>
             ))}
           </Select>
@@ -141,6 +131,7 @@ function EditModal({ doc, onClose, onSaved }) {
 }
 
 export function DocumentsView({ canManage = true }) {
+  const { t } = useLocale();
   const [docs, setDocs] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [editingDoc, setEditingDoc] = useState(null);
@@ -204,36 +195,40 @@ export function DocumentsView({ canManage = true }) {
     ? docs.filter(
         (d) =>
           d.doc_title.toLowerCase().includes(query) ||
-          (DOC_TYPE_LABEL[d.doc_type] || d.doc_type).toLowerCase().includes(query) ||
+          docTypeLabel(d.doc_type, t).toLowerCase().includes(query) ||
           (d.department || "").toLowerCase().includes(query),
       )
     : docs;
+
+  const tableColumns = canManage
+    ? [t("documents.colTitle"), t("documents.colType"), t("documents.colDept"), t("documents.colChunks"), t("documents.colIngested"), ""]
+    : [t("documents.colTitle"), t("documents.colType"), t("documents.colDept"), t("documents.colChunks"), t("documents.colIngested")];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--gap-section)" }}>
       <div>
         <h1 style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", margin: "0 0 var(--space-2)", lineHeight: "var(--leading-tight)" }}>
-          Tài liệu
+          {t("documents.title")}
         </h1>
-        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>Nạp, gắn nhãn và theo dõi các tài liệu trợ lý có thể tìm kiếm.</p>
+        <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>{t("documents.pageDescription")}</p>
       </div>
 
       {canManage ? (
         <UploadCard onUploaded={load} />
       ) : (
         <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
-          Tài khoản nhân viên chỉ xem được danh sách tài liệu — nạp/sửa/xoá cần tài khoản quản trị viên.
+          {t("documents.employeeNote")}
         </p>
       )}
 
       <Card
-        title="Tài liệu đã nạp"
+        title={t("documents.ingestedList")}
         hint={
           loadError
-            ? `Không tải được danh sách: ${loadError}`
+            ? `${t("admin.loadListError")} ${loadError}`
             : query
-              ? `${filteredDocs.length}/${docs.length} tài liệu phù hợp · ${totalChunks} đoạn`
-              : `${docs.length} tài liệu · ${totalChunks} đoạn`
+              ? t("documents.listSummaryFiltered", { filtered: filteredDocs.length, total: docs.length, chunks: totalChunks })
+              : t("documents.listSummary", { count: docs.length, chunks: totalChunks })
         }
         size="lg"
       >
@@ -241,14 +236,14 @@ export function DocumentsView({ canManage = true }) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Tìm theo tên, loại hoặc phòng ban…"
+            placeholder={t("documents.searchPlaceholder")}
             style={{ width: "100%", maxWidth: 360, marginBottom: "var(--space-4)" }}
           />
         )}
         <Table
-          columns={canManage ? ["Tên tài liệu", "Loại", "Phòng ban", "Số đoạn", "Thời gian nạp", ""] : ["Tên tài liệu", "Loại", "Phòng ban", "Số đoạn", "Thời gian nạp"]}
+          columns={tableColumns}
           rows={filteredDocs}
-          emptyLabel={query ? "Không có tài liệu nào khớp." : "Chưa có tài liệu nào được nạp."}
+          emptyLabel={query ? t("documents.noMatch") : t("documents.empty")}
           renderRow={(d) => {
             const cells = [
               <div key="title" style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
@@ -256,26 +251,26 @@ export function DocumentsView({ canManage = true }) {
                   href={`/documents/${encodeURIComponent(d.doc_id)}/view`}
                   target="_blank"
                   rel="noopener"
-                  title="Xem tài liệu"
+                  title={t("documents.viewDocument")}
                   style={{ color: "var(--accent)", fontWeight: "var(--weight-semibold)" }}
                 >
                   {d.doc_title}
                 </a>
-                {d.source_url && <Tag tone="muted">nguồn công khai</Tag>}
+                {d.source_url && <Tag tone="muted">{t("documents.publicSource")}</Tag>}
               </div>,
-              <Tag key="type">{DOC_TYPE_LABEL[d.doc_type] || d.doc_type}</Tag>,
-              departmentDisplay(d.department),
+              <Tag key="type">{docTypeLabel(d.doc_type, t)}</Tag>,
+              localizedDepartmentDisplay(d.department, t),
               d.n_chunks,
-              d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—",
+              formatVnDateTime(d.ingested_at),
             ];
             if (canManage) {
               cells.push(
                 <div key="actions" style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
                   <Button size="sm" variant="secondary" onClick={() => setEditingDoc(d)}>
-                    Sửa
+                    {t("common.edit")}
                   </Button>
                   <Button size="sm" variant="danger" disabled={deletingId === d.doc_id} onClick={() => setConfirmDeleteDoc(d)}>
-                    Xoá
+                    {t("common.delete")}
                   </Button>
                 </div>,
               );
@@ -299,21 +294,21 @@ export function DocumentsView({ canManage = true }) {
       {canManage && confirmDeleteDoc && (
         <Modal
           open
-          title="Xoá tài liệu?"
-          hint={`Xoá tài liệu "${confirmDeleteDoc.doc_title}" khỏi hệ thống? Thao tác này không thể hoàn tác.`}
+          title={t("documents.deleteTitle")}
+          hint={t("documents.deleteHint", { title: confirmDeleteDoc.doc_title })}
           onClose={closeDeleteConfirm}
           actions={
             <>
               <Button variant="secondary" onClick={closeDeleteConfirm} disabled={deletingId === confirmDeleteDoc.doc_id}>
-                Huỷ
+                {t("common.cancel")}
               </Button>
               <Button variant="danger" onClick={confirmDelete} disabled={deletingId === confirmDeleteDoc.doc_id}>
-                Xoá
+                {t("common.delete")}
               </Button>
             </>
           }
         >
-          {deleteError && <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>Lỗi: {deleteError}</div>}
+          {deleteError && <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>{t("common.error")}: {deleteError}</div>}
         </Modal>
       )}
     </div>

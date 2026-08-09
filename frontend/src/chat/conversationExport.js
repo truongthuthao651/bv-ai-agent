@@ -20,11 +20,14 @@ function safeFilename(label) {
     .replace(/^-|-$/g, "") || "cuoc-tro-chuyen";
 }
 
-export function exportConversationMarkdown(conv) {
-  const lines = [`# ${conv.title || "Cuộc trò chuyện"}\n`];
+export function exportConversationMarkdown(conv, labels = {}) {
+  const fallback = labels.fallbackTitle ?? "Conversation";
+  const user = labels.user ?? "You";
+  const assistant = labels.assistant ?? "Assistant";
+  const lines = [`# ${conv.title || fallback}\n`];
   for (const m of conv.messages ?? []) {
-    if (m.role === "user") lines.push(`## Bạn\n\n${m.text}\n`);
-    else if (m.text) lines.push(`## Trợ lý\n\n${m.text}\n`);
+    if (m.role === "user") lines.push(`## ${user}\n\n${m.text}\n`);
+    else if (m.text) lines.push(`## ${assistant}\n\n${m.text}\n`);
   }
   const stamp = new Date().toISOString().slice(0, 10);
   downloadBlob(`${safeFilename(conv.title)}-${stamp}.md`, lines.join("\n"), "text/markdown;charset=utf-8");

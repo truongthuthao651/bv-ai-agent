@@ -1,17 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { KpiCard, Input, Button } from "../components/index.js";
+import { docTypeLabel, localizedDepartmentDisplay } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { fetchMetrics, askStreaming } from "./api.js";
-import { DOC_TYPE_LABEL } from "./DocumentsView.jsx";
-import { departmentDisplay } from "./departmentLabels.js";
-
-const MODE_LABELS = { grounded: "Có căn cứ", advisory: "Tư vấn", hybrid: "Kiến thức chung", refusal: "Từ chối", other: "Khác" };
-const WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
-const WINDOW_OPTIONS = [
-  { value: 1, label: "1 giờ qua" },
-  { value: 24, label: "24 giờ qua" },
-  { value: 168, label: "7 ngày qua" },
-  { value: 0, label: "Toàn bộ" },
-];
+import { formatVnDateTime } from "./formatVnTime.js";
 
 function fmtPct(x) {
   return x === null || x === undefined ? "—" : Math.round(x * 100) + "%";
@@ -23,13 +15,6 @@ function fmtNum(x, digits = 1) {
   return x === null || x === undefined ? "—" : Number(x).toFixed(digits);
 }
 
-// F3-4 (audit/REPORT.md): the 12-column panel grid's explicit span={N} values
-// (deliberate, praised as "the strongest screen — don't touch the structure"
-// in audit/02-product.md) only make sense at desktop widths. Below 640px
-// they're exactly what produced the KPI-label truncation the audit
-// screenshotted — same threshold ChatScreen.jsx's sidebar collapse already
-// uses. Called from Panel itself so every one of the 8 call sites gets the
-// fix without threading a prop through each.
 function useIsMobile() {
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 640px)").matches);
   useEffect(() => {
@@ -79,8 +64,9 @@ function Empty({ children }) {
 }
 
 function AreaChart({ data }) {
+  const { t } = useLocale();
   const [i, setI] = useState(null);
-  if (data.length < 2) return <Empty>Chưa đủ dữ liệu để vẽ biểu đồ theo ngày.</Empty>;
+  if (data.length < 2) return <Empty>{t("overview.emptyChartDaily")}</Empty>;
   const values = data.map((d) => d.count);
   const W = 720, H = 180, PAD = 24;
   const max = Math.max(1, Math.ceil(Math.max(...values) / 5) * 5);
@@ -136,7 +122,9 @@ function AreaChart({ data }) {
           }}
         >
           <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{data[i].date}</div>
-          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>{data[i].count.toLocaleString()} câu hỏi</div>
+          <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)", fontVariantNumeric: "tabular-nums" }}>
+            {data[i].count.toLocaleString()} {t("common.questions")}
+          </div>
         </div>
       )}
     </div>
@@ -144,18 +132,31 @@ function AreaChart({ data }) {
 }
 
 function Heatmap({ cells }) {
-  if (!cells.length || cells.every((c) => c.count === 0)) return <Empty>Chưa có dữ liệu câu hỏi trong khoảng thời gian này.</Empty>;
+  const { t } = useLocale();
+  const weekdayLabels = useMemo(
+    () => [
+      t("overview.weekdayMon"),
+      t("overview.weekdayTue"),
+      t("overview.weekdayWed"),
+      t("overview.weekdayThu"),
+      t("overview.weekdayFri"),
+      t("overview.weekdaySat"),
+      t("overview.weekdaySun"),
+    ],
+    [t],
+  );
+  if (!cells.length || cells.every((c) => c.count === 0)) return <Empty>{t("overview.emptyHeatmap")}</Empty>;
   const max = Math.max(1, ...cells.map((c) => c.count));
   const byWeekday = Array.from({ length: 7 }, (_, wd) => cells.filter((c) => c.weekday === wd).sort((a, b) => a.hour - b.hour));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {byWeekday.map((row, wd) => (
         <div key={wd} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <div style={{ width: 24, flexShrink: 0, fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{WEEKDAY_LABELS[wd]}</div>
+          <div style={{ width: 24, flexShrink: 0, fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{weekdayLabels[wd]}</div>
           {row.map((c) => (
             <div
               key={c.hour}
-              title={`${WEEKDAY_LABELS[wd]} ${c.hour}h — ${c.count} câu hỏi`}
+              title={`${weekdayLabels[wd]} ${c.hour}h (VN) — ${c.count} ${t("common.questions")}`}
               style={{
                 flex: 1,
                 height: 14,
@@ -179,7 +180,8 @@ function Heatmap({ cells }) {
 }
 
 function BarList({ items, valueLabel }) {
-  if (!items.length) return <Empty>Chưa có dữ liệu.</Empty>;
+  const { t } = useLocale();
+  if (!items.length) return <Empty>{t("overview.emptyData")}</Empty>;
   const max = Math.max(...items.map((i) => i.value));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
@@ -203,7 +205,8 @@ function BarList({ items, valueLabel }) {
 const DONUT_COLORS = ["var(--gold)", "var(--chart-series-a)", "var(--chart-series-b)", "var(--chart-series-c)", "var(--chart-series-d)"];
 
 function Donut({ segments, size = 132 }) {
-  if (!segments.length) return <Empty>Chưa có tài liệu nào được nạp.</Empty>;
+  const { t } = useLocale();
+  if (!segments.length) return <Empty>{t("overview.emptyDocs")}</Empty>;
   const total = segments.reduce((a, s) => a + s.value, 0);
   let acc = 0;
   const stops = segments
@@ -249,8 +252,9 @@ function Donut({ segments, size = 132 }) {
 }
 
 function Histogram({ bins }) {
+  const { t } = useLocale();
   const total = bins.reduce((a, b) => a + b.count, 0);
-  if (!total) return <Empty>Chưa có dữ liệu độ trễ.</Empty>;
+  if (!total) return <Empty>{t("overview.emptyLatency")}</Empty>;
   const max = Math.max(...bins.map((b) => b.count));
   return (
     <div>
@@ -258,7 +262,7 @@ function Histogram({ bins }) {
         {bins.map((b, i) => (
           <div
             key={i}
-            title={`${(b.start_ms / 1000).toFixed(1)}${b.end_ms ? `–${(b.end_ms / 1000).toFixed(1)}s` : "s+"} · ${b.count} câu hỏi`}
+            title={`${(b.start_ms / 1000).toFixed(1)}${b.end_ms ? `–${(b.end_ms / 1000).toFixed(1)}s` : "s+"} · ${b.count} ${t("common.questions")}`}
             style={{ flex: 1, height: `${(b.count / max) * 100}%`, minHeight: b.count ? 2 : 0, background: "var(--accent)", opacity: 0.7, borderRadius: "3px 3px 0 0" }}
           />
         ))}
@@ -272,6 +276,7 @@ function Histogram({ bins }) {
 }
 
 function AskPanel() {
+  const { t } = useLocale();
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState("");
   const [status, setStatus] = useState({ text: "", tone: "" });
@@ -282,12 +287,12 @@ function AskPanel() {
     if (!q || busy) return;
     setBusy(true);
     setAnswer("");
-    setStatus({ text: "Đang truy xuất tài liệu và sinh câu trả lời…", tone: "" });
+    setStatus({ text: t("overview.quickAskBusy"), tone: "" });
     try {
       await askStreaming(q, (delta) => setAnswer((prev) => prev + delta));
-      setStatus({ text: "Hoàn tất.", tone: "ok" });
+      setStatus({ text: t("overview.quickAskDone"), tone: "ok" });
     } catch (err) {
-      setStatus({ text: "Lỗi: " + err.message, tone: "bad" });
+      setStatus({ text: `${t("common.error")}: ${err.message}`, tone: "bad" });
     } finally {
       setBusy(false);
     }
@@ -295,21 +300,18 @@ function AskPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
-      <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
-        Gọi thẳng <code>POST /v1/chat/completions</code> để kiểm tra toàn bộ luồng truy xuất + sinh câu trả lời. Công thức LaTeX
-        hiển thị dạng thô ở đây — dùng giao diện trò chuyện để xem LaTeX được render đẹp.
-      </p>
+      <p style={{ margin: 0, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>{t("overview.quickAskHint")}</p>
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ví dụ: Phí thuần là gì?"
+          placeholder={t("overview.quickAskPlaceholder")}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) ask();
           }}
         />
         <Button onClick={ask} disabled={busy}>
-          Hỏi
+          {t("overview.quickAskButton")}
         </Button>
       </div>
       {status.text && (
@@ -338,9 +340,33 @@ function AskPanel() {
 }
 
 export function OverviewView() {
+  const { t } = useLocale();
   const [hours, setHours] = useState(24);
   const [metrics, setMetrics] = useState(null);
   const [error, setError] = useState(null);
+
+  const windowOptions = useMemo(
+    () => [
+      { value: 1, label: t("common.last1h") },
+      { value: 24, label: t("common.last24h") },
+      { value: 168, label: t("common.last7d") },
+      { value: 0, label: t("common.allTime") },
+    ],
+    [t],
+  );
+
+  const modeLabels = useMemo(
+    () => ({
+      grounded: t("overview.modeGrounded"),
+      advisory: t("overview.modeAdvisory"),
+      hybrid: t("overview.modeHybrid"),
+      refusal: t("overview.modeRefusal"),
+      other: t("overview.modeOther"),
+    }),
+    [t],
+  );
+
+  const unsetDeptVi = "Không đặt";
 
   useEffect(() => {
     let cancelled = false;
@@ -364,11 +390,9 @@ export function OverviewView() {
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "var(--space-4)", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", margin: "0 0 var(--space-2)", lineHeight: "var(--leading-tight)" }}>
-            Tổng quan
+            {t("overview.title")}
           </h1>
-          <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>
-            Tổng hợp từ <code>logs/query_timings.jsonl</code> — chỉ số liệu tổng hợp, không có nội dung câu hỏi/câu trả lời.
-          </p>
+          <p style={{ margin: 0, color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>{t("overview.subtitle")}</p>
         </div>
         <select
           value={hours}
@@ -384,7 +408,7 @@ export function OverviewView() {
             color: "var(--text-primary)",
           }}
         >
-          {WINDOW_OPTIONS.map((o) => (
+          {windowOptions.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
@@ -392,48 +416,42 @@ export function OverviewView() {
         </select>
       </div>
 
-      {error && <Empty>Không tải được số liệu: {error}</Empty>}
+      {error && (
+        <Empty>
+          {t("admin.loadMetricsError")} {error}
+        </Empty>
+      )}
 
       {m && (
         <>
-          {/* auto-fit/minmax instead of a fixed 5-up grid: reflows continuously
-              as width shrinks instead of truncating every label to "Số ..."
-              (F3-4, audit/REPORT.md) — no mobile check needed, this alone
-              fixes both the 375px and 768px cases the audit screenshotted. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--gap-card)" }}>
-            <KpiCard label="Số câu hỏi" value={m.n_requests} hint="Số câu hỏi trong khoảng thời gian đã chọn." />
-            <KpiCard label="Tài liệu đang có sẵn" value={m.n_documents} hint="Số tài liệu trợ lý có thể tìm kiếm hiện nay." />
-            <KpiCard label={'Tỷ lệ "không tìm thấy"'} value={fmtPct(m.refusal_rate)} betterWhen="down" hint="Tỷ lệ câu hỏi trợ lý từ chối vì thiếu căn cứ." />
-            <KpiCard label="Độ trễ trung vị (p50)" value={fmtMs(m.elapsed_ms_p50)} betterWhen="down" hint="Một nửa câu trả lời nhanh hơn mức này." />
-            <KpiCard label="Số đoạn truy xuất TB" value={fmtNum(m.n_hits_mean)} hint="Số đoạn tài liệu trung bình được dùng để trả lời." />
+            <KpiCard label={t("overview.kpiQuestions")} value={m.n_requests} hint={t("overview.kpiQuestionsHint")} />
+            <KpiCard label={t("overview.kpiDocs")} value={m.n_documents} hint={t("overview.kpiDocsHint")} />
+            <KpiCard label={t("overview.kpiRefusal")} value={fmtPct(m.refusal_rate)} betterWhen="down" hint={t("overview.kpiRefusalHint")} />
+            <KpiCard label={t("overview.kpiLatency")} value={fmtMs(m.elapsed_ms_p50)} betterWhen="down" hint={t("overview.kpiLatencyHint")} />
+            <KpiCard label={t("overview.kpiHits")} value={fmtNum(m.n_hits_mean)} hint={t("overview.kpiHitsHint")} />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: "var(--gap-card)" }}>
-            <Panel span={8} title="Câu hỏi theo ngày" hint="Số câu hỏi mỗi ngày trong khoảng thời gian đã chọn.">
+            <Panel span={8} title={t("overview.chartDaily")} hint={t("overview.chartDailyHint")}>
               <AreaChart data={m.daily_volume} />
             </Panel>
 
-            <Panel span={4} title="Thời điểm hỏi nhiều" hint="Số câu hỏi theo giờ và ngày trong tuần.">
+            <Panel span={4} title={t("overview.chartHeatmap")} hint={t("overview.chartHeatmapHint")}>
               <Heatmap cells={m.heatmap} />
             </Panel>
 
-            <Panel span={5} title="Tài liệu được dùng nhiều nhất" hint="Số lần tài liệu được trích dẫn trong câu trả lời.">
+            <Panel span={5} title={t("overview.chartTopDocs")} hint={t("overview.chartTopDocsHint")}>
               <BarList items={m.top_documents.map((d) => ({ label: d.doc_title, value: d.count }))} />
             </Panel>
 
-            <Panel span={3} title="Tài liệu theo phòng ban" hint="Số tài liệu đã nạp, theo phòng ban.">
-              {/* CHART-1 (audit/REPORT.md): a single "Không đặt" segment means
-                  no document has been tagged with a department yet — a 100%
-                  pie of "not set" isn't a KPI, it's noise. Say so plainly
-                  instead of rendering a technically-accurate but meaningless
-                  donut; the moment even one document gets tagged, this falls
-                  through to the real chart below unchanged. */}
-              {m.documents_by_department.length === 1 && m.documents_by_department[0].department === "Không đặt" ? (
-                <Empty>Chưa gắn phòng ban cho tài liệu nào.</Empty>
+            <Panel span={3} title={t("overview.chartByDept")} hint={t("overview.chartByDeptHint")}>
+              {m.documents_by_department.length === 1 && m.documents_by_department[0].department === unsetDeptVi ? (
+                <Empty>{t("overview.emptyDept")}</Empty>
               ) : (
                 <Donut
                   segments={m.documents_by_department.map((d, i) => ({
-                    label: d.department === "Không đặt" ? d.department : departmentDisplay(d.department),
+                    label: d.department === unsetDeptVi ? t("overview.unsetDept") : localizedDepartmentDisplay(d.department, t),
                     value: d.count,
                     color: DONUT_COLORS[i % DONUT_COLORS.length],
                   }))}
@@ -441,12 +459,12 @@ export function OverviewView() {
               )}
             </Panel>
 
-            <Panel span={4} title="Chế độ trả lời" hint="Phân loại câu trả lời trong khoảng thời gian đã chọn.">
+            <Panel span={4} title={t("overview.chartModes")} hint={t("overview.chartModesHint")}>
               {m.n_requests === 0 ? (
-                <Empty>Chưa có dữ liệu trong khoảng thời gian này.</Empty>
+                <Empty>{t("overview.emptyModes")}</Empty>
               ) : (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-                  {Object.entries(MODE_LABELS)
+                  {Object.entries(modeLabels)
                     .filter(([key]) => (m.mode_breakdown?.[key] ?? 0) > 0)
                     .map(([key, label]) => (
                       <span
@@ -467,30 +485,30 @@ export function OverviewView() {
               )}
             </Panel>
 
-            <Panel span={5} title="Thời gian trả lời" hint="Phân bố thời gian trả lời (giây).">
+            <Panel span={5} title={t("overview.chartLatency")} hint={t("overview.chartLatencyHint")}>
               <Histogram bins={m.latency_histogram} />
             </Panel>
 
-            <Panel span={7} title="Tài liệu nạp gần đây">
+            <Panel span={7} title={t("overview.recentDocs")}>
               <div style={{ display: "flex", flexDirection: "column" }}>
-                {m.recent_documents.length === 0 && <Empty>Chưa có tài liệu nào được nạp.</Empty>}
+                {m.recent_documents.length === 0 && <Empty>{t("overview.emptyDocs")}</Empty>}
                 {m.recent_documents.map((d, i) => (
                   <div key={d.doc_id} style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-3)", padding: "var(--space-3) 0", borderTop: i ? "1px solid var(--border)" : "none" }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: "var(--text-sm)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)" }}>{d.doc_title}</div>
                       <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)", marginTop: 2 }}>
-                        {DOC_TYPE_LABEL[d.doc_type] || d.doc_type} · {d.n_chunks} đoạn
+                        {docTypeLabel(d.doc_type, t) || d.doc_type} · {d.n_chunks} {t("common.chunks")}
                       </div>
                     </div>
                     <span style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                      {d.ingested_at ? new Date(d.ingested_at).toLocaleString("vi-VN") : "—"}
+                      {formatVnDateTime(d.ingested_at)}
                     </span>
                   </div>
                 ))}
               </div>
             </Panel>
 
-            <Panel span={12} title="Hỏi thử nhanh">
+            <Panel span={12} title={t("overview.quickAsk")}>
               <AskPanel />
             </Panel>
           </div>

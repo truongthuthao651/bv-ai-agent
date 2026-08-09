@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./tokens/styles.css";
+import { LocaleProvider } from "./i18n/LocaleContext.jsx";
 import { AdminShell } from "./admin/AdminShell.jsx";
 
 const params = new URLSearchParams(window.location.search);
@@ -23,7 +24,11 @@ async function render() {
         <Showcase />
       );
   } else {
-    root = <AdminShell />;
+    root = (
+      <LocaleProvider>
+        <AdminShell />
+      </LocaleProvider>
+    );
   }
   createRoot(document.getElementById("root")).render(<StrictMode>{root}</StrictMode>);
 }

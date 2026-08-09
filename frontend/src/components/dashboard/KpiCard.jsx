@@ -1,10 +1,13 @@
 import React from "react";
+import { Icon } from "../icons/Icon.jsx";
+import { useLocale } from "../../i18n/LocaleContext.jsx";
 
 /**
  * A metric tile. `betterWhen` decides whether the delta reads as good or bad —
  * a falling response time is an improvement, a falling feedback rate is not.
  */
 export function KpiCard({ label, value, unit, delta, betterWhen = "up", trend = [], hint }) {
+  const { t } = useLocale();
   const [hover, setHover] = React.useState(false);
   const rising = delta != null && delta >= 0;
   const good = betterWhen === "flat" ? null : rising === (betterWhen === "up");
@@ -28,8 +31,10 @@ export function KpiCard({ label, value, unit, delta, betterWhen = "up", trend = 
       </div>
       {delta != null && (
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--text-2xs)" }}>
-          <span style={{ fontWeight: "var(--weight-bold)", color: deltaColor, fontVariantNumeric: "tabular-nums" }}>{rising ? "↑" : "↓"} {Math.abs(delta)}%</span>
-          <span style={{ color: "var(--text-muted)" }}>vs. last week</span>
+          <span style={{ fontWeight: "var(--weight-bold)", color: deltaColor, fontVariantNumeric: "tabular-nums", display: "inline-flex", alignItems: "center", gap: 2 }}>
+            <Icon name={rising ? "trend-up" : "trend-down"} size={12} color={deltaColor} /> {Math.abs(delta)}%
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>{t("common.vsLastWeek")}</span>
         </div>
       )}
     </div>

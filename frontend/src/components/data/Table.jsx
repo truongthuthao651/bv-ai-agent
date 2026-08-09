@@ -1,7 +1,7 @@
 import React from "react";
 
 /** Rows highlight on hover; header and cells sit on --pad-cell-y/x. */
-export function Table({ columns, rows, renderRow, emptyLabel = "Không có dữ liệu." }) {
+export function Table({ columns, rows, renderRow, emptyLabel = "Không có dữ liệu.", rowKey }) {
   const [hover, setHover] = React.useState(null);
   const cell = { padding: "var(--pad-cell-y) var(--pad-cell-x)", borderBottom: "1px solid var(--border)" };
   return (
@@ -15,7 +15,7 @@ export function Table({ columns, rows, renderRow, emptyLabel = "Không có dữ 
         {rows.length === 0
           ? <tr><td colSpan={columns.length} style={{ color: "var(--text-muted)", textAlign: "center", padding: "var(--space-6) 0" }}>{emptyLabel}</td></tr>
           : rows.map((row, i) => (
-            <tr key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            <tr key={rowKey ? rowKey(row, i) : i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
               style={{ background: hover === i ? "var(--hover)" : "transparent", transition: "background 120ms" }}>
               {renderRow(row, i).map((c, j) => <td key={j} style={cell}>{c}</td>)}
             </tr>

@@ -34,6 +34,7 @@ export function Button({ children, variant = "primary", size = "md", disabled = 
   return (
     <button
       type={type} disabled={disabled} onClick={onClick}
+      className="bv-focus-ring"
       onMouseEnter={() => setHover(true)} onMouseLeave={() => { setHover(false); setPress(false); }}
       onMouseDown={() => setPress(true)} onMouseUp={() => setPress(false)}
       {...rest}

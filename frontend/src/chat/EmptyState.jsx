@@ -1,52 +1,64 @@
 import { useEffect, useState } from "react";
-import { Triangle } from "../brand/Triangle.jsx";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { fetchPromptSuggestions } from "./api.js";
 
-/** Chat empty state: flat grid of prompt suggestions from GET /prompt-suggestions
- * (backed by scripts/prompt_suggestions.json). Greeting uses the signed-in user. */
+function SuggestionButton({ suggestion, onPick }) {
+  const [hover, setHover] = useState(false);
+  const title = suggestion.title?.[1] || suggestion.content;
+  return (
+    <button
+      onClick={() => onPick(suggestion.content)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className="bv-focus-ring"
+      style={{
+        textAlign: "left",
+        border: "1px solid " + (hover ? "var(--border-strong)" : "var(--border)"),
+        background: hover ? "var(--hover)" : "var(--surface)",
+        borderRadius: "var(--radius-lg)",
+        padding: "var(--space-3) var(--space-4)",
+        cursor: "pointer",
+        fontFamily: "var(--font-sans)",
+        boxShadow: hover ? "var(--shadow-md)" : "var(--shadow-sm)",
+        transition: "background 150ms, border-color 150ms, box-shadow 150ms",
+      }}
+    >
+      {suggestion.title?.[0] && (
+        <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)", marginBottom: "var(--space-1)" }}>
+          {suggestion.title[0]}
+        </div>
+      )}
+      <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-medium)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)" }}>{title}</div>
+    </button>
+  );
+}
+
+/** Chat empty state: flat grid of prompt suggestions from GET /prompt-suggestions. */
 export function EmptyState({ me, displayName, onPick }) {
+  const { locale, t } = useLocale();
   const [suggestions, setSuggestions] = useState([]);
 
   useEffect(() => {
-    fetchPromptSuggestions()
+    fetchPromptSuggestions(locale)
       .then(setSuggestions)
       .catch(() => setSuggestions([]));
-  }, []);
+  }, [locale]);
+
+  const nameSuffix = displayName
+    ? `, ${displayName}`
+    : me?.email
+      ? `, ${me.email.split("@")[0]}`
+      : "";
 
   return (
     <div style={{ margin: "auto", width: "100%", maxWidth: "var(--content-max)", padding: "var(--space-12) var(--space-8)", boxSizing: "border-box" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
-        <Triangle size={18} />
-        <div style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", lineHeight: "var(--leading-tight)" }}>
-          Xin chào{displayName ? `, ${displayName}` : me?.email ? `, ${me.email.split("@")[0]}` : ""}
-        </div>
+      <div style={{ fontSize: "var(--text-3xl)", fontWeight: "var(--weight-heavy)", letterSpacing: "var(--tracking-tight)", color: "var(--text-primary)", lineHeight: "var(--leading-tight)", marginBottom: "var(--space-8)" }}>
+        {t("chat.greeting")}
+        {nameSuffix}
       </div>
-      <p style={{ margin: "0 0 var(--space-8)", fontSize: "var(--text-md)", color: "var(--text-secondary)", lineHeight: "var(--leading-normal)", maxWidth: 560 }}>
-        Hỏi về bất kỳ quy tắc, sản phẩm hay văn bản nội bộ đã được nạp vào hệ thống. Câu trả lời có trích dẫn nguồn tài liệu và trang.
-      </p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "var(--gap-card)" }}>
         {suggestions.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => onPick(s.content)}
-            style={{
-              textAlign: "left",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              borderRadius: "var(--radius-lg)",
-              padding: "var(--space-3) var(--space-4)",
-              cursor: "pointer",
-              fontFamily: "var(--font-sans)",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
-            {s.title?.[0] && (
-              <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)", marginBottom: "var(--space-1)" }}>
-                {s.title[0]}
-              </div>
-            )}
-            <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-medium)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)" }}>{s.title?.[1] || s.content}</div>
-          </button>
+          <SuggestionButton key={i} suggestion={s} onPick={onPick} />
         ))}
       </div>
     </div>

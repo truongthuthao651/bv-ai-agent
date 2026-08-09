@@ -1,7 +1,9 @@
-import { Button } from "../components/index.js";
+import { IconButton } from "../components/index.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 
 /** Citation detail body — shared by the desktop side panel and mobile modal. */
 export function SourcePanelContent({ citation }) {
+  const { t } = useLocale();
   return (
     <>
       <div style={{ fontSize: "var(--text-md)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", lineHeight: "var(--leading-snug)", letterSpacing: "var(--tracking-tight)" }}>
@@ -27,7 +29,7 @@ export function SourcePanelContent({ citation }) {
           textDecoration: "none",
         }}
       >
-        Mở tài liệu
+        {t("chat.openDocument")}
       </a>
     </>
   );
@@ -36,20 +38,14 @@ export function SourcePanelContent({ citation }) {
 /** Desktop side panel for citation details. On mobile, ChatScreen renders
  * the same content inside a Modal instead — see SourcePanelContent above. */
 export function SourcePanel({ citation, onClose }) {
+  const { t } = useLocale();
   return (
     <aside style={{ width: "var(--panel-width)", flexShrink: 0, borderLeft: "1px solid var(--border)", background: "var(--surface)", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 56, padding: "0 var(--space-5)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)" }}>
-          Nguồn {citation.n}
+          {t("chat.sourceN", { n: citation.n })}
         </div>
-        <Button
-          variant="ghost"
-          onClick={onClose}
-          aria-label="Đóng khung nguồn"
-          style={{ width: 28, height: 28, padding: 0, fontSize: 15, lineHeight: 1, border: "none" }}
-        >
-          ✕
-        </Button>
+        <IconButton icon="close" label={t("chat.closeSource")} onClick={onClose} size={28} iconSize={16} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "var(--space-5)" }}>
         <SourcePanelContent citation={citation} />

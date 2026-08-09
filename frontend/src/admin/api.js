@@ -81,20 +81,22 @@ export async function fetchAdminConfig() {
   return resp.json();
 }
 
-export async function fetchFeedbackLog(hours = 168) {
-  const resp = await fetch(`/admin/logs/feedback?hours=${encodeURIComponent(hours)}`);
+export async function fetchFeedbackLog({ hours = 0, limit = 2000 } = {}) {
+  const qs = new URLSearchParams({ hours: String(hours), limit: String(limit) });
+  const resp = await fetch(`/admin/logs/feedback?${qs}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }
 
-export async function fetchQueryTimingLog(hours = 24) {
-  const resp = await fetch(`/admin/logs/queries?hours=${encodeURIComponent(hours)}`);
+export async function fetchQueryTimingLog({ hours = 0, limit = 2000 } = {}) {
+  const qs = new URLSearchParams({ hours: String(hours), limit: String(limit) });
+  const resp = await fetch(`/admin/logs/queries?${qs}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }
 
-export async function fetchEvalRuns() {
-  const resp = await fetch("/admin/eval-runs");
+export async function fetchEvalRuns(limit = 500) {
+  const resp = await fetch(`/admin/eval-runs?limit=${encodeURIComponent(limit)}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from app import auth
 from app.config.settings import settings
+from app.vn_time import VN_TZ, parse_ts, since_hours_ago
 
 logger = logging.getLogger("bv-ai-agent.admin")
 
@@ -94,16 +95,9 @@ def _read_jsonl(path: Path, since: datetime | None, limit: int) -> list[dict]:
                 if since is not None:
                     ts_raw = rec.get("ts")
                     if ts_raw:
-                        try:
-                            ts = datetime.fromisoformat(
-                                str(ts_raw).replace("Z", "+00:00")
-                            )
-                            if ts.tzinfo is None:
-                                ts = ts.replace(tzinfo=timezone.utc)
-                            if ts < since:
-                                continue
-                        except ValueError:
-                            pass
+                        ts = parse_ts(str(ts_raw))
+                        if ts is not None and ts < since:
+                            continue
                 out.append(rec)
     except OSError as exc:
         logger.warning("Could not read %s: %s", path, exc)
@@ -140,9 +134,7 @@ async def admin_feedback_log(
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> FeedbackLogResponse:
     path = Path(settings.feedback_log_path)
-    since = None
-    if hours and hours > 0:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = since_hours_ago(hours) if hours and hours > 0 else None
     raw = _read_jsonl(path, since, limit)
     records = [
         FeedbackRecord(
@@ -166,9 +158,7 @@ async def admin_query_timing_log(
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> QueryTimingLogResponse:
     path = Path(settings.query_timing_log_path)
-    since = None
-    if hours and hours > 0:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = since_hours_ago(hours) if hours and hours > 0 else None
     raw = _read_jsonl(path, since, limit)
     records = [
         QueryTimingRecord(
@@ -190,7 +180,7 @@ async def admin_query_timing_log(
     response_model=EvalRunsResponse,
 )
 async def admin_eval_runs(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
 ) -> EvalRunsResponse:
     results_dir = Path(__file__).resolve().parents[2] / "eval" / "results"
     if not results_dir.is_dir():
@@ -206,9 +196,7 @@ async def admin_eval_runs(
             continue
         overall = data.get("overall") or {}
         settings_block = data.get("settings") or {}
-        mtime = datetime.fromtimestamp(
-            path.stat().st_mtime, tz=timezone.utc
-        ).isoformat()
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=VN_TZ).isoformat()
         runs.append(
             EvalRunSummary(
                 file=path.name,

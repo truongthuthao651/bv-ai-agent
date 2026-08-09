@@ -1,4 +1,6 @@
 import { Button } from "../buttons/Button.jsx";
+import { Icon } from "../icons/Icon.jsx";
+import { IconButton } from "../icons/IconButton.jsx";
 
 const railBtnStyle = {
   border: "none",
@@ -18,11 +20,7 @@ const railBtnStyle = {
 
 /** Small header/footer control to hide the rail. */
 export function RailCollapseButton({ onClick, label = "Ẩn thanh bên" }) {
-  return (
-    <button type="button" onClick={onClick} title={label} aria-label={label} style={railBtnStyle}>
-      ‹
-    </button>
-  );
+  return <IconButton icon="chevron-left" label={label} onClick={onClick} size={28} iconSize={16} style={railBtnStyle} />;
 }
 
 /** Shown in the main header when the rail is collapsed (desktop). */
@@ -35,7 +33,7 @@ export function RailExpandButton({ onClick, label = "Hiện thanh bên" }) {
       title={label}
       style={{ ...railBtnStyle, width: 32, height: 32, color: "var(--text-primary)" }}
     >
-      ☰
+      <Icon name="menu" size={16} />
     </Button>
   );
 }
@@ -81,13 +79,13 @@ export function ResizableRail({ layout, children, collapseLabel = "Ẩn thanh b�
         <div className="bv-rail-resize-line" />
         <button
           type="button"
-          className="bv-rail-collapse-btn"
+          className="bv-rail-collapse-btn bv-focus-ring"
           onClick={layout.collapse}
           onMouseDown={(e) => e.stopPropagation()}
           title={collapseLabel}
           aria-label={collapseLabel}
         >
-          ‹
+          <Icon name="chevron-left" size={12} />
         </button>
       </div>
       <style>{`
@@ -114,7 +112,6 @@ export function ResizableRail({ layout, children, collapseLabel = "Ẩn thanh b�
           background: var(--surface);
           color: var(--text-muted);
           cursor: pointer;
-          font-size: 11px;
           display: flex;
           align-items: center;
           justify-content: center;

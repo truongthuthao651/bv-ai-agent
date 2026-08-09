@@ -48,8 +48,10 @@ import statistics
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -584,7 +586,7 @@ def main() -> None:
         _print_summary(category, summarize([r for r in rows if r.category == category]))
     gate_failed = _print_gate(rows)
 
-    out_path = args.out or _RESULTS_DIR / f"run-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    out_path = args.out or _RESULTS_DIR / f"run-{datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).strftime('%Y%m%d-%H%M%S')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     report = {
         "settings": {

@@ -13,17 +13,23 @@ import katex from "katex";
  * Covers: paragraphs, "- "/"1. " lists, **bold**, [text](url) links, and
  * $...$ / $$...$$ math. Nothing else our own backend produces needs more. */
 
-const SOURCES_HEADING = "**Nguồn tham khảo:**";
+const SOURCES_HEADINGS = ["**Nguồn tham khảo:**", "**References:**"];
 
 /** Splits a finished answer into its prose body and parsed citation entries
- * from the "Nguồn tham khảo" block (app/generation/prompts.py format_sources) —
- * real document title + section + link; no confidence/passage, which the API
- * doesn't expose separately (see the Phase 4 gap list). */
+ * from the sources block (app/generation/prompts.py format_sources). */
 export function splitSources(text) {
-  const idx = text.indexOf(SOURCES_HEADING);
+  let idx = -1;
+  let headingLen = 0;
+  for (const heading of SOURCES_HEADINGS) {
+    const at = text.indexOf(heading);
+    if (at !== -1 && (idx === -1 || at < idx)) {
+      idx = at;
+      headingLen = heading.length;
+    }
+  }
   if (idx === -1) return { body: text, citations: [] };
   const body = text.slice(0, idx).trimEnd();
-  const sourcesText = text.slice(idx + SOURCES_HEADING.length);
+  const sourcesText = text.slice(idx + headingLen);
   const citations = [];
   const lineRe = /^-\s*\[(\d+)\]\s*\[(.+?)\]\((.+?)\)\s*(?:—\s*(.*))?$/;
   for (const line of sourcesText.split("\n")) {

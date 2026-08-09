@@ -97,22 +97,32 @@ def test_read_records_missing_file_returns_empty(tmp_path, monkeypatch) -> None:
 
 
 def test_read_records_time_window_filters_old_entries(tmp_path, monkeypatch) -> None:
-    from datetime import datetime, timedelta, timezone
-
     from app.config.settings import settings
+    from app.vn_time import now_vn_iso, since_hours_ago
 
     path = tmp_path / "query_timings.jsonl"
     old = _rec("grounded", 1000, 1, ts="2020-01-01T00:00:00+00:00")
-    recent = _rec("grounded", 2000, 2, ts=datetime.now(timezone.utc).isoformat())
+    recent = _rec("grounded", 2000, 2, ts=now_vn_iso())
     path.write_text(
         json.dumps(old) + "\n" + json.dumps(recent) + "\n", encoding="utf-8"
     )
     monkeypatch.setattr(settings, "query_timing_log_path", path)
 
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
-    records = _read_records(since=since)
+    records = _read_records(since=since_hours_ago(1))
     assert len(records) == 1
     assert records[0]["n_hits"] == 2
+
+
+def test_daily_volume_and_heatmap_use_vn_timezone() -> None:
+    from app.api.metrics import _daily_volume, _heatmap
+
+    # 2026-08-09 17:00 UTC = 2026-08-10 00:00 in Vietnam
+    records = [_rec("grounded", 1000, 1, ts="2026-08-09T17:00:00+00:00")]
+    daily = _daily_volume(records)
+    assert daily[0].date == "2026-08-10"
+    heat = _heatmap(records)
+    cell = next(c for c in heat if c.count == 1)
+    assert cell.hour == 0
 
 
 def test_metrics_summary_endpoint_live(tmp_path, monkeypatch) -> None:

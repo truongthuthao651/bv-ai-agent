@@ -1,11 +1,13 @@
 import { useRef, useState } from "react";
-import { Button, Dropzone, Input, Select } from "../components/index.js";
-import { departmentOptionLabel } from "../admin/departmentLabels.js";
-import { DOC_TYPE_OPTIONS, UPLOAD_ACCEPT, UPLOAD_DEPARTMENTS } from "./documentUploadOptions.js";
+import { Button, Dropzone, Icon, Input, Select } from "../components/index.js";
+import { docTypeOptions, localizedDepartmentOption } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
+import { UPLOAD_ACCEPT, UPLOAD_DEPARTMENTS } from "./documentUploadOptions.js";
 import { uploadDocument } from "./uploadApi.js";
 
 /** Admin document upload form — shared by /admin Documents and /chat modal. */
 export function DocumentUploadForm({ onUploaded, onSuccess }) {
+  const { t } = useLocale();
   const fileInputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -15,23 +17,27 @@ export function DocumentUploadForm({ onUploaded, onSuccess }) {
   const [department, setDepartment] = useState("");
   const [status, setStatus] = useState({ text: "", tone: "" });
   const [busy, setBusy] = useState(false);
+  const typeOptions = docTypeOptions(t);
 
   async function submit() {
     if (!file) {
-      setStatus({ text: "Chọn một tệp trước.", tone: "bad" });
+      setStatus({ text: t("upload.pickFile"), tone: "bad" });
       return;
     }
     setBusy(true);
-    setStatus({ text: `Đang nạp "${file.name}"… (có thể mất một lúc do enrichment công thức)`, tone: "" });
+    setStatus({ text: t("upload.uploadingFile", { name: file.name }), tone: "" });
     try {
       const data = await uploadDocument({ file, docType, department, docTitle, sourceUrl });
-      const summary =
-        `Đã nạp "${data.doc_title}" (${data.doc_type}) — ${data.n_chunks} đoạn` +
-        (data.n_figures ? `, ${data.n_figures} hình` : "") +
-        ".";
+      const figures = data.n_figures ? t("upload.withFigures", { n: data.n_figures }) : "";
+      const summary = t("upload.uploaded", {
+        title: data.doc_title,
+        type: data.doc_type,
+        chunks: data.n_chunks,
+        figures,
+      });
       setStatus(
         data.title_warning
-          ? { text: summary + "\n⚠️ " + data.title_warning, tone: "warn" }
+          ? { text: summary, tone: "warn", warning: data.title_warning }
           : { text: summary, tone: "ok" },
       );
       setFile(null);
@@ -41,7 +47,7 @@ export function DocumentUploadForm({ onUploaded, onSuccess }) {
       onUploaded?.();
       onSuccess?.(data);
     } catch (err) {
-      setStatus({ text: "Lỗi: " + err.message, tone: "bad" });
+      setStatus({ text: `${t("common.error")}: ${err.message}`, tone: "bad" });
     } finally {
       setBusy(false);
     }
@@ -52,8 +58,8 @@ export function DocumentUploadForm({ onUploaded, onSuccess }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
       <Dropzone
-        label={file ? file.name : "Kéo thả tệp vào đây, hoặc bấm để chọn"}
-        hint=".md · .docx · .xlsx · .pdf · .yaml · .yml"
+        label={file ? file.name : t("upload.dropzone")}
+        hint={t("upload.dropzoneHint")}
         dragging={dragging}
         onClick={() => fileInputRef.current?.click()}
         onDragEnter={(e) => {
@@ -81,40 +87,40 @@ export function DocumentUploadForm({ onUploaded, onSuccess }) {
         style={{ display: "none" }}
         onChange={(e) => setFile(e.target.files[0] || null)}
       />
-      <Input
-        value={docTitle}
-        onChange={(e) => setDocTitle(e.target.value)}
-        placeholder="Tên tài liệu (tuỳ chọn — nên ghi kèm tên sản phẩm)"
-      />
-      <Input
-        value={sourceUrl}
-        onChange={(e) => setSourceUrl(e.target.value)}
-        placeholder="Nguồn URL công khai (tuỳ chọn — chỉ cho tài liệu công khai)"
-      />
+      <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder={t("upload.docTitlePlaceholder")} />
+      <Input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder={t("upload.sourceUrlPlaceholder")} />
       <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
         <Select value={docType} onChange={(e) => setDocType(e.target.value)} style={{ flex: 1, minWidth: 220 }}>
-          {DOC_TYPE_OPTIONS.map((o) => (
+          {typeOptions.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
         </Select>
         <Select value={department} onChange={(e) => setDepartment(e.target.value)} style={{ minWidth: 180 }}>
-          <option value="">Phòng ban: (không đặt)</option>
+          <option value="">{t("upload.deptUnset")}</option>
           {UPLOAD_DEPARTMENTS.map((d) => (
             <option key={d} value={d}>
-              {departmentOptionLabel(d)}
+              {localizedDepartmentOption(d, t)}
             </option>
           ))}
         </Select>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Button onClick={submit} disabled={busy}>
-          {busy ? "Đang nạp…" : "Nạp tài liệu"}
+          {busy ? t("upload.uploading") : t("upload.uploadButton")}
         </Button>
       </div>
       {status.text && (
-        <div style={{ fontSize: "var(--text-xs)", color: toneColor, whiteSpace: "pre-wrap" }}>{status.text}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+          <div style={{ fontSize: "var(--text-xs)", color: toneColor }}>{status.text}</div>
+          {status.warning && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", fontSize: "var(--text-xs)", color: "var(--warning)" }}>
+              <Icon name="alert-triangle" size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+              <span>{status.warning}</span>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

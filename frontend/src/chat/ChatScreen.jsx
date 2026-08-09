@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import "katex/dist/katex.min.css";
 import { useTheme } from "../theme/useTheme.js";
-import { Button, Modal, RailExpandButton, ResizableRail, ThemeToggle, useRailLayout } from "../components/index.js";
+import { IconButton, Modal, RailExpandButton, ResizableRail, AppHeader, useRailLayout } from "../components/index.js";
+import { localizedConversationLabel } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { ProfileView } from "../user/ProfileView.jsx";
 import { useProfilePrefs } from "../user/useProfilePrefs.js";
 import { Sidebar } from "./Sidebar.jsx";
@@ -51,6 +53,7 @@ function isConversationStreaming(conv) {
 }
 
 export function ChatScreen() {
+  const { t } = useLocale();
   const { theme, preference, setTheme, toggleTheme } = useTheme();
   const [me, setMe] = useState(null);
   const [prefs, setPrefs, hydrateFromServer] = useProfilePrefs(me?.email);
@@ -94,9 +97,9 @@ export function ChatScreen() {
   }, [conversations, activeId, loaded]);
 
   useEffect(() => {
-    const base = "Trợ lý AI Bảo Việt Life";
+    const base = t("productName");
     document.title = anyStreaming ? `● ${base}` : base;
-  }, [anyStreaming]);
+  }, [anyStreaming, t]);
 
   useEffect(() => {
     const onHash = () => setView(viewFromHash());
@@ -220,7 +223,7 @@ export function ChatScreen() {
       ...prev,
       activeId: id,
       conversations: pruneEmptyConversations(
-        [{ id, title: "Cuộc trò chuyện mới", messages: [], updatedAt: Date.now() }, ...prev.conversations],
+        [{ id, title: t("chat.newChat"), messages: [], updatedAt: Date.now() }, ...prev.conversations],
         id,
       ),
     }));
@@ -268,7 +271,7 @@ export function ChatScreen() {
         return {
           ...prev,
           activeId: newId,
-          conversations: [{ id: newId, title: "Cuộc trò chuyện mới", messages: [], updatedAt: Date.now() }],
+          conversations: [{ id: newId, title: t("chat.newChat"), messages: [], updatedAt: Date.now() }],
         };
       }
       const nextActive = id === prev.activeId ? remaining[0].id : prev.activeId;
@@ -307,11 +310,11 @@ export function ChatScreen() {
 
   const headerTitle =
     view === "profile"
-      ? "Hồ sơ cá nhân"
+      ? t("nav.profile")
       : messages.length === 0
-        ? "Cuộc trò chuyện mới"
+        ? t("productName")
         : activeConversation
-          ? conversationLabel(activeConversation)
+          ? localizedConversationLabel(activeConversation, t, deriveTitle)
           : messages[0]?.text;
 
   const conversationCount = conversations.filter((c) => c.messages.length > 0).length;
@@ -319,7 +322,7 @@ export function ChatScreen() {
   return (
     <div data-theme={theme} style={{ height: "100vh", display: "flex", fontFamily: "var(--font-sans)", background: "var(--bg)", overflow: "hidden" }}>
       {!mobile && (
-        <ResizableRail layout={railLayout} collapseLabel="Ẩn danh sách trò chuyện">
+        <ResizableRail layout={railLayout} collapseLabel={t("nav.hideChatRail")}>
           <Sidebar {...sidebarProps} onCollapse={railLayout.collapse} />
         </ResizableRail>
       )}
@@ -344,26 +347,25 @@ export function ChatScreen() {
       )}
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, height: "100%" }}>
-        <header style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", height: 56, flexShrink: 0, padding: mobile ? "0 var(--space-4)" : "0 var(--space-5) 0 var(--space-8)", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
-          {mobile ? (
-            <Button
-              variant="ghost"
-              onClick={() => setRailOpen(true)}
-              aria-label="Mở menu"
-              style={{ border: "none", fontSize: 17, color: "var(--text-primary)", padding: 0, width: 32, height: 32 }}
-            >
-              ☰
-            </Button>
-          ) : (
-            railLayout.collapsed && <RailExpandButton onClick={railLayout.expand} label="Hiện danh sách trò chuyện" />
-          )}
-          <div style={{ minWidth: 0, flex: 1, fontSize: "var(--text-sm)", fontWeight: "var(--weight-semibold)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {headerTitle}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-            <ThemeToggle theme={theme} onChange={toggleTheme} iconOnly />
-          </div>
-        </header>
+        <AppHeader
+          title={headerTitle}
+          theme={theme}
+          onTheme={toggleTheme}
+          menu={
+            mobile ? (
+              <IconButton
+                icon="menu"
+                label={t("nav.openMenu")}
+                onClick={() => setRailOpen(true)}
+                size={32}
+                iconSize={18}
+                color="var(--text-primary)"
+                style={{ background: "transparent" }}
+              />
+            ) : null
+          }
+          expand={!mobile && railLayout.collapsed ? <RailExpandButton onClick={railLayout.expand} label={t("nav.showChatRail")} /> : null}
+        />
 
         <DocumentUploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} />
 
@@ -378,18 +380,25 @@ export function ChatScreen() {
             onChangePassword={changePassword}
             onLogout={logout}
             onBack={closeProfile}
-            backLabel="Quay lại trò chuyện"
+            backLabel={t("nav.backChat")}
             conversationCount={conversationCount}
             onClearConversations={clearAllConversations}
             conversations={conversations.filter((c) => c.messages.length > 0)}
             activeConversation={activeConversation?.messages?.length ? activeConversation : null}
             onExportAll={() => exportAllConversationsJson(conversations.filter((c) => c.messages.length > 0))}
-            onExportActiveMarkdown={() => activeConversation && exportConversationMarkdown(activeConversation)}
+            onExportActiveMarkdown={() =>
+              activeConversation &&
+              exportConversationMarkdown(activeConversation, {
+                fallbackTitle: t("chat.exportFallbackTitle"),
+                user: t("chat.exportUser"),
+                assistant: t("chat.exportAssistant"),
+              })
+            }
             onExportActiveJson={() => activeConversation && exportConversationJson(activeConversation)}
           />
         ) : !loaded ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
-            Đang tải cuộc trò chuyện…
+            {t("chat.loadingConversations")}
           </div>
         ) : (
           <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
@@ -423,7 +432,7 @@ export function ChatScreen() {
                         feedbackSent={!!feedbackSent[i]}
                       />
                     ))}
-                    {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>Lỗi: {error}</p>}
+                    {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>{t("common.error")}: {error}</p>}
                   </div>
                 )}
               </div>
@@ -443,7 +452,7 @@ export function ChatScreen() {
       </main>
 
       {citation && mobile && (
-        <Modal open title={`Nguồn ${citation.n}`} onClose={() => setCitation(null)}>
+        <Modal open title={t("chat.sourceN", { n: citation.n })} onClose={() => setCitation(null)}>
           <SourcePanelContent citation={citation} />
         </Modal>
       )}

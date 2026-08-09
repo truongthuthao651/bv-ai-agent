@@ -1,15 +1,16 @@
 import { useState } from "react";
-import { Triangle } from "../brand/Triangle.jsx";
-import { Button } from "../components/index.js";
+import { BrandGlobe } from "../brand/BrandGlobe.jsx";
+import { Button, Icon } from "../components/index.js";
+import { isRefusalAnswer } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { renderMarkdown, splitSources, citedSourcesOnly } from "./markdown.jsx";
 
-const REFUSAL_TEXT = "Tôi không tìm thấy thông tin trong tài liệu.";
-
 function CitationRow({ citations, active, onOpen }) {
+  const { t } = useLocale();
   return (
     <div style={{ marginTop: "var(--space-4)" }}>
       <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)", marginBottom: "var(--space-2)" }}>
-        Nguồn · {citations.length}
+        {t("chat.sources")} · {citations.length}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
         {citations.map((c) => {
@@ -63,6 +64,7 @@ function CitationRow({ citations, active, onOpen }) {
 }
 
 function MessageActions({ text, onRegenerate, onFeedback, feedbackSent }) {
+  const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   const btnStyle = { height: 28, padding: "0 var(--space-2)", color: "var(--text-muted)", fontSize: "var(--text-2xs)", border: "none" };
   return (
@@ -76,26 +78,29 @@ function MessageActions({ text, onRegenerate, onFeedback, feedbackSent }) {
           setTimeout(() => setCopied(false), 1500);
         }}
       >
-        {copied ? "Đã chép" : "Chép"}
+        {copied ? t("chat.copied") : t("chat.copy")}
       </Button>
       {onRegenerate && (
         <Button variant="ghost" style={btnStyle} onClick={onRegenerate}>
-          Tạo lại
+          {t("chat.regenerate")}
         </Button>
       )}
       {onFeedback && (
-        // P2-F2 (audit/REPORT.md): the only quality signal this app has in
-        // production beyond eval/'s golden set — flags this answer without
-        // sending its text anywhere (see chat/api.js's sendFeedback).
         <Button
           variant="ghost"
           style={btnStyle}
           onClick={onFeedback}
           disabled={feedbackSent}
-          title="Báo câu trả lời này chưa đúng"
-          aria-label="Báo câu trả lời này chưa đúng"
+          title={t("chat.feedbackTitle")}
+          aria-label={t("chat.feedbackTitle")}
         >
-          {feedbackSent ? "Đã báo" : "👎 Chưa đúng"}
+          {feedbackSent ? (
+            t("chat.feedbackDone")
+          ) : (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <Icon name="thumbs-down" size={14} /> {t("chat.feedbackBad")}
+            </span>
+          )}
         </Button>
       )}
     </div>
@@ -103,22 +108,19 @@ function MessageActions({ text, onRegenerate, onFeedback, feedbackSent }) {
 }
 
 function NoAnswer() {
+  const { t } = useLocale();
   return (
     <p style={{ margin: 0, fontSize: "var(--text-md)", lineHeight: "var(--leading-normal)", color: "var(--text-primary)" }}>
-      Tôi không tìm thấy thông tin này trong các tài liệu bạn có quyền truy cập. Hãy thử nêu rõ tên sản phẩm, hoặc diễn đạt lại câu hỏi.
+      {t("chat.noAnswer")}
     </p>
   );
 }
 
-/** Shown in the empty assistant bubble between send and the first streamed
- * token — retrieval + rerank alone routinely takes 8-50s (audit/04-chatbot.md
- * §4.2), during which the bubble previously showed nothing at all beyond the
- * composer's send button greying out. Text label first (works even if
- * animation is off); the dots are a secondary, reduced-motion-aware cue. */
 function ThinkingIndicator() {
+  const { t } = useLocale();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", color: "var(--text-secondary)", fontSize: "var(--text-md)" }}>
-      <span>Đang tìm trong tài liệu…</span>
+      <span>{t("chat.thinking")}</span>
       <span style={{ display: "inline-flex", gap: 3 }}>
         <span className="bv-thinking-dot" style={{ animationDelay: "0ms" }} />
         <span className="bv-thinking-dot" style={{ animationDelay: "160ms" }} />
@@ -146,6 +148,8 @@ function ThinkingIndicator() {
 }
 
 export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerate, onFeedback, feedbackSent }) {
+  const { locale } = useLocale();
+
   if (role === "user") {
     return (
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -165,21 +169,13 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
     );
   }
 
-  // Every finished answer gets a "\n\n_⏱ Thời gian trả lời: Ns_" footer
-  // appended server-side (app/query_timing.py's response_time_footer),
-  // refusals included — so an exact match against REFUSAL_TEXT alone was
-  // never true in production and NoAnswer() below was dead code. Strip the
-  // footer before comparing.
-  const isRefusal =
-    !streaming && text.replace(/\n\n_⏱[^_]*_\s*$/, "").trim() === REFUSAL_TEXT;
+  const isRefusal = !streaming && isRefusalAnswer(text, locale);
   const { body, citations: allCitations } = streaming ? { body: text, citations: [] } : splitSources(text);
   const citations = citedSourcesOnly(body, allCitations);
 
   return (
     <div style={{ display: "flex", gap: "var(--space-4)" }}>
-      <div style={{ width: 28, height: 28, flexShrink: 0, borderRadius: "var(--radius-md)", background: "var(--brand-ink)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Triangle size={11} />
-      </div>
+      <BrandGlobe size={28} />
       <div style={{ minWidth: 0, flex: 1 }}>
         {isRefusal ? (
           <NoAnswer />

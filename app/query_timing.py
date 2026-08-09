@@ -26,11 +26,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 from app.config.settings import settings
 from app.generation.prompts import REFUSAL_MESSAGE
 from app.models.schemas import Hit
+from app.vn_time import now_vn_iso
 
 logger = logging.getLogger("bv-ai-agent.query_timing")
 
@@ -114,7 +114,7 @@ def log_query_timing(
     if answer_text is not None and _answer_is_refusal(answer_text):
         mode = "refusal"
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_vn_iso(),
         "mode": mode,
         "stream": ctx.stream,
         "elapsed_ms": round(ctx.elapsed_s() * 1000),
@@ -157,7 +157,7 @@ def log_feedback(completion_id: str, reason: str | None) -> None:
     if not settings.feedback_log_enabled:
         return
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_vn_iso(),
         "completion_id": completion_id,
         "reason": reason,
     }

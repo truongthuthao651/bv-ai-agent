@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../components/index.js";
+import { Button, Icon } from "../components/index.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 
 /** Ported from ui_kits/chatbot/ChatParts.jsx's Composer. Employee-facing
  * attachment chips are dropped (ingest is admin-only); admins get an optional
@@ -7,13 +8,10 @@ import { Button } from "../components/index.js";
  * are also dropped — only one model (settings.chat_model). The trust line is
  * real, not decorative. */
 
-// CHAT-3 (audit/REPORT.md): the textarea was a fixed 2 rows with no autogrow
-// — a long multi-line question scrolled inside a cramped box instead of the
-// box growing with it. Capped so a very long paste still scrolls internally
-// rather than pushing the send button off-screen.
 const MAX_TEXTAREA_HEIGHT = 200;
 
 export function Composer({ value, onChange, onSend, onStop, onUpload, disabled, mobile }) {
+  const { t } = useLocale();
   const [focus, setFocus] = useState(false);
   const textareaRef = useRef(null);
 
@@ -55,7 +53,7 @@ export function Composer({ value, onChange, onSend, onStop, onUpload, disabled, 
             rows={2}
             onFocus={() => setFocus(true)}
             onBlur={() => setFocus(false)}
-            placeholder="Hỏi về một quy tắc, quy trình, hoặc công thức…"
+            placeholder={t("chat.composerPlaceholder")}
             style={{
               width: "100%",
               boxSizing: "border-box",
@@ -77,8 +75,8 @@ export function Composer({ value, onChange, onSend, onStop, onUpload, disabled, 
               <Button
                 variant="ghost"
                 onClick={onUpload}
-                title="Nạp tài liệu"
-                aria-label="Nạp tài liệu"
+                title={t("chat.uploadDocument")}
+                aria-label={t("chat.uploadDocument")}
                 style={{
                   width: 36,
                   height: 36,
@@ -90,41 +88,36 @@ export function Composer({ value, onChange, onSend, onStop, onUpload, disabled, 
                   color: "var(--text-secondary)",
                 }}
               >
-                +
+                <Icon name="plus" size={18} />
               </Button>
             )}
             {disabled && onStop ? (
-              // A generation is in flight — offer to cancel it instead of a
-              // disabled, dead send button (CHAT-1, audit/REPORT.md): the
-              // model's own answers routinely take 8-50s (audit/04-chatbot.md
-              // §4.2), and until now there was no way to back out of a wrong
-              // or regretted question short of closing the tab.
               <Button
                 variant="danger"
                 onClick={onStop}
-                title="Dừng"
-                aria-label="Dừng tạo câu trả lời"
+                title={t("chat.stop")}
+                aria-label={t("chat.stopAria")}
                 style={{ marginLeft: "auto", width: 36, height: 36, padding: 0, border: "none" }}
               >
-                <span style={{ width: 10, height: 10, borderRadius: 2, background: "currentColor" }} />
+                <Icon name="square" size={12} />
               </Button>
             ) : (
               <Button
                 variant="primary"
                 onClick={submit}
                 disabled={!value.trim() || disabled}
-                title="Gửi"
-                aria-label="Gửi câu hỏi"
+                title={t("chat.send")}
+                aria-label={t("chat.sendAria")}
                 style={{ marginLeft: "auto", width: 36, height: 36, padding: 0, border: "none", fontSize: 15 }}
               >
-                ↑
+                <Icon name="arrow-up" size={16} />
               </Button>
             )}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "var(--space-2)", marginTop: "var(--space-3)", fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--success)" }} />
-          Dữ liệu của bạn nằm trong mạng nội bộ
+          {t("chat.trustLine")}
         </div>
       </div>
     </div>

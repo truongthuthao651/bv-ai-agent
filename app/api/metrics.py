@@ -14,7 +14,7 @@ import json
 import logging
 import math
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from app import auth
 from app.config.settings import settings
 from app.models.schemas import DocumentInfo
+from app.vn_time import parse_ts, since_hours_ago, to_vn
 
 logger = logging.getLogger("bv-ai-agent.metrics")
 
@@ -69,7 +70,7 @@ class DepartmentCount(BaseModel):
 
 
 class DailyCount(BaseModel):
-    date: str  # YYYY-MM-DD (UTC)
+    date: str  # YYYY-MM-DD (Asia/Ho_Chi_Minh)
     count: int
 
 
@@ -126,21 +127,15 @@ def _read_records(since: datetime | None) -> list[dict]:
             except json.JSONDecodeError:
                 continue
             if since is not None:
-                try:
-                    ts = datetime.fromisoformat(record.get("ts", ""))
-                except ValueError:
-                    continue
-                if ts < since:
+                ts = parse_ts(record.get("ts", ""))
+                if ts is None or ts < since:
                     continue
             records.append(record)
     return records
 
 
 def _record_timestamp(record: dict) -> datetime | None:
-    try:
-        return datetime.fromisoformat(record.get("ts", ""))
-    except ValueError:
-        return None
+    return parse_ts(record.get("ts", ""))
 
 
 def _daily_volume(records: list[dict]) -> list[DailyCount]:
@@ -148,7 +143,7 @@ def _daily_volume(records: list[dict]) -> list[DailyCount]:
     for record in records:
         ts = _record_timestamp(record)
         if ts is not None:
-            counts[ts.date().isoformat()] += 1
+            counts[to_vn(ts).date().isoformat()] += 1
     return [DailyCount(date=d, count=c) for d, c in sorted(counts.items())]
 
 
@@ -157,7 +152,8 @@ def _heatmap(records: list[dict]) -> list[HeatmapCell]:
     for record in records:
         ts = _record_timestamp(record)
         if ts is not None:
-            counts[(ts.weekday(), ts.hour)] += 1
+            vn = to_vn(ts)
+            counts[(vn.weekday(), vn.hour)] += 1
     return [
         HeatmapCell(weekday=weekday, hour=hour, count=counts.get((weekday, hour), 0))
         for weekday in range(7)
@@ -323,7 +319,7 @@ async def metrics_summary(
         description="Time window in hours; 0 means all time.",
     ),
 ) -> MetricsSummary:
-    since = datetime.now(timezone.utc) - timedelta(hours=hours) if hours else None
+    since = since_hours_ago(hours) if hours else None
     records = _read_records(since)
     summary = summarize(records, window_hours=hours or None)
     n_documents, by_department, recent = _document_store_snapshot()

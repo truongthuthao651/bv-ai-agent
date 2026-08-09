@@ -9,9 +9,9 @@ export function generateConversationId() {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function deriveTitle(messages) {
+export function deriveTitle(messages, defaultTitle = "Cuộc trò chuyện mới") {
   const firstUser = messages.find((m) => m.role === "user" && m.text?.trim());
-  if (!firstUser) return "Cuộc trò chuyện mới";
+  if (!firstUser) return defaultTitle;
   const text = firstUser.text.trim();
   return text.length > 48 ? `${text.slice(0, 48)}…` : text;
 }

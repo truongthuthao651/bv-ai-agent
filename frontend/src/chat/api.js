@@ -15,8 +15,9 @@ export async function logout() {
   await fetch("/logout", { method: "POST" }).catch(() => {});
 }
 
-export async function fetchPromptSuggestions() {
-  const resp = await fetch("/prompt-suggestions");
+export async function fetchPromptSuggestions(locale = "vi") {
+  const lang = locale === "en" ? "en" : "vi";
+  const resp = await fetch(`/prompt-suggestions?lang=${encodeURIComponent(lang)}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }

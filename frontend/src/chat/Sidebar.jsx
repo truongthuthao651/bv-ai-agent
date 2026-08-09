@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Input, RailCollapseButton } from "../components/index.js";
+import { Icon, IconButton, Input, RailCollapseButton, SidebarBrand } from "../components/index.js";
+import { localizedGroupConversationsByDate, localizedConversationLabel, localizedRoleLabel } from "../i18n/catalog.js";
+import { useLocale } from "../i18n/LocaleContext.jsx";
 import { UserAvatar } from "../components/user/UserAvatar.jsx";
-import { roleLabel } from "../user/profilePrefs.js";
 import { logout } from "./api.js";
-import { conversationLabel, filterConversations, groupConversationsByDate } from "./conversations.js";
+import { deriveTitle } from "./conversations.js";
 
-function ConversationItem({ conv, active, streaming, onSelect, onRename, onDelete }) {
+function ConversationItem({ conv, label, active, streaming, onSelect, onRename, onDelete }) {
+  const { t } = useLocale();
   const [hover, setHover] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(conversationLabel(conv));
+  const [draft, setDraft] = useState(label);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const label = conversationLabel(conv);
 
   function commitRename() {
     const next = draft.trim();
@@ -70,8 +71,8 @@ function ConversationItem({ conv, active, streaming, onSelect, onRename, onDelet
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{label}</span>
         {streaming && (
           <span
-            title="Đang trả lời…"
-            aria-label="Đang trả lời"
+            title={t("chat.streaming")}
+            aria-label={t("chat.streaming")}
             style={{
               flexShrink: 0,
               width: 6,
@@ -87,54 +88,17 @@ function ConversationItem({ conv, active, streaming, onSelect, onRename, onDelet
         <div style={{ display: "flex", gap: 2, flexShrink: 0, paddingRight: "var(--space-1)" }}>
           {!confirmDelete ? (
             <>
-              <button
-                type="button"
-                title="Đổi tên"
-                aria-label="Đổi tên cuộc trò chuyện"
-                onClick={() => {
-                  setDraft(label);
-                  setEditing(true);
-                }}
-                style={iconBtnStyle}
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                title="Xóa"
-                aria-label="Xóa cuộc trò chuyện"
-                onClick={() => setConfirmDelete(true)}
-                style={iconBtnStyle}
-              >
-                ✕
-              </button>
+              <IconButton icon="edit" label={t("chat.rename")} size={24} iconSize={14} onClick={() => { setDraft(label); setEditing(true); }} />
+              <IconButton icon="trash" label={t("chat.delete")} size={24} iconSize={14} onClick={() => setConfirmDelete(true)} />
             </>
           ) : (
-            <button
-              type="button"
-              title="Xác nhận xóa"
-              aria-label="Xác nhận xóa cuộc trò chuyện"
-              onClick={() => onDelete(conv.id)}
-              style={{ ...iconBtnStyle, color: "var(--danger)" }}
-            >
-              🗑
-            </button>
+            <IconButton icon="trash" label={t("chat.confirmDelete")} size={24} iconSize={14} danger onClick={() => onDelete(conv.id)} />
           )}
         </div>
       )}
     </div>
   );
 }
-
-const iconBtnStyle = {
-  border: "none",
-  background: "transparent",
-  color: "var(--text-muted)",
-  cursor: "pointer",
-  fontSize: 12,
-  padding: "2px 4px",
-  lineHeight: 1,
-};
 
 function ConversationGroup({ title, children }) {
   return (
@@ -170,9 +134,16 @@ export function Sidebar({
   onOpenProfile,
   onCollapse,
 }) {
+  const { t } = useLocale();
   const [search, setSearch] = useState("");
   const searchRef = useRef(null);
-  const filtered = useMemo(() => filterConversations(conversations, search), [conversations, search]);
+  const labelFor = (conv) => localizedConversationLabel(conv, t, deriveTitle);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return conversations;
+    return conversations.filter((c) => labelFor(c).toLowerCase().includes(q));
+  }, [conversations, search, t]);
+  const groups = localizedGroupConversationsByDate(filtered, t);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -184,7 +155,6 @@ export function Sidebar({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
-  const groups = groupConversationsByDate(filtered);
 
   return (
     <div
@@ -198,16 +168,10 @@ export function Sidebar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "var(--space-5) var(--space-4) var(--space-4)", gap: "var(--space-2)" }}>
-        <div style={{ fontSize: "var(--text-sm)", fontWeight: "var(--weight-bold)", color: "var(--text-primary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          Trợ lý AI Bảo Việt Life
-        </div>
+        <SidebarBrand title={t("productName")} subtitle={t("chatSubtitle")} />
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", flexShrink: 0 }}>
-          {onCollapse && <RailCollapseButton onClick={onCollapse} label="Ẩn danh sách trò chuyện" />}
-          {onClose && (
-            <button onClick={onClose} aria-label="Đóng menu" style={{ border: "none", background: "transparent", color: "var(--text-muted)", fontSize: 16, cursor: "pointer" }}>
-              ✕
-            </button>
-          )}
+          {onCollapse && <RailCollapseButton onClick={onCollapse} label={t("nav.hideChatRail")} />}
+          {onClose && <IconButton icon="close" label={t("nav.closeMenu")} onClick={onClose} size={28} iconSize={16} />}
         </div>
       </div>
 
@@ -231,13 +195,13 @@ export function Sidebar({
             cursor: "pointer",
           }}
         >
-          <span style={{ fontSize: 15, lineHeight: 1 }}>+</span> Cuộc trò chuyện mới
+          <Icon name="plus" size={14} /> {t("chat.newChat")}
         </button>
         <Input
           ref={searchRef}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Tìm cuộc trò chuyện… (⌘K)"
+          placeholder={t("chat.searchConversations")}
           style={{ width: "100%", fontSize: "var(--text-sm)" }}
         />
       </div>
@@ -255,7 +219,7 @@ export function Sidebar({
       >
         {groups.length === 0 ? (
           <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", padding: "0 var(--space-3)" }}>
-            {search.trim() ? "Không tìm thấy cuộc trò chuyện nào." : "Chưa có cuộc trò chuyện."}
+            {search.trim() ? t("chat.noSearchResults") : t("chat.noConversations")}
           </div>
         ) : (
           groups.map((group) => (
@@ -264,6 +228,7 @@ export function Sidebar({
                 <ConversationItem
                   key={conv.id}
                   conv={conv}
+                  label={labelFor(conv)}
                   active={conv.id === activeId}
                   streaming={conv.messages.some((m) => m.streaming)}
                   onSelect={onSelectConversation}
@@ -289,8 +254,8 @@ export function Sidebar({
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             <button
               onClick={onOpenProfile}
-              title="Hồ sơ cá nhân"
-              aria-label="Hồ sơ cá nhân"
+              title={t("nav.profile")}
+              aria-label={t("nav.profile")}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -319,17 +284,10 @@ export function Sidebar({
                 >
                   {prefs?.displayName || me.email}
                 </div>
-                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{roleLabel(me.role)}</div>
+                <div style={{ fontSize: "var(--text-2xs)", color: "var(--text-muted)" }}>{localizedRoleLabel(me.role, t)}</div>
               </div>
             </button>
-            <button
-              onClick={() => logout().then(() => (window.location.href = "/login"))}
-              title="Đăng xuất"
-              aria-label="Đăng xuất"
-              style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 4, flexShrink: 0 }}
-            >
-              ⏻
-            </button>
+            <IconButton icon="logout" label={t("chat.logout")} size={28} iconSize={16} onClick={() => logout().then(() => (window.location.href = "/login"))} />
           </div>
         )}
         {me?.role === "admin" && (
@@ -339,7 +297,7 @@ export function Sidebar({
             rel="noopener noreferrer"
             style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-semibold)", color: "var(--accent)", textDecoration: "none" }}
           >
-            Mở trang quản trị ↗
+            {t("nav.openAdmin")} <Icon name="external-link" size={12} style={{ display: "inline", verticalAlign: "middle", marginLeft: 4 }} />
           </a>
         )}
       </div>

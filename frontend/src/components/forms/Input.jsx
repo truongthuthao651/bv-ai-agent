@@ -11,8 +11,28 @@ const field = (size) => ({
 });
 
 export function Input({ value, onChange, placeholder, type = "text", size = "md", disabled, style, ...rest }) {
-  return <input type={type} value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} {...rest}
-    style={{ ...field(size), width: "100%", ...(disabled ? { background: "var(--surface-sunken)", color: "var(--text-muted)", cursor: "not-allowed" } : null), ...style }} />;
+  const [focus, setFocus] = React.useState(false);
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      disabled={disabled}
+      className="bv-focus-ring"
+      onFocus={() => setFocus(true)}
+      onBlur={() => setFocus(false)}
+      {...rest}
+      style={{
+        ...field(size),
+        width: "100%",
+        borderColor: focus && !disabled ? "var(--focus-ring)" : undefined,
+        boxShadow: focus && !disabled ? "0 0 0 3px var(--accent-subtle)" : undefined,
+        ...(disabled ? { background: "var(--surface-sunken)", color: "var(--text-muted)", cursor: "not-allowed" } : null),
+        ...style,
+      }}
+    />
+  );
 }
 
 export function Select({ value, onChange, children, size = "md", disabled, style }) {
