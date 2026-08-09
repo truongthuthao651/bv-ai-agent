@@ -165,6 +165,39 @@
   .back:hover { color: rgba(255, 255, 255, .88); }
   .hidden { display: none; }
   .field-gap { margin-bottom: var(--space-4); }
+  .lang-toggle {
+    position: absolute;
+    top: var(--space-5);
+    right: var(--space-5);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--radius-md);
+    padding: 2px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .lang-toggle button {
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    transition: background 150ms, color 150ms;
+  }
+  .lang-toggle button.active {
+    background: rgba(224, 162, 8, 0.22);
+    color: var(--brand-gold-light);
+  }
+  .lang-toggle button:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
 </style>
 </head>
 <body>
@@ -172,26 +205,31 @@
 <div class="page">
   <div class="glow" aria-hidden="true"></div>
 
+  <div class="lang-toggle" role="group" aria-label="Language" id="langToggle">
+    <button type="button" data-locale="vi" id="langVi">VI</button>
+    <button type="button" data-locale="en" id="langEn">EN</button>
+  </div>
+
   <div class="stack">
     <div class="card">
       <div class="brand">
-        <img src="/assets/favicon-48x48.png" alt="" aria-hidden="true" />
-        <div class="brand-name">Trợ lý AI Bảo Việt Life</div>
+        <img src="/assets/favicon.svg" alt="" aria-hidden="true" />
+        <div class="brand-name" id="brandName">Trợ lý AI Bảo Việt Life</div>
       </div>
 
       <h1 id="panelTitle">Đăng nhập</h1>
 
       <form id="loginForm">
         <div class="field-gap">
-          <label for="email">Email</label>
+          <label for="email" id="emailLabel">Email</label>
           <input type="email" id="email" name="email" autofocus autocomplete="username" placeholder="you@baoviet.com" required />
         </div>
         <div>
-          <label for="password">Mật khẩu</label>
+          <label for="password" id="passwordLabel">Mật khẩu</label>
           <input type="password" id="password" name="password" autocomplete="current-password" required />
         </div>
         <div id="confirmWrap" class="hidden field-gap" style="margin-top: var(--space-4);">
-          <label for="confirmPassword">Nhập lại mật khẩu</label>
+          <label for="confirmPassword" id="confirmLabel">Nhập lại mật khẩu</label>
           <input type="password" id="confirmPassword" autocomplete="new-password" />
         </div>
         <button id="submitBtn" type="submit">Đăng nhập</button>
@@ -204,11 +242,74 @@
       </p>
     </div>
 
-    <a class="back" href="/">← Trang chủ</a>
+    <a class="back" href="/" id="backHome">← Trang chủ</a>
   </div>
 </div>
 
 <script>
+  // Keep in sync with frontend/src/i18n/messages.js (login + productName + lang).
+  const LOCALE_KEY = "bv-locale";
+  const I18N = {
+    vi: {
+      productName: "Trợ lý AI Bảo Việt Life",
+      langLabel: "Ngôn ngữ",
+      documentTitle: "Đăng nhập — Trợ lý AI Bảo Việt Life",
+      loginTitle: "Đăng nhập",
+      signupTitle: "Tạo tài khoản",
+      email: "Email",
+      password: "Mật khẩu",
+      confirmPassword: "Nhập lại mật khẩu",
+      submitLogin: "Đăng nhập",
+      submitSignup: "Tạo tài khoản",
+      noAccount: "Chưa có tài khoản?",
+      hasAccount: "Đã có tài khoản?",
+      createAccount: "Tạo tài khoản",
+      signIn: "Đăng nhập",
+      backHome: "← Trang chủ",
+      passwordMismatch: "Hai mật khẩu không khớp.",
+      emailDomain: "Email phải thuộc miền @baoviet.com.",
+      signupFailed: "Không thể tạo tài khoản. Vui lòng thử lại.",
+      loginFailed: "Sai email hoặc mật khẩu. Vui lòng thử lại.",
+      networkError: "Lỗi mạng: ",
+    },
+    en: {
+      productName: "Bao Viet Life AI Assistant",
+      langLabel: "Language",
+      documentTitle: "Sign in — Bao Viet Life AI Assistant",
+      loginTitle: "Sign in",
+      signupTitle: "Create account",
+      email: "Email",
+      password: "Password",
+      confirmPassword: "Confirm password",
+      submitLogin: "Sign in",
+      submitSignup: "Create account",
+      noAccount: "Don't have an account?",
+      hasAccount: "Already have an account?",
+      createAccount: "Create account",
+      signIn: "Sign in",
+      backHome: "← Home",
+      passwordMismatch: "Passwords do not match.",
+      emailDomain: "Email must use the @baoviet.com domain.",
+      signupFailed: "Could not create account. Please try again.",
+      loginFailed: "Incorrect email or password. Please try again.",
+      networkError: "Network error: ",
+    },
+  };
+
+  const API_ERROR_VI = {
+    "Sai email hoặc mật khẩu. Vui lòng thử lại.": "loginFailed",
+    "Email phải thuộc miền @baoviet.com.": "emailDomain",
+    "Không thể tạo tài khoản. Vui lòng thử lại.": "signupFailed",
+  };
+
+  function initialLocale() {
+    const stored = localStorage.getItem(LOCALE_KEY);
+    return stored === "en" ? "en" : "vi";
+  }
+
+  let locale = initialLocale();
+  let signupMode = false;
+
   const form = document.getElementById("loginForm");
   const err = document.getElementById("err");
   const btn = document.getElementById("submitBtn");
@@ -220,21 +321,58 @@
   const confirmWrap = document.getElementById("confirmWrap");
   const confirmPassword = document.getElementById("confirmPassword");
   const passwordInput = document.getElementById("password");
-  let signupMode = false;
+  const langToggle = document.getElementById("langToggle");
+  const langVi = document.getElementById("langVi");
+  const langEn = document.getElementById("langEn");
+
+  function msg(key) {
+    return I18N[locale][key] ?? key;
+  }
+
+  function localizeApiError(detail) {
+    if (!detail || locale === "vi") return detail;
+    if (detail.includes("Sai email hoặc mật khẩu")) return msg("loginFailed");
+    if (detail.includes("Email phải thuộc miền")) return msg("emailDomain");
+    const mapped = API_ERROR_VI[detail];
+    return mapped ? msg(mapped) : detail;
+  }
+
+  function applyLocale() {
+    document.documentElement.lang = locale === "en" ? "en" : "vi";
+    document.title = msg("documentTitle");
+    langToggle.setAttribute("aria-label", msg("langLabel"));
+    langVi.classList.toggle("active", locale === "vi");
+    langEn.classList.toggle("active", locale === "en");
+    document.getElementById("brandName").textContent = msg("productName");
+    document.getElementById("emailLabel").textContent = msg("email");
+    document.getElementById("passwordLabel").textContent = msg("password");
+    document.getElementById("confirmLabel").textContent = msg("confirmPassword");
+    document.getElementById("backHome").textContent = msg("backHome");
+    setMode(signupMode);
+  }
+
+  function setLocale(nextLocale) {
+    locale = nextLocale === "en" ? "en" : "vi";
+    localStorage.setItem(LOCALE_KEY, locale);
+    applyLocale();
+  }
 
   function setMode(signup) {
     signupMode = signup;
-    panelTitle.textContent = signup ? "Tạo tài khoản" : "Đăng nhập";
-    btn.textContent = signup ? "Tạo tài khoản" : "Đăng nhập";
-    switchPrompt.textContent = signup ? "Đã có tài khoản?" : "Chưa có tài khoản?";
-    modeToggle.textContent = signup ? "Đăng nhập" : "Tạo tài khoản";
+    panelTitle.textContent = signup ? msg("signupTitle") : msg("loginTitle");
+    btn.textContent = signup ? msg("submitSignup") : msg("submitLogin");
+    switchPrompt.textContent = signup ? msg("hasAccount") : msg("noAccount");
+    modeToggle.textContent = signup ? msg("signIn") : msg("createAccount");
     confirmWrap.classList.toggle("hidden", !signup);
     confirmPassword.required = signup;
     passwordInput.autocomplete = signup ? "new-password" : "current-password";
     err.textContent = "";
   }
 
+  langVi.addEventListener("click", () => setLocale("vi"));
+  langEn.addEventListener("click", () => setLocale("en"));
   modeToggle.addEventListener("click", () => setMode(!signupMode));
+  applyLocale();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -245,11 +383,11 @@
       const password = passwordInput.value;
       if (signupMode) {
         if (password !== confirmPassword.value) {
-          err.textContent = "Hai mật khẩu không khớp.";
+          err.textContent = msg("passwordMismatch");
           return;
         }
         if (!email.toLowerCase().endsWith("@baoviet.com")) {
-          err.textContent = "Email phải thuộc miền @baoviet.com.";
+          err.textContent = msg("emailDomain");
           return;
         }
       }
@@ -267,11 +405,9 @@
         return;
       }
       const data = await resp.json().catch(() => ({}));
-      err.textContent = data.detail || (signupMode
-        ? "Không thể tạo tài khoản. Vui lòng thử lại."
-        : "Sai email hoặc mật khẩu. Vui lòng thử lại.");
+      err.textContent = localizeApiError(data.detail) || (signupMode ? msg("signupFailed") : msg("loginFailed"));
     } catch (e2) {
-      err.textContent = "Lỗi mạng: " + e2.message;
+      err.textContent = msg("networkError") + e2.message;
     } finally {
       btn.disabled = false;
     }

@@ -311,6 +311,31 @@ export const messages = {
       exportAssistant: "Trợ lý",
       exportFallbackTitle: "Cuộc trò chuyện",
     },
+    landing: {
+      tagline: "Niềm tin vững chắc, cam kết vững bền",
+      continue: "Tiếp tục",
+      logoAlt: "Bảo Việt Life",
+      documentTitle: "Trợ lý AI Bảo Việt Life",
+    },
+    login: {
+      documentTitle: "Đăng nhập — Trợ lý AI Bảo Việt Life",
+      loginTitle: "Đăng nhập",
+      signupTitle: "Tạo tài khoản",
+      password: "Mật khẩu",
+      confirmPassword: "Nhập lại mật khẩu",
+      submitLogin: "Đăng nhập",
+      submitSignup: "Tạo tài khoản",
+      noAccount: "Chưa có tài khoản?",
+      hasAccount: "Đã có tài khoản?",
+      createAccount: "Tạo tài khoản",
+      signIn: "Đăng nhập",
+      backHome: "← Trang chủ",
+      passwordMismatch: "Hai mật khẩu không khớp.",
+      emailDomain: "Email phải thuộc miền @baoviet.com.",
+      signupFailed: "Không thể tạo tài khoản. Vui lòng thử lại.",
+      loginFailed: "Sai email hoặc mật khẩu. Vui lòng thử lại.",
+      networkError: "Lỗi mạng: {message}",
+    },
   },
   en: {
     productName: "Bao Viet Life AI Assistant",
@@ -622,7 +647,47 @@ export const messages = {
       exportAssistant: "Assistant",
       exportFallbackTitle: "Conversation",
     },
+    landing: {
+      tagline: "Strong trust, lasting commitment",
+      continue: "Continue",
+      logoAlt: "Bao Viet Life",
+      documentTitle: "Bao Viet Life AI Assistant",
+    },
+    login: {
+      documentTitle: "Sign in — Bao Viet Life AI Assistant",
+      loginTitle: "Sign in",
+      signupTitle: "Create account",
+      password: "Password",
+      confirmPassword: "Confirm password",
+      submitLogin: "Sign in",
+      submitSignup: "Create account",
+      noAccount: "Don't have an account?",
+      hasAccount: "Already have an account?",
+      createAccount: "Create account",
+      signIn: "Sign in",
+      backHome: "← Home",
+      passwordMismatch: "Passwords do not match.",
+      emailDomain: "Email must use the @baoviet.com domain.",
+      signupFailed: "Could not create account. Please try again.",
+      loginFailed: "Incorrect email or password. Please try again.",
+      networkError: "Network error: {message}",
+    },
   },
+};
+
+/** Animated title word segments for the public landing page. */
+export const landingTitleWords = {
+  vi: [
+    { text: "Trợ lý", accent: false },
+    { text: "AI", accent: true },
+    { text: "Bảo Việt", accent: false },
+    { text: "Life", accent: true },
+  ],
+  en: [
+    { text: "Bao Viet Life", accent: false },
+    { text: "AI", accent: true },
+    { text: "Assistant", accent: true },
+  ],
 };
 
 /** Simple `{name}` interpolation for translated strings. */
