@@ -6,7 +6,7 @@ over the message list, exercising the stateful spellcheck-confirmation flow.
 
 from __future__ import annotations
 
-from app.api.chat import _resolve_confirmation
+from app.api.chat import _is_live_weather_query, _resolve_confirmation
 from app.generation.prompts import REFUSAL_MESSAGE
 from app.models.schemas import ChatMessage
 from app.retrieval.conversation_scope import active_scope
@@ -28,6 +28,12 @@ _ANSWER_WITH_SOURCES = (
     f"Quyền lợi gồm...\n\n**Nguồn tham khảo:**\n"
     f"- [1] [{_AKNY}](http://localhost/documents/d1/view) — Điều 5"
 )
+
+
+def test_live_weather_query_is_detected_without_retrieval() -> None:
+    assert _is_live_weather_query("thời tiết Hanoi tối nay") is True
+    assert _is_live_weather_query("What is the weather in Hanoi today?") is True
+    assert _is_live_weather_query("Nêu các loại phí của AUVL08") is False
 
 
 def test_confirmation_replays_original_question_and_skips_gate() -> None:

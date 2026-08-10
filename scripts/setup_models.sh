@@ -34,6 +34,9 @@ if [[ -z "$APP_PYTHON" ]]; then
   echo "ERROR: .venv is missing or unusable; run bash scripts/setup_native.sh first." >&2
   exit 1
 fi
+"$APP_PYTHON" -c \
+  'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))' \
+  || { echo "ERROR: .venv must use Python 3.11 or 3.12." >&2; exit 1; }
 if ! command -v ollama >/dev/null 2>&1; then
   echo "ERROR: ollama CLI not found. Install it from https://ollama.com." >&2
   exit 1

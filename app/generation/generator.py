@@ -40,6 +40,10 @@ _CONNECTION_ERROR_MESSAGE = (
     "Xin lỗi, hiện không thể kết nối tới mô hình sinh câu trả lời. "
     "Vui lòng thử lại sau."
 )
+_GENERATION_TIMEOUT_MESSAGE = (
+    "Xin lỗi, mô hình sinh câu trả lời mất quá lâu để phản hồi. "
+    "Vui lòng thử lại sau."
+)
 
 _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
@@ -341,7 +345,9 @@ async def _stream_chat(
     started = time.perf_counter()
     first_token_at: float | None = None
     try:
-        async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=settings.ollama_generation_timeout
+        ) as client:
             async with client.stream(
                 "POST",
                 f"{settings.ollama_base_url}/api/chat",
@@ -390,8 +396,17 @@ async def _stream_chat(
         logger.info(
             "generation timings: first_token=%.0fms total=%.0fms", first_ms, total_ms
         )
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "Generation timed out after %.0fs: %r",
+            settings.ollama_generation_timeout,
+            exc,
+        )
+        yield _sse_chunk(
+            completion_id, model, {"content": _GENERATION_TIMEOUT_MESSAGE}, None
+        )
     except httpx.HTTPError as exc:
-        logger.error("Generation failed: %s", exc)
+        logger.error("Generation failed (%s): %r", exc.__class__.__name__, exc)
         yield _sse_chunk(
             completion_id, model, {"content": _CONNECTION_ERROR_MESSAGE}, None
         )
@@ -470,7 +485,7 @@ def preload_model() -> None:
             "think": False,
             "keep_alive": settings.ollama_keep_alive,
         },
-        timeout=settings.ollama_timeout,
+        timeout=settings.ollama_generation_timeout,
     )
     resp.raise_for_status()
 
@@ -487,7 +502,7 @@ def generate_plain(prompt: str) -> str:
         resp = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
             json=_ollama_payload([{"role": "user", "content": prompt}], stream=False),
-            timeout=settings.ollama_timeout,
+            timeout=settings.ollama_generation_timeout,
         )
         resp.raise_for_status()
         return strip_think(resp.json().get("message", {}).get("content", ""))
@@ -504,14 +519,21 @@ def _generate_chat(
         resp = httpx.post(
             f"{settings.ollama_base_url}/api/chat",
             json=_ollama_payload(messages, stream=False),
-            timeout=settings.ollama_timeout,
+            timeout=settings.ollama_generation_timeout,
         )
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
         answer = strip_think(content)
         return answer + suffix_fn(answer)
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "Generation timed out after %.0fs: %r",
+            settings.ollama_generation_timeout,
+            exc,
+        )
+        return _GENERATION_TIMEOUT_MESSAGE
     except (httpx.HTTPError, ValueError) as exc:
-        logger.error("Generation failed: %s", exc)
+        logger.error("Generation failed (%s): %r", exc.__class__.__name__, exc)
         return _CONNECTION_ERROR_MESSAGE
 
 

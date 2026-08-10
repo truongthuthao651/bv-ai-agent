@@ -11,15 +11,40 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-find_python() {
+PYTHON_REQUEST="3.12"
+if [[ -f .python-version ]]; then
+  IFS= read -r configured_python < .python-version || true
+  configured_python="${configured_python%$'\r'}"
+  if [[ "$configured_python" == 3.12 || "$configured_python" == 3.12.* ]]; then
+    PYTHON_REQUEST="$configured_python"
+  else
+    echo "WARN: .python-version does not select Python 3.12; using 3.12." >&2
+  fi
+fi
+
+FALLBACK_PYTHON=()
+
+select_fallback_python() {
   local candidate
   for candidate in python3.12 python3.11 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1 \
       && "$candidate" -c 'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))'; then
-      printf '%s\n' "$candidate"
+      FALLBACK_PYTHON=("$candidate")
       return 0
     fi
   done
+
+  if command -v py >/dev/null 2>&1; then
+    local selector
+    for selector in -3.12 -3.11; do
+      if py "$selector" -c \
+        'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))'; then
+        FALLBACK_PYTHON=(py "$selector")
+        return 0
+      fi
+    done
+  fi
+
   return 1
 }
 
@@ -46,9 +71,9 @@ create_venv() {
   fi
 
   if [[ "$SETUP_TOOL" == "uv" ]]; then
-    uv venv --python 3.12 "$venv_dir"
+    uv venv --python "$PYTHON_REQUEST" "$venv_dir"
   else
-    "$FALLBACK_PYTHON" -m venv "$venv_dir"
+    "${FALLBACK_PYTHON[@]}" -m venv "$venv_dir"
   fi
 }
 
@@ -64,16 +89,14 @@ install_into() {
 
 if command -v uv >/dev/null 2>&1; then
   SETUP_TOOL="uv"
-  FALLBACK_PYTHON=""
-  echo "==> Using uv ($(uv --version))"
+  echo "==> Using uv ($(uv --version)); requested Python ${PYTHON_REQUEST}"
 else
   SETUP_TOOL="python"
-  FALLBACK_PYTHON="$(find_python || true)"
-  if [[ -z "$FALLBACK_PYTHON" ]]; then
+  if ! select_fallback_python; then
     echo "ERROR: uv is unavailable and no supported Python 3.11/3.12 interpreter was found." >&2
     exit 1
   fi
-  echo "==> uv not found; using $FALLBACK_PYTHON ($("$FALLBACK_PYTHON" --version))"
+  echo "==> uv not found; using ${FALLBACK_PYTHON[*]} ($("${FALLBACK_PYTHON[@]}" --version))"
 fi
 
 if ! command -v ollama >/dev/null 2>&1; then

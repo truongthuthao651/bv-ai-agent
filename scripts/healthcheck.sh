@@ -14,23 +14,48 @@ API_PORT="$(env_get API_PORT)";               API_PORT="${API_PORT:-8000}"
 OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"; OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
 OLLAMA_BASE_URL="$(env_get OLLAMA_BASE_URL)"; OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 
+process_running() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null && return 0
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32*)
+      command -v tasklist.exe >/dev/null 2>&1 || return 1
+      MSYS2_ARG_CONV_EXCL='*' tasklist.exe /FI "PID eq $pid" /NH 2>/dev/null \
+        | tr -d '\r' \
+        | awk -v expected="$pid" '$2 == expected { found = 1 } END { exit !found }'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 check_endpoint() {
-  local name="$1" url="$2" pid_file="$3" pid_info=""
+  local name="$1" url="$2" pid_file="$3" pid_info="" body_file status
   if [[ -f "$pid_file" ]]; then
     local pid
     pid="$(cat "$pid_file" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    if process_running "$pid"; then
       pid_info=" (PID: $pid)"
     else
       pid_info=" (stale PID file)"
     fi
   fi
-  if curl -fsS -o /dev/null --max-time 5 "$url"; then
+
+  body_file="$(mktemp)"
+  status="$(curl -sS -o "$body_file" -w '%{http_code}' --max-time 5 "$url" || true)"
+  if [[ "$status" == "200" ]]; then
     echo "  [ OK ] $name ($url)$pid_info"
   else
-    echo "  [FAIL] $name ($url)$pid_info" >&2
+    echo "  [FAIL] $name ($url) HTTP ${status:-000}$pid_info" >&2
+    if [[ -s "$body_file" ]]; then
+      echo "         $(head -c 500 "$body_file")" >&2
+    fi
+    rm -f "$body_file"
     return 1
   fi
+  rm -f "$body_file"
 }
 
 echo "==> Health checks"

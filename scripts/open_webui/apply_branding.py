@@ -8,8 +8,8 @@ patches the pip-installed package in place, which works fully offline:
 
 1. Regenerates the logo/favicon/splash PNGs inside the open_webui package
    with a Bảo Việt-styled "BV" mark (brand blue #0072BC + gold #F7B928).
-2. Injects a small brand CSS block + Vietnamese app metadata into the
-   frontend's index.html (idempotent, marker-delimited).
+2. Injects a small brand CSS block, a request-processing timer, and Vietnamese
+   app metadata into the frontend's index.html (idempotent, marker-delimited).
 3. Replaces the stock English prompt suggestions in open_webui_data/webui.db
    with the Vietnamese actuarial/internal-document ones from
    prompt_suggestions.json, and sets the default UI locale to vi-VN.
@@ -50,6 +50,8 @@ BV_GOLD = "#f7b928"
 
 CSS_START = "/* BV-BRAND-START */"
 CSS_END = "/* BV-BRAND-END */"
+TIMER_START = "/* BV-PROCESSING-TIMER-START */"
+TIMER_END = "/* BV-PROCESSING-TIMER-END */"
 
 BRAND_CSS = f"""{CSS_START}
 :root {{ --bv-blue: {BV_BLUE}; --bv-blue-dark: {BV_BLUE_DARK}; --bv-gold: {BV_GOLD}; }}
@@ -58,7 +60,129 @@ BRAND_CSS = f"""{CSS_START}
 .bg-black:hover {{ background-color: var(--bv-blue-dark) !important; }}
 /* Our splash mark is colored — don't let dark mode invert it */
 html.dark #splash-screen img {{ filter: none !important; }}
+/* Elapsed time shown above Open WebUI's assistant response skeleton. */
+#bv-processing-timer {{
+  align-items: center;
+  color: #64748b;
+  display: flex;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  gap: 0.4rem;
+  line-height: 1.25rem;
+  margin: 0.15rem 0 0.5rem;
+  width: max-content;
+}}
+html.dark #bv-processing-timer {{ color: #a3a3a3; }}
+#bv-processing-timer .bv-processing-spinner {{
+  animation: bv-processing-spin 0.9s linear infinite;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  box-sizing: border-box;
+  height: 0.85rem;
+  width: 0.85rem;
+}}
+@keyframes bv-processing-spin {{ to {{ transform: rotate(360deg); }} }}
+@media (prefers-reduced-motion: reduce) {{
+  #bv-processing-timer .bv-processing-spinner {{ animation: none; }}
+}}
 {CSS_END}"""
+
+PROCESSING_TIMER_JS = f"""{TIMER_START}
+(() => {{
+  const TIMER_ID = "bv-processing-timer";
+  let startedAt = null;
+  let intervalId = null;
+
+  const findResponseSkeleton = () =>
+    Array.from(document.querySelectorAll("div.animate-pulse.flex.w-full")).find(
+      (element) =>
+        !element.closest("#splash-screen") &&
+        element.querySelector(".bg-gray-200.rounded")
+    );
+
+  const elapsedText = () => {{
+    const totalSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${{minutes}}:${{seconds}}`;
+  }};
+
+  const renderTime = () => {{
+    const time = document.querySelector(`#${{TIMER_ID}} time`);
+    if (time && startedAt !== null) {{
+      const nextValue = elapsedText();
+      if (time.textContent !== nextValue) {{
+        time.textContent = nextValue;
+      }}
+    }}
+  }};
+
+  const removeTimer = () => {{
+    document.getElementById(TIMER_ID)?.remove();
+    if (intervalId !== null) {{
+      window.clearInterval(intervalId);
+      intervalId = null;
+    }}
+    startedAt = null;
+  }};
+
+  const createTimer = () => {{
+    const timer = document.createElement("div");
+    timer.id = TIMER_ID;
+    timer.setAttribute("aria-label", "Thời gian xử lý yêu cầu");
+
+    const spinner = document.createElement("span");
+    spinner.className = "bv-processing-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+
+    const label = document.createElement("span");
+    label.textContent = "Đang xử lý:";
+
+    const time = document.createElement("time");
+    time.textContent = "0:00";
+
+    timer.append(spinner, label, time);
+    return timer;
+  }};
+
+  const syncTimer = () => {{
+    const skeleton = findResponseSkeleton();
+    if (!skeleton) {{
+      removeTimer();
+      return;
+    }}
+
+    let timer = document.getElementById(TIMER_ID);
+    if (!timer) {{
+      startedAt = Date.now();
+      timer = createTimer();
+      intervalId = window.setInterval(renderTime, 250);
+    }}
+
+    if (timer.nextElementSibling !== skeleton) {{
+      skeleton.parentElement?.insertBefore(timer, skeleton);
+    }}
+    renderTime();
+  }};
+
+  const start = () => {{
+    const observer = new MutationObserver(syncTimer);
+    observer.observe(document.body, {{ childList: true, subtree: true }});
+    syncTimer();
+    window.addEventListener("beforeunload", () => {{
+      observer.disconnect();
+      removeTimer();
+    }});
+  }};
+
+  if (document.readyState === "loading") {{
+    document.addEventListener("DOMContentLoaded", start, {{ once: true }});
+  }} else {{
+    start();
+  }}
+}})();
+{TIMER_END}"""
 
 FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",  # macOS
@@ -193,6 +317,20 @@ def patch_index_html(pkg: Path, app_name: str) -> None:
         )
     else:
         html = html.replace("</head>", f"\t{style_block}\n</head>")
+
+    timer_block = (
+        f'<script id="bv-processing-timer-script">\n{PROCESSING_TIMER_JS}\n</script>'
+    )
+    if TIMER_START in html:
+        html = re.sub(
+            r'<script id="bv-processing-timer-script">.*?</script>',
+            timer_block,
+            html,
+            count=1,
+            flags=re.S,
+        )
+    else:
+        html = html.replace("</body>", f"\t{timer_block}\n</body>")
     index.write_text(html, encoding="utf-8")
 
     manifest = pkg / "frontend/favicon/site.webmanifest"
@@ -202,7 +340,10 @@ def patch_index_html(pkg: Path, app_name: str) -> None:
         manifest.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-    print("frontend: injected brand CSS and app name into index.html + manifest")
+    print(
+        "frontend: injected brand CSS, processing timer, and app name "
+        "into index.html + manifest"
+    )
 
 
 def webui_is_running() -> bool:

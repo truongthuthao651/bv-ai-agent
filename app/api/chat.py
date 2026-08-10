@@ -9,6 +9,7 @@ works unmodified; also supports ``stream: false`` for plain API clients.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -80,10 +81,28 @@ _META_TASK_PREFIXES = (
     "Create a concise, 3-5 word title",
 )
 
+# Live weather is neither in the company document corpus nor available from
+# this air-gapped deployment. Catch it before retrieval/reranking so a request
+# cannot spend minutes of CPU only to receive a generic document refusal.
+_LIVE_WEATHER_RE = re.compile(
+    r"\b(?:thời\s*tiết|dự\s*báo\s*(?:thời\s*tiết|mưa)|nhiệt\s*độ|weather)\b",
+    re.IGNORECASE,
+)
+_LIVE_WEATHER_MESSAGE = (
+    "Trợ lý hoạt động ngoại tuyến và không có dữ liệu thời tiết thời gian thực. "
+    "Vui lòng dùng nguồn thời tiết chính thức; tôi có thể hỗ trợ tra cứu tài liệu "
+    "nội bộ Bảo Việt Life."
+)
+
 
 def _is_meta_task(query: str) -> bool:
     """True for Open WebUI meta-requests (title/tags), not real user questions."""
     return query.lstrip().startswith(_META_TASK_PREFIXES)
+
+
+def _is_live_weather_query(query: str) -> bool:
+    """True for weather requests that require changing external information."""
+    return bool(_LIVE_WEATHER_RE.search(query))
 
 
 def _static_response(
@@ -314,6 +333,15 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
     # Open WebUI meta-tasks (chat titles/tags) skip retrieval entirely.
     if _is_meta_task(query):
         return ResponsePlan(kind="meta", query=query, history=history)
+
+    if _is_live_weather_query(query):
+        return ResponsePlan(
+            kind="refusal",
+            query=query,
+            history=history,
+            standalone_query=query,
+            text=_LIVE_WEATHER_MESSAGE,
+        )
 
     # Ask before answering on a likely typo/garbled term rather than guessing.
     if not skip_spellcheck:

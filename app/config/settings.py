@@ -98,7 +98,12 @@ class Settings(BaseSettings):
     # How many trailing chat turns are sent to the model as history. Kept small
     # for the local model's bounded context; retrieval re-grounds each turn.
     max_history_turns: int = 6
+    # Short timeout for auxiliary local calls (health-adjacent work, query
+    # rewriting, and enrichment). Generation gets its own longer budget below:
+    # an 8B CPU model can legitimately need several minutes for a grounded
+    # answer after retrieval and reranking.
     ollama_timeout: float = 120.0
+    ollama_generation_timeout: float = 300.0
     # Ollama unloads a model after ~5 idle minutes by default, so the next
     # question after a break pays a full model reload (warmup only covers the
     # first request). Duration string ("2h", "30m") or "-1" to keep loaded
