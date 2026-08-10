@@ -49,6 +49,37 @@ def test_reconstruct_removes_multi_block_overlap() -> None:
     assert sections[0]["text"] == "A.\n\nB.\n\nC.\n\nD."
 
 
+def test_reconstruct_rebuilds_a_section_from_parent_child_chunks() -> None:
+    # The viewer reads stored chunks, which under parent-child chunking are
+    # children. They tile their parent on block boundaries and parents overlap
+    # by whole blocks, so de-overlapping must still rebuild the exact section.
+    from app.ingestion.chunking import chunk_document
+    from app.models.schemas import DocType, ParsedDocument, ParsedSection
+
+    text = "\n\n".join(f"Đoạn số {i} về quyền lợi bảo hiểm." for i in range(14))
+    doc = ParsedDocument(
+        doc_title="Quy trình giải quyết quyền lợi",
+        doc_type=DocType.OTHER,
+        sections=[ParsedSection(section_path="Điều 1", text=text)],
+    )
+    chunks = chunk_document(
+        doc, "d1", max_tokens=60, overlap_pct=0.12, child_max_tokens=15
+    )
+    assert len(chunks) > 1
+    payloads = [
+        {
+            "chunk_index": c.chunk_index,
+            "doc_title": c.doc_title,
+            "section_path": c.section_path,
+            "display_text": c.display_text,
+        }
+        for c in chunks
+    ]
+    _, sections = docview.reconstruct_sections(payloads)
+    assert len(sections) == 1
+    assert sections[0]["text"] == text
+
+
 def test_render_markdown_preserves_math_verbatim() -> None:
     # Underscores inside LaTeX must NOT become Markdown emphasis.
     html_out = docview.render_markdown("Công thức: $_tV_x = A_{x+t} - P_x$ nhé.")
@@ -93,9 +124,15 @@ def test_render_page_download_link_only_with_source_file() -> None:
     )
 
 
-def test_viewer_routes_are_public_but_list_and_delete_are_not() -> None:
-    assert is_public_path("/documents/abc-123/view")
-    assert is_public_path("/documents/abc-123/file")
-    # The admin list + per-doc DELETE target must stay gated.
+def test_no_documents_route_is_public() -> None:
+    # SEC-A (audit/01-engineering.md §1.4): /view and /file used to be
+    # regex-matched into PUBLIC_PREFIXES, meaning no session check at all —
+    # anyone who could guess a filename (doc_id is a deterministic uuid5 of
+    # it) could read the full document unauthenticated. All /documents routes
+    # now require at least a signed-in session; see tests/test_auth.py for
+    # the "any account, not just admin" vs. "admin-only" split (list/delete
+    # need require_admin on top of this; view/file don't).
+    assert not is_public_path("/documents/abc-123/view")
+    assert not is_public_path("/documents/abc-123/file")
     assert not is_public_path("/documents")
     assert not is_public_path("/documents/abc-123")

@@ -11,6 +11,7 @@ from app.config.settings import settings
 from app.query_timing import (
     TimingContext,
     format_elapsed,
+    log_feedback,
     log_query_timing,
     response_time_footer,
 )
@@ -86,6 +87,95 @@ def test_log_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
     assert "text" not in line.lower()
 
 
+def test_log_forces_refusal_mode_when_answer_text_is_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    from app.generation.prompts import REFUSAL_MESSAGE
+
+    path = tmp_path / "query_timings.jsonl"
+    monkeypatch.setattr(settings, "query_timing_log_enabled", True)
+    monkeypatch.setattr(settings, "query_timing_log_path", path)
+
+    log_query_timing(
+        _ctx("hybrid", elapsed_s=5),
+        answer_chars=len(REFUSAL_MESSAGE),
+        answer_text=REFUSAL_MESSAGE,
+    )
+
+    record = json.loads(path.read_text(encoding="utf-8").strip())
+    assert record["mode"] == "refusal"
+
+
+def _stub_hit(doc_id: str = "d1", section_path: str = "Điều 5", score: float = 0.876):
+    from app.models.schemas import DocType, Hit, QdrantPayload
+
+    return Hit(
+        point_id="p1",
+        score=score,
+        payload=QdrantPayload(
+            doc_id=doc_id,
+            doc_title="Bảo hiểm liên kết chung An Khang Như Ý",
+            section_path=section_path,
+            doc_type=DocType.POLICY,
+            display_text="Quyền lợi tử vong: 100% STBH. Số tiền cụ thể là 500 triệu đồng.",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+
+def test_log_records_hits_and_plan_flags_without_chunk_text(
+    tmp_path, monkeypatch
+) -> None:
+    # ADM1 (2026-08-05 audit / Day 2): enough to reconstruct what a bad answer
+    # saw (doc_id, section_path, score, and the guard flags that decided the
+    # answer path) -- but the confidentiality bar from the original metadata-
+    # only design must still hold: no chunk display_text, no query/answer text.
+    path = tmp_path / "query_timings.jsonl"
+    monkeypatch.setattr(settings, "query_timing_log_enabled", True)
+    monkeypatch.setattr(settings, "query_timing_log_path", path)
+
+    ctx = _ctx("grounded", elapsed_s=12)
+    ctx.hits = [_stub_hit("d1", "Điều 5", 0.876), _stub_hit("d2", "Điều 6", 0.5)]
+    ctx.advisory = True
+    ctx.coverage = True
+    ctx.coverage_gate_outcome = "regenerated"
+    ctx.scope_labels = ["Bảo hiểm liên kết chung An Khang Như Ý"]
+
+    log_query_timing(ctx, answer_chars=500)
+
+    record = json.loads(path.read_text(encoding="utf-8").strip())
+    assert record["hits"] == [
+        {"doc_id": "d1", "section_path": "Điều 5", "score": 0.876},
+        {"doc_id": "d2", "section_path": "Điều 6", "score": 0.5},
+    ]
+    assert record["advisory"] is True
+    assert record["coverage"] is True
+    assert record["coverage_gate"] == "regenerated"
+    assert record["scope_labels"] == ["Bảo hiểm liên kết chung An Khang Như Ý"]
+    # Confidentiality: the chunk's own content never reaches the log line.
+    raw = path.read_text(encoding="utf-8")
+    assert "STBH" not in raw
+    assert "500 triệu" not in raw
+    assert "display_text" not in raw
+    assert "context_text" not in raw
+
+
+def test_log_coverage_gate_defaults_to_none_for_non_coverage_turns(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "query_timings.jsonl"
+    monkeypatch.setattr(settings, "query_timing_log_enabled", True)
+    monkeypatch.setattr(settings, "query_timing_log_path", path)
+
+    log_query_timing(_ctx("grounded"), answer_chars=10)
+
+    record = json.loads(path.read_text(encoding="utf-8").strip())
+    assert record["coverage_gate"] is None
+    assert record["hits"] == []
+    assert record["scope_labels"] == []
+
+
 def test_log_is_noop_when_disabled(tmp_path, monkeypatch) -> None:
     path = tmp_path / "query_timings.jsonl"
     monkeypatch.setattr(settings, "query_timing_log_enabled", False)
@@ -130,3 +220,45 @@ def test_static_stream_appends_footer_when_timing_given(monkeypatch) -> None:
         if c.strip() and c.strip() != "data: [DONE]"
     )
     assert plain_body == "Xin chào."
+
+
+# --- P2-F2: thumbs-down feedback log (audit/REPORT.md) ---
+
+
+def test_log_feedback_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", True)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-abc123", "sai_thong_tin")
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["completion_id"] == "chatcmpl-abc123"
+    assert record["reason"] == "sai_thong_tin"
+    assert "ts" in record
+    # Metadata-only: no field on this record could ever carry query/answer
+    # text (matches log_query_timing's own no-content-logging convention).
+    assert set(record.keys()) == {"ts", "completion_id", "reason"}
+
+
+def test_log_feedback_reason_is_optional(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", True)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-xyz", None)
+
+    record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["reason"] is None
+
+
+def test_log_feedback_is_noop_when_disabled(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "feedback.jsonl"
+    monkeypatch.setattr(settings, "feedback_log_enabled", False)
+    monkeypatch.setattr(settings, "feedback_log_path", path)
+
+    log_feedback("chatcmpl-abc123", None)
+
+    assert not path.exists()

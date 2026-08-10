@@ -7,7 +7,7 @@ description: Development guide for the local Vietnamese insurance RAG assistant.
 
 This repo is a fully-local RAG assistant for a Vietnamese life insurance firm
 whose documents are math-heavy (actuarial formulas, notation, charts).
-Read `CLAUDE.md` first for architecture, structure, and the security rules.
+Read `TEAMMATE_GUIDE.md` first for architecture, structure, and the security rules.
 This skill covers HOW to implement and modify each stage correctly.
 
 ## Golden rules (repeat of the critical ones)
@@ -109,6 +109,15 @@ Enrichment steps:
   header repeated. Bind the paragraph immediately before a Markdown table
   (caption) into the same unit — otherwise a bare `%`-by-year grid can be
   retrieved as the wrong metric (lãi suất cam kết vs tỷ lệ bồi thường).
+- **Parent-child** (`PARENT_CHILD_CHUNKING_ENABLED`, `CHUNK_CHILD_MAX_TOKENS`):
+  the packer runs twice over the SAME units. The first pass builds parents
+  (500-800 tok, overlapping — identical to the flat output); the second packs
+  each parent's units into children at the smaller budget with NO overlap, since
+  the parent already restores the surrounding context. One point is indexed per
+  child, carrying `parent_text` + `parent_index`; a child equal to its whole
+  parent stores neither. Because both passes consume units, an equation unit or
+  table row group is never split by the child pass either. Changing the budgets
+  requires a re-ingest.
 
 ### 4. Glossary (data/glossary/thuat_ngu.yaml)
 
@@ -138,6 +147,12 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   in CLAUDE.md — keep them in sync with `schemas.py`.
 - Query flow: glossary expansion → rewrite → hybrid search (top-20 each, RRF fuse)
   → rerank to top-5 → generation. Don't change top-k values in code; they're settings.
+  Search and reranking always work on the narrow `display_text`; only the prompt
+  widens, via `payload.context_text`. The reranker collapses to one child per
+  parent BEFORE the top-k cut, so top-5 always means 5 distinct windows. Any new
+  filter that reads chunk text (like `metric_guard`) must read `context_text`:
+  judging the child while the model receives the parent is how a guard gets
+  bypassed.
   **Comparison exception:** when the query names ≥2 products
   (`COMPARISON_RETRIEVAL_ENABLED`), run search+rerank **per product** and merge
   (`app/retrieval/comparison.py`) so one product cannot fill the entire top-k.
@@ -148,11 +163,12 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
 ### 6. Generation (prompts.py, generator.py)
 
 - Context assembly uses `display_text`, numbered (`[1] Tài liệu: ...`) so
-  citations are checkable. LaTeX passes through untouched — Open WebUI renders it
-  with KaTeX.
+  citations are checkable. LaTeX passes through untouched — `/chat` renders it
+  with self-hosted KaTeX (`frontend/src/chat/markdown.jsx`).
 - System prompt is Vietnamese and MUST keep these properties:
   1. Answer only from provided context.
-  2. Cite sources as `[Tên tài liệu, mục X]`.
+  2. Cite sources as `[n]`, the context block's number — `prompts.citation_numbers`
+     gives the same number to the "Nguồn tham khảo" entry, so markers resolve.
   3. Refuse gracefully with "Tôi không tìm thấy thông tin trong tài liệu" when
      context is insufficient.
   4. **Math answers:** present the relevant formula in LaTeX, show substitution
@@ -207,7 +223,8 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   `METRIC_GUARD_ENABLED`): on benefit-payout queries, drop fee/interest hits
   before generation so a claim-% question cannot be answered from a guaranteed-
   interest schedule.
-- Stream via SSE in OpenAI format so Open WebUI works unmodified.
+- Stream via SSE in OpenAI format — `/chat` and any other OpenAI-compatible
+  client work against it unmodified.
 
 ### 7. Synthetic data & evaluation
 
@@ -216,10 +233,20 @@ glossary entry, not a retrieval-parameter change. Add the term + synonyms first.
   math-heavy samples — actuarial formulas (life contingencies: annuities,
   net premiums, reserves), a DOCX with OMML equations, and chart images. All
   names, policy numbers, and amounts are invented; formulas are textbook-standard.
+- Keep at least one FULL-LENGTH policy booklet in the corpus
+  (`quy_tac_tron_doi_an_binh.md`: articles of 500–800 tokens, several khoản each).
+  The short documents are convenient but every chunk fits well inside
+  `CHUNK_MAX_TOKENS`, so on them chunking, retrieval precision and rerank cost all
+  look free and any change to them measures as a no-op. Check with
+  `python scripts/chunk_stats.py data/synthetic`: if `parents actually split` is
+  near zero, the corpus cannot tell you anything about chunk sizing.
 - `eval/golden_set.jsonl` must include: definition questions (glossary),
   "which formula applies to X" questions, notation questions, and figure questions
   — alongside ordinary policy Q&A. When adding a synthetic doc, add 3–5 matching
-  Q/A pairs.
+  Q/A pairs. Prefer questions whose answer needs a paragraph OTHER than the one
+  that best matches the wording (`q35`: the condition sits far above the formula
+  in the same Điều) and both exclusion polarities (`q37` must stay covered,
+  `q38` must not) — those are the ones that actually move when retrieval changes.
 - After any change to parsing/enrichment/chunking/retrieval: re-ingest
   `data/synthetic/`, run `pytest`, then `python eval/run_ragas.py`. Faithfulness
   or context precision dropping is a regression — investigate before merging.

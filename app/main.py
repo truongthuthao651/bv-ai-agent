@@ -4,10 +4,12 @@ Wires up routers and application lifespan (model warmup): ``/health``, ``/ingest
 + ``/documents`` (Markdown/DOCX/XLSX/PDF/glossary), and the OpenAI-compatible
 ``/v1/chat/completions``. Scanned-image OCR arrives with the OCR increment.
 
-Also serves a small dependency-free admin UI (``app/static/index.html``) at ``/``
-for uploading documents and smoke-testing chat — Open WebUI (port 3000) has no
-notion of our custom ``/ingest`` endpoint, so this fills that gap without adding
-a frontend framework or any external/CDN dependency (must stay air-gapped).
+Also serves the React frontend (built by ``frontend/``, output committed to
+``app/static/dist/``): the public landing page at ``/``, the admin console at
+``/admin`` (upload/edit/delete documents, metrics; admin role only), and the
+chat UI at ``/chat`` (any signed-in account). The build step runs on the dev
+machine only; the deployment machine serves the committed static output and
+never runs npm.
 """
 
 from __future__ import annotations
@@ -25,7 +27,16 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from app import auth
-from app.api import chat, health, ingest, login
+from app.api import (
+    admin_ops,
+    chat,
+    chat_ui,
+    conversations,
+    health,
+    ingest,
+    login,
+    metrics,
+)
 from app.config.settings import settings
 
 logging.basicConfig(level=settings.log_level)
@@ -80,8 +91,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting bv-ai-agent API (chat_model=%s)", settings.chat_model)
     if not auth.auth_enabled():
         logger.warning(
-            "ADMIN_PASSWORD is not set: the admin dashboard (upload/delete/quick-ask) "
-            "is reachable without login. Set ADMIN_PASSWORD in .env to enable the gate."
+            "No accounts provisioned: /admin and /chat are reachable without "
+            "login. Run scripts/seed_accounts.py to create one."
+        )
+    if not settings.session_secret_key:
+        logger.warning(
+            "SESSION_SECRET_KEY is not set: a random key was generated for this "
+            "process only, so every session is invalidated on restart. Set a fixed "
+            "value in .env for sessions to persist across restarts."
         )
     if _citation_base_is_loopback():
         logger.warning(
@@ -89,9 +106,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "the reader's OWN localhost, so they only work when browsing FROM this "
             "server. For employees on the LAN, set API_PUBLIC_BASE_URL to this "
             "machine's LAN address and expose the read-only /documents/{id}/view "
-            "and /file routes there (keep ADMIN_PASSWORD set so upload/delete stay "
-            "protected). See README (Liên kết trích dẫn cho người dùng trong mạng LAN).",
+            "and /file routes there — /admin stays protected by the account login "
+            "regardless. See README (Liên kết trích dẫn cho người dùng trong mạng LAN).",
             settings.api_public_base_url,
+        )
+    if settings.api_host == "0.0.0.0" and not settings.api_shared_secret:
+        logger.warning(
+            "API_HOST=0.0.0.0 with API_SHARED_SECRET unset: /v1/chat/completions "
+            "is reachable and UNAUTHENTICATED from anywhere on the LAN by anyone "
+            "who never even loaded /chat (a signed-in /chat session is always "
+            "accepted regardless of this setting — see admin_session_gate). Set "
+            "API_SHARED_SECRET to a random value, or restrict LAN access with a "
+            "firewall rule, to close that gap for direct API callers. "
+            "See README (Liên kết trích dẫn cho người dùng trong mạng LAN)."
         )
     if settings.warmup_on_startup:
         await _warmup()
@@ -115,32 +142,101 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def admin_session_gate(request: Request, call_next):
-    """Require a valid admin session for everything except the public surface.
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
 
-    Public surface (app/auth.py PUBLIC_PREFIXES): /health, /v1 (Open WebUI's
-    server-to-server calls, gated by its own WEBUI_AUTH instead), and the
-    /login,/logout flow itself. A no-op when ADMIN_PASSWORD is unset.
+
+@app.middleware("http")
+async def admin_session_gate(request: Request, call_next):
+    """Require a valid account session for everything except the public
+    surface, and restrict /admin to the "admin" role (§ RBAC).
+
+    Public surface (app/auth.py PUBLIC_PREFIXES): /health, /login, /logout,
+    the public landing page, static assets, and the public doc-view routes.
+    A no-op when no account has been provisioned yet (auth.auth_enabled()).
+
+    /v1 accepts a valid account session (same-origin /chat calls) OR
+    API_SHARED_SECRET bearer token when configured.
     """
     path = request.url.path
+    # Attached for every request (gated or not) so downstream endpoints can
+    # read "who is this" via auth.current_account() without re-parsing the
+    # cookie — used by auth.require_admin() and the /admin role check below.
+    request.state.account = auth.is_valid_session(request.cookies.get(auth.COOKIE_NAME))
+
+    if path == "/v1" or path.startswith("/v1/"):
+        if (
+            auth.check_shared_secret(request.headers.get("authorization"))
+            or request.state.account is not None
+        ):
+            return await call_next(request)
+        return JSONResponse(
+            status_code=401, content={"detail": "Missing or invalid API key."}
+        )
+
     if not auth.auth_enabled() or auth.is_public_path(path):
         return await call_next(request)
-    if auth.is_valid_session(request.cookies.get(auth.COOKIE_NAME)):
-        return await call_next(request)
-    if "text/html" in request.headers.get("accept", ""):
-        return RedirectResponse(url=f"/login?next={path}", status_code=303)
-    return JSONResponse(status_code=401, content={"detail": "Yêu cầu đăng nhập."})
+
+    account = request.state.account
+    if account is None:
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url=f"/login?next={path}", status_code=303)
+        return JSONResponse(status_code=401, content={"detail": "Yêu cầu đăng nhập."})
+
+    # RBAC: /admin is admin-only. Employees are signed in (they can use /chat)
+    # but sent back there rather than shown an error for a page they'll never
+    # but sent back there rather than shown an error for a page they can't use.
+    if (path == "/admin" or path.startswith("/admin/")) and account.role != "admin":
+        if "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse(url="/chat/", status_code=303)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Chỉ quản trị viên (admin) mới truy cập được trang này."
+            },
+        )
+
+    return await call_next(request)
 
 
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(chat_ui.router)
 app.include_router(ingest.router)
 app.include_router(login.router)
+app.include_router(metrics.router)
+app.include_router(conversations.router)
+app.include_router(admin_ops.router)
 
-# Mounted last so it only catches paths not matched by an API route above
-# (e.g. "/", "/index.html") and doesn't shadow /health, /ingest, etc.
+_STATIC_DIR = Path(__file__).parent / "static"
+_TOKENS_DIR = Path(__file__).parent.parent / "frontend" / "src" / "tokens"
+
+# Static content served independently of the Vite build, each vendored
+# separately from the design system and reachable without a session (see
+# app/auth.py PUBLIC_PREFIXES) since none of it is business data — only code,
+# styles, fonts, and brand images:
+#   /fonts   self-hosted Inter woff2 (public/fonts symlink -> app/static/fonts)
+#   /assets  brand images + favicons (public/assets symlink -> app/static/assets),
+#            a DIFFERENT path from Vite's own JS/CSS output (see vite.config.js
+#            assetsDir: "app-assets") so the two can't collide
+#   /tokens  the raw frontend token CSS, loaded directly by
+#            app/templates/login.html. Keep this as a real source directory:
+#            Git for Windows checks out Unix symlinks as plain text files.
+app.mount("/fonts", StaticFiles(directory=_STATIC_DIR / "fonts"), name="fonts")
+app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="brand-assets")
+app.mount("/tokens", StaticFiles(directory=_TOKENS_DIR), name="tokens")
+
+# Mounted last so it only catches paths not matched by an API route or the
+# mounts above (e.g. "/", "/admin/", "/app-assets/...") and doesn't shadow
+# /health, /ingest, etc. Vite's two-page build puts the public landing page at
+# dist/index.html ("/") and the gated admin console at dist/admin/index.html
+# ("/admin/") — see app/auth.py for which of those the session gate protects.
 app.mount(
     "/",
-    StaticFiles(directory=Path(__file__).parent / "static", html=True),
-    name="admin-ui",
+    StaticFiles(directory=_STATIC_DIR / "dist", html=True),
+    name="web-ui",
 )

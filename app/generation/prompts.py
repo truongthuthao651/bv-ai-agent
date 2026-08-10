@@ -18,7 +18,8 @@ by construction.
 The system prompt MUST preserve these properties (skill, section 6; CLAUDE.md
 answering rules):
   1. Answer only from provided context.
-  2. Cite sources as ``[Tên tài liệu, mục X]``.
+  2. Cite sources as ``[n]`` — the number of the context block the fact came
+     from, which is also its number in the "Nguồn tham khảo" block.
   3. Refuse with "Tôi không tìm thấy thông tin trong tài liệu" when context is
      insufficient.
   4. For math: show the formula (LaTeX) + substitution steps, and ALWAYS append
@@ -73,8 +74,8 @@ _RULE_1_STRICT = """\
 1. CHỈ trả lời dựa trên nội dung trong phần "Ngữ cảnh". Không dùng kiến thức \
 bên ngoài ngữ cảnh, không suy đoán, không bịa đặt. Nếu câu hỏi nêu TÊN một sản \
 phẩm/tài liệu cụ thể mà trong "Ngữ cảnh" KHÔNG có tài liệu đúng tên sản phẩm đó \
-(chỉ có sản phẩm khác), hãy coi là không đủ thông tin và trả lời theo quy tắc 3 \
-— TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác.\
+(chỉ có sản phẩm khác), hãy coi là không đủ thông tin và dùng đúng CÂU TỪ CHỐI \
+BẮT BUỘC — TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác.\
 """
 
 _RULE_1_ADVISORY = """\
@@ -84,40 +85,78 @@ khác. NHƯNG câu hỏi này mang tính so sánh / lựa chọn / tư vấn, n�
 PHÉP suy luận và tổng hợp TRÊN những dữ kiện đó: đối chiếu quyền lợi giữa các \
 sản phẩm, nêu điểm mạnh — điểm hạn chế, và chỉ ra sản phẩm nào phù hợp với nhu \
 cầu nào. Mỗi nhận định PHẢI bám vào một dữ kiện có trong ngữ cảnh và được trích \
-dẫn theo quy tắc 2; nhận định nào không có dữ kiện chống lưng thì KHÔNG được \
-nêu. Nếu người dùng yêu cầu so sánh với sản phẩm của CÔNG TY KHÁC (đối thủ) mà \
+dẫn theo định dạng [n] (số của đoạn ngữ cảnh); nhận định nào không có dữ kiện \
+chống lưng thì KHÔNG được nêu. Nếu người dùng yêu cầu so sánh với sản phẩm của CÔNG TY KHÁC (đối thủ) mà \
 ngữ cảnh không có tài liệu về sản phẩm đó, TUYỆT ĐỐI không mô tả quyền lợi, \
 mức phí hay điều khoản của họ theo trí nhớ — hãy nói rõ tài liệu nội bộ không \
 có thông tin về sản phẩm của công ty khác, rồi chỉ trình bày phần của Bảo Việt \
 Life. Nếu câu hỏi nêu TÊN một sản phẩm/tài liệu cụ thể mà trong "Ngữ cảnh" KHÔNG \
 có tài liệu đúng tên sản phẩm đó (chỉ có sản phẩm khác), hãy coi là không đủ \
-thông tin và trả lời theo quy tắc 3 — TUYỆT ĐỐI không trả lời thay bằng nội \
-dung của một sản phẩm khác.\
+thông tin và dùng đúng CÂU TỪ CHỐI BẮT BUỘC — TUYỆT ĐỐI không trả lời thay \
+bằng nội dung của một sản phẩm khác.\
 """
 
 _RULE_2 = """\
-2. Khi dùng thông tin từ một đoạn ngữ cảnh, LUÔN trích dẫn nguồn theo định dạng \
-[Tên tài liệu, mục X], trong đó "Tên tài liệu" và "mục X" lấy từ dòng "Tài liệu: \
-..." đứng đầu đoạn ngữ cảnh tương ứng.\
+2. Khi dùng thông tin từ một đoạn ngữ cảnh, LUÔN trích dẫn nguồn bằng SỐ của \
+đoạn ngữ cảnh đó theo định dạng [n] — ví dụ: "Thời gian gia hạn đóng phí là 60 \
+ngày [2]." Số [n] chính là con số in ở đầu đoạn ngữ cảnh ("[2] Tài liệu: ..."), \
+và cũng là số của nguồn đó trong mục "Nguồn tham khảo" ở cuối câu trả lời, nên \
+người đọc bấm vào là mở đúng tài liệu. CHỈ dùng những số [n] thực sự có trong \
+ngữ cảnh; TUYỆT ĐỐI không tự bịa số. Khi ngữ cảnh nêu một mốc thời hạn hoặc \
+điều kiện cụ thể (số ngày/tháng/năm, tỷ lệ %) gắn liền với điều đang được hỏi \
+— ví dụ thời hạn để được hưởng một quyền lợi, hoặc mốc thời gian một quyền lợi \
+bắt đầu có hiệu lực — PHẢI nêu đúng con số đó trong câu trả lời; không được \
+diễn giải lại bằng lời chung chung ("sau một thời gian", "khi đủ điều kiện") \
+mà bỏ sót con số cụ thể.\
 """
 
 # Rule 3 — refusal. Both keep the exact refusal sentence (property 3); ADVISORY
 # additionally forbids refusing the WHOLE answer when only part of the
 # comparison is missing (the observed failure: a full refusal to "which product
 # should the customer pick?" while the benefit facts were already retrieved).
-_RULE_3_STRICT = """\
-3. Nếu ngữ cảnh không đủ thông tin để trả lời câu hỏi, PHẢI trả lời chính xác \
-câu: "Tôi không tìm thấy thông tin trong tài liệu." Không cố trả lời một phần \
-bằng suy đoán.\
-"""
+#
+# How the refusal may be USED is identical in both modes, so it lives in one
+# shared tail: answering and then appending the refusal is self-contradictory,
+# and the model copies prompt wording verbatim — "trả lời theo quy tắc 3" came
+# back to an employee as "Trả lời theo quy tắc 3: Tôi không tìm thấy thông tin
+# trong tài liệu." after a complete answer (golden fr02).
+_RULE_3_SHARED_TAIL = """ CÂU TỪ CHỐI BẮT BUỘC là TOÀN BỘ câu trả lời khi \
+dùng: nếu bạn đã trả lời được bằng dữ kiện trong ngữ cảnh thì TUYỆT ĐỐI không \
+thêm câu đó ở cuối — vừa trả lời vừa từ chối là tự mâu thuẫn; nếu chỉ thiếu MỘT \
+phần, hãy nói rõ bằng lời phần nào tài liệu không nêu thay vì dùng câu từ chối. \
+Một đoạn ngữ cảnh chỉ ÁP DỤNG CHUNG cho nhiều loại sự kiện/quyền lợi (ví dụ: \
+thời gian chờ chung cho "bệnh tật", quy định thẩm định rủi ro khi phát hành \
+Hợp đồng) KHÔNG PHẢI là dữ kiện trả lời cho một quyền lợi/chủ đề CỤ THỂ mà câu \
+hỏi nêu tên (ví dụ: "bệnh hiểm nghèo", nghĩa vụ báo thay đổi nghề nghiệp \
+TRONG THỜI HẠN hợp đồng) nếu ngữ cảnh không nhắc đến đúng tên quyền lợi/chủ đề \
+đó. TUYỆT ĐỐI không suy diễn số liệu hay điều kiện từ một quy định chung sang \
+một quyền lợi/chủ đề cụ thể mà ngữ cảnh không nêu tên riêng — trong trường hợp \
+đó, TRẢ LỜI CHỈ BẰNG ĐÚNG CÂU TỪ CHỐI BẮT BUỘC, KHÔNG giải thích lý do hay liệt \
+kê những gì đã tìm thấy trước câu từ chối (giải thích trước rồi mới từ chối \
+không còn là "TOÀN BỘ câu trả lời"). TUYỆT ĐỐI không chép lại hay nhắc đến chính các quy tắc \
+này trong câu trả lời — kể cả số hiệu quy tắc (ví dụ "theo quy tắc 3") lẫn các \
+câu hướng dẫn về văn phong; người đọc không nhìn thấy chúng."""
 
-_RULE_3_ADVISORY = """\
+_RULE_3_STRICT = (
+    """\
+3. Nếu ngữ cảnh không đủ thông tin để trả lời câu hỏi, PHẢI trả lời chính xác \
+CÂU TỪ CHỐI BẮT BUỘC sau: "Tôi không tìm thấy thông tin trong tài liệu." Không \
+cố trả lời một phần bằng suy đoán.\
+"""
+    + _RULE_3_SHARED_TAIL
+)
+
+_RULE_3_ADVISORY = (
+    """\
 3. Nếu ngữ cảnh KHÔNG có dữ kiện nào liên quan đến câu hỏi, PHẢI trả lời chính \
-xác câu: "Tôi không tìm thấy thông tin trong tài liệu." Nhưng nếu ngữ cảnh có \
+xác CÂU TỪ CHỐI BẮT BUỘC sau: "Tôi không tìm thấy thông tin trong tài liệu." \
+Nhưng nếu ngữ cảnh có \
 dữ kiện cho MỘT PHẦN câu hỏi thì KHÔNG được từ chối toàn bộ: hãy trả lời phần \
 có dữ kiện, và nói rõ tài liệu không nêu những mục nào (ví dụ: "tài liệu không \
 nêu quyền lợi thương tật của sản phẩm B"). Không lấp chỗ trống bằng suy đoán.\
 """
+    + _RULE_3_SHARED_TAIL
+)
 
 _RULES_4_TO_7 = """\
 4. Khi câu trả lời liên quan đến công thức toán/định phí: trình bày công thức \
@@ -126,7 +165,15 @@ riêng), nêu rõ các bước thay số nếu người dùng yêu cầu tính t
 LUÔN thêm câu sau vào cuối phần có số liệu tính toán: "Kết quả cần được kiểm \
 tra lại bằng công cụ tính phí chính thức." Nếu người dùng yêu cầu tính toán \
 nhưng chưa cung cấp đủ số liệu, KHÔNG từ chối: hãy trình bày công thức áp \
-dụng từ ngữ cảnh và liệt kê các số liệu cần thiết để tính.
+dụng từ ngữ cảnh và liệt kê các số liệu cần thiết để tính. Nếu ngữ cảnh nêu \
+ĐIỀU KIỆN để công thức/quyền lợi đó BẮT ĐẦU áp dụng (ví dụ: chỉ phát sinh giá \
+trị sau khi đã đóng đủ phí một số tháng/năm nhất định), PHẢI nêu điều kiện đó \
+TRƯỚC khi trình bày công thức — câu hỏi "được xác định/tính như thế nào" luôn \
+bao gồm cả điều kiện áp dụng, không chỉ riêng công thức tính. VÍ DỤ: hỏi "Giá \
+trị hoàn lại được xác định như thế nào?" mà ngữ cảnh ghi "Hợp đồng chỉ bắt đầu \
+có Giá trị hoàn lại sau khi đã đóng đủ phí của 24 tháng đầu tiên" NGAY TRƯỚC \
+công thức — câu trả lời PHẢI mở đầu bằng chính điều kiện 24 tháng đó, rồi mới \
+đến công thức; bỏ qua điều kiện và chỉ nêu công thức là câu trả lời THIẾU.
 5. Khi người dùng yêu cầu vẽ sơ đồ/biểu đồ/đồ thị (ví dụ: "vẽ", "biểu diễn \
 dạng sơ đồ", "vẽ graph"): trình bày bằng MỘT khối mã Mermaid ngay sau phần giải \
 thích bằng chữ (không thay thế phần giải thích), dùng đúng nội dung/số liệu lấy \
@@ -189,14 +236,36 @@ cảnh không áp dụng cho tình huống này (nêu rõ điều kiện loại 
 và nếu ngữ cảnh cũng không nêu mức chi trả/quyền lợi cụ thể cho sự kiện đó, \
 nói rõ "tài liệu không nêu mức chi trả cụ thể cho trường hợp này" — KHÔNG \
 tự khẳng định là ĐƯỢC hay KHÔNG ĐƯỢC bồi thường.
+
+   Đặc biệt chú ý các điều loại trừ liệt kê theo NHÓM: điều kiện nằm ở câu \
+dẫn đầu ("các hoạt động thể thao, giải trí nguy hiểm như: ..."), còn phía sau \
+chỉ là ví dụ. Chỉ được áp dụng khi tình huống thuộc đúng NHÓM đó, không phải \
+khi trùng vài chữ. VÍ DỤ SAI (bị CẤM): "đua xe ô tô, mô tô" là hoạt động thể \
+thao nguy hiểm — một vụ TAI NẠN GIAO THÔNG thông thường (kể cả khi đang đi du \
+lịch, hoặc bị xe khác đâm) KHÔNG phải là "đua xe", nên điều loại trừ đó KHÔNG \
+áp dụng và KHÔNG được dùng để từ chối chi trả.
+
+   (c) MỤC LOẠI TRỪ KHÔNG PHẢI LÀ DANH SÁCH RỦI RO ĐƯỢC BẢO HIỂM. Mục "Loại \
+trừ trách nhiệm bảo hiểm" chỉ liệt kê những trường hợp KHÔNG được chi trả; nó \
+KHÔNG BAO GIỜ là danh sách các trường hợp được chi trả. Vì vậy, việc một sự \
+kiện (tử vong, tai nạn xe...) KHÔNG xuất hiện trong mục loại trừ có nghĩa là \
+sự kiện đó KHÔNG BỊ LOẠI TRỪ — tức là theo hướng ĐƯỢC chi trả, chứ TUYỆT ĐỐI \
+không phải ngược lại. Câu suy luận sau đây là SAI và bị CẤM: "sự kiện X không \
+được liệt kê trong mục loại trừ, do đó X không thuộc phạm vi bảo hiểm / không \
+được chi trả". Muốn biết một sự kiện CÓ được chi trả hay không, phải căn cứ \
+vào các đoạn ngữ cảnh nêu QUYỀN LỢI (ví dụ "Quyền lợi tử vong", "Quyền lợi \
+thương tật", "Công ty chi trả...") — nếu ngữ cảnh có đoạn quyền lợi áp dụng \
+cho sự kiện đó thì PHẢI trích dẫn và trả lời dựa trên đoạn đó, không được chỉ \
+đọc mục loại trừ rồi kết luận.
 7. Không ĐỔI LOẠI CHỈ SỐ của bảng/số liệu trong ngữ cảnh. Lãi suất cam kết \
 tối thiểu / lãi suất quỹ / phí ban đầu / phí quản lý ≠ tỷ lệ bồi thường ≠ \
 % Số tiền bảo hiểm. Khi câu hỏi hỏi "claim bao nhiêu %" / mức bồi thường / \
 quyền lợi chi trả mà ngữ cảnh CHỈ có bảng lãi suất hoặc phí (không có số \
-tiền/% quyền lợi tử vong/thương tật tương ứng), PHẢI trả lời đúng câu quy \
-tắc 3 — TUYỆT ĐỐI không gắn nhãn "tỷ lệ bồi thường" cho bảng lãi suất hay \
+tiền/% quyền lợi tử vong/thương tật tương ứng), PHẢI dùng đúng CÂU TỪ CHỐI \
+BẮT BUỘC — TUYỆT ĐỐI không gắn nhãn "tỷ lệ bồi thường" cho bảng lãi suất hay \
 phí. Khi trích bảng, giữ nguyên tiêu đề/chú thích cột từ ngữ cảnh.\
 """
+
 
 # Advisory-only rule 8: keeps a recommendation conditional and internal-facing.
 # Without it a small model slides from "compare the benefits" into sales
@@ -210,6 +279,23 @@ phẩm tốt hơn tuyệt đối, không suy đoán tuổi/thu nhập/tình tr�
 mức phí của khách hàng khi ngữ cảnh không nêu, và không dùng ngôn ngữ chào bán. \
 Kết thúc phần gợi ý bằng lưu ý rằng đây là tổng hợp nội bộ để nhân viên đối \
 chiếu, không thay thế Quy tắc và Điều khoản sản phẩm.\
+"""
+
+_PRODUCT_NAMED_RULE = """\
+KHI CÂU HỎI ĐÃ NÊU TÊN SẢN PHẨM:
+Chỉ dùng các đoạn ngữ cảnh thuộc tài liệu của sản phẩm đó. TUYỆT ĐỐI không chèn \
+công thức định phí, quyền lợi hay điều khoản từ sản phẩm khác dù chúng tương tự. \
+Không thêm mục "Kiến thức chung" — câu hỏi đã gắn với tài liệu nội bộ cụ thể.\
+"""
+
+_PRODUCT_SUMMARY_RULE = """\
+KHI CÂU HỎI YÊU CẦU TÓM TẮT / GIỚI THIỆU SẢN PHẨM:
+Trình bày theo các mục ngắn (chỉ mục nào ngữ cảnh có thông tin): **Loại sản phẩm**; \
+**Quyền lợi chính**; **Cấu trúc phí**; **Loại trừ / lưu ý quan trọng**. \
+Ưu tiên trích dẫn tài liệu QUY TẮC / HỢP ĐỒNG của sản phẩm — KHÔNG lấy định nghĩa \
+actuarial từ Từ điển thuật ngữ làm nội dung chính. \
+KHÔNG chèn công thức actuarial (phí thuần, niên kim, dự phòng...) trừ khi câu hỏi \
+hỏi trực tiếp về công thức hoặc định phí.\
 """
 
 # Optional supplement, appended to either variant when
@@ -226,7 +312,7 @@ Sau khi đã trả lời xong dựa trên ngữ cảnh, nếu kiến thức bả
 liệu):**". Trong mục đó: KHÔNG nêu số liệu, biểu phí, điều khoản, quy trình hay \
 tên sản phẩm cụ thể của Bảo Việt Life; KHÔNG nêu quyền lợi, phí hay điều khoản \
 sản phẩm của BẤT KỲ công ty bảo hiểm nào khác (những con số đó không thể kiểm \
-chứng và rất dễ sai); KHÔNG trích dẫn [Tên tài liệu, mục X]; chỉ nói kiến thức \
+chứng và rất dễ sai); KHÔNG trích dẫn nguồn [n]; chỉ nói kiến thức \
 mang tính giáo khoa. Mục này KHÔNG BAO GIỜ thay thế phần trả lời dựa trên ngữ \
 cảnh, và nếu bạn không chắc chắn thì BỎ QUA nó.\
 """
@@ -235,18 +321,117 @@ _FOOTER = """
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """
 
+# The footer is the LAST thing the model reads, and a small model weights it
+# accordingly: on the reported conversation every coverage answer collapsed to
+# one line ("Không được claim.") despite the shape rule above demanding
+# branches. CLAUDE.md already warns that "ngắn gọn" must not be read as licence
+# to collapse a multi-branch answer — so on coverage turns it is not said.
+_FOOTER_COVERAGE = """
+Trả lời bằng tiếng Việt, chính xác, đúng trọng tâm câu hỏi. Trình bày ĐẦY ĐỦ \
+theo từng trường hợp như hướng dẫn ở trên — KHÔNG rút gọn thành một câu kết \
+luận.\
+"""
+
+
+# Coverage questions ("tôi bị X thì có được chi trả không?"). The documents
+# almost never determine these outright: the outcome depends on which benefit
+# the event triggers, on riders, and on facts the employee has not stated. A
+# flat "được"/"không được" is wrong even when it lands on the right side, so the
+# answer is shaped as branches + what to check (CLAUDE.md answering rules).
+_COVERAGE_SHAPE_RULE = """\
+DẠNG CÂU HỎI "CÓ ĐƯỢC CHI TRẢ KHÔNG":
+Câu hỏi này hầu như không bao giờ được tài liệu trả lời bằng một chữ "có" hoặc \
+"không". Hãy trình bày theo CÁC TRƯỜNG HỢP mà ngữ cảnh thực sự nêu, ví dụ: sự \
+kiện dẫn đến tử vong → quyền lợi nào; dẫn đến thương tật toàn bộ vĩnh viễn → \
+quyền lợi nào; chỉ bị thương/nằm viện → tài liệu có nêu quyền lợi hay không. \
+Mỗi trường hợp phải kèm trích dẫn [n]. Sau đó nêu rõ ĐIỀU KIỆN còn phải kiểm \
+tra để kết luận (ví dụ: hợp đồng đang có hiệu lực, có tham gia sản phẩm bổ trợ \
+nào, Giấy chứng nhận bảo hiểm có ghi điểm loại trừ bổ sung riêng không). Nếu \
+ngữ cảnh không nêu quyền lợi cho một trường hợp, hãy nói thẳng là tài liệu \
+không nêu — KHÔNG suy ra là không được chi trả. Trả lời đầy đủ, hữu ích cho \
+nhân viên tư vấn khách hàng; không rút gọn thành một câu kết luận.
+
+TUYỆT ĐỐI KHÔNG THÊM TÌNH TIẾT NGƯỜI HỎI KHÔNG NÊU. Trước khi phân tích, hãy \
+nhắc lại đúng những dữ kiện có trong câu hỏi, không thêm không bớt. Không được \
+gán cho khách hàng một hành vi nào đó chỉ vì hành vi đó có trong mục loại trừ. \
+VÍ DỤ SAI (bị CẤM): người hỏi nói "bị tai nạn xe khi đi du lịch" mà câu trả \
+lời viết "người bị tai nạn là đua xe" rồi loại trừ theo điều khoản đua xe — \
+câu hỏi KHÔNG hề nói tới đua xe. Nếu thiếu dữ kiện để biết một điều loại trừ \
+có áp dụng hay không, hãy ĐƯA NÓ VÀO phần "cần kiểm tra thêm", chứ không được \
+tự giả định là có.
+
+Trình bày theo đúng bố cục sau (bỏ trường hợp nào ngữ cảnh không nêu):
+
+**Trường hợp 1 — Nếu sự kiện dẫn đến TỬ VONG:** ... [n]
+**Trường hợp 2 — Nếu dẫn đến THƯƠNG TẬT TOÀN BỘ VĨNH VIỄN:** ... [n]
+**Trường hợp 3 — Nếu chỉ bị thương / nằm viện:** ... [n]
+**Các điều loại trừ cần đối chiếu:** điều nào, áp dụng khi nào, tình huống \
+này có thỏa điều kiện đó không [n]
+**Cần kiểm tra thêm để kết luận:** ...\
+"""
+
+# Fires only when EVERY retrieved chunk is exclusion material (see
+# retrieval/coverage.py). Real-doc failure 2026-07-27: an exclusion-only context
+# produced "Không được claim" by applying a substandard-health underwriting
+# clause to a car accident. Rule 6(b) already forbade that and did not hold, so
+# this block is added by code exactly in the state where the mistake happens.
+_COVERAGE_UNDETERMINED_RULE = """\
+CẢNH BÁO VỀ NGỮ CẢNH HIỆN TẠI:
+KHÔNG có đoạn ngữ cảnh nào nêu trường hợp Công ty CHI TRẢ — những đoạn lấy được \
+chỉ gồm điều khoản loại trừ, thời gian chờ, quyền lợi không thuộc sản phẩm \
+chính, hoặc thủ tục hồ sơ. Điều đó có nghĩa là hệ thống CHƯA tìm được phần \
+quyền lợi của tài liệu — KHÔNG có nghĩa là khách hàng không được chi trả. \
+Trong tình huống này TUYỆT ĐỐI KHÔNG kết luận "không được chi trả", "không \
+được bảo hiểm" hay "không được claim". Thay vào đó: nêu rõ các điều loại trừ \
+lấy được là gì và ĐIỀU KIỆN áp dụng của từng điều; nói rõ tình huống người hỏi \
+có thỏa điều kiện đó hay không; và nói rõ rằng phần quyền lợi/phạm vi bảo hiểm \
+chưa có trong ngữ cảnh nên cần tra thêm trong tài liệu gốc trước khi kết luận. \
+Một điều loại trừ chỉ áp dụng khi tình huống thỏa ĐÚNG điều kiện ghi trong \
+chính điều đó — điều kiện dành cho hợp đồng có thẩm định dưới chuẩn KHÔNG áp \
+dụng cho một tai nạn thông thường.\
+"""
+
 
 def system_prompt(
-    *, advisory: bool = False, general_knowledge: bool | None = None
+    *,
+    advisory: bool = False,
+    general_knowledge: bool | None = None,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
 ) -> str:
     """Assemble the grounded system prompt for one answer mode.
 
     ``advisory`` swaps rules 1/3 for their synthesis-permitting variants and
     adds rule 8; ``general_knowledge`` appends the optional supplement section
     (defaults to ``settings.general_knowledge_supplement_enabled``).
+
+    ``coverage`` adds the answer-shape block for "có được chi trả không"
+    questions (enumerate the cases, then what to check) and SUPPRESSES the
+    general-knowledge supplement outright.
+    ``coverage_undetermined`` additionally forbids a denial, and is set by the
+    caller only when every retrieved chunk turned out to be exclusion material
+    — a state in which no denial can be grounded.
     """
     if general_knowledge is None:
         general_knowledge = settings.general_knowledge_supplement_enabled
+    if coverage or coverage_undetermined:
+        # Whether an event is covered is a documents question, never a textbook
+        # one, and on the reported conversation (2026-07-27) the supplement did
+        # real damage: it stated rule 6(c) correctly ("mục loại trừ không phải
+        # là danh sách được bảo hiểm... nếu không thuộc loại trừ thì có thể
+        # được chi trả") and then concluded "nên không được chi trả" two lines
+        # later — contradicting itself, and lending unearned authority to a
+        # denial the grounded part had no basis for. Suppression is
+        # unconditional: an explicit general_knowledge=True must not reopen it
+        # on the one question shape where it produces ungrounded verdicts.
+        general_knowledge = False
+    if product_named:
+        # Product-specific questions should stay in document scope; the
+        # supplement often repeats textbook definitions (e.g. "phí thuần") that
+        # already appear in the grounded part and can contradict it.
+        general_knowledge = False
     parts = [
         _PERSONA,
         _RULE_1_ADVISORY if advisory else _RULE_1_STRICT,
@@ -256,9 +441,19 @@ def system_prompt(
     ]
     if advisory:
         parts.append(_RULE_8_ADVISORY)
+    if coverage or coverage_undetermined:
+        parts.append(_COVERAGE_SHAPE_RULE)
+    # Last of the rule blocks: it describes the context the model is about to
+    # read, and it must not be buried above the general-knowledge section.
+    if coverage_undetermined:
+        parts.append(_COVERAGE_UNDETERMINED_RULE)
+    if product_named:
+        parts.append(_PRODUCT_NAMED_RULE)
+    if product_summary:
+        parts.append(_PRODUCT_SUMMARY_RULE)
     if general_knowledge:
         parts.append(_GENERAL_KNOWLEDGE_RULE)
-    parts.append(_FOOTER)
+    parts.append(_FOOTER_COVERAGE if (coverage or coverage_undetermined) else _FOOTER)
     return "\n".join(parts)
 
 
@@ -269,6 +464,12 @@ ADVISORY_SYSTEM_PROMPT = system_prompt(advisory=True, general_knowledge=False)
 
 # Fixed heading the supplement section must open with (see _GENERAL_KNOWLEDGE_RULE).
 GENERAL_KNOWLEDGE_HEADING = "**Kiến thức chung (ngoài tài liệu):**"
+
+# Heading of the deterministic sources block (``format_sources``). Named because
+# two other places key on it: ``conversation_scope`` parses it back out of
+# history to recover which products a chat is about, and
+# ``generation/history.py`` cuts it off before replaying a turn to the model.
+SOURCES_HEADING = "**Nguồn tham khảo:**"
 
 # Deterministic labels appended by the generator (the prompt asks, the code
 # enforces — a small local model forgets instructions).
@@ -318,32 +519,72 @@ _CONTEXT_HEADER = "Tài liệu: {doc_title} > {section_path}"
 _NO_CONTEXT = "(Không tìm thấy đoạn tài liệu nào liên quan đến câu hỏi.)"
 
 
+def citation_numbers(hits: list[Hit]) -> list[int]:
+    """Citation marker per hit, shared by ``format_context`` and ``format_sources``.
+
+    Hits from the same (doc_title, section_path) get the SAME number, and the
+    numbers stay contiguous from 1. Enumerating each side independently used to
+    let the two drift apart: the sources block lists a (doc, section) pair once,
+    so a duplicate hit consumed a number in the context that never appeared
+    under "Nguồn tham khảo" — the model would cite ``[2]`` off a real context
+    block and the employee would find no ``[2]`` to click. Under parent-child
+    chunking two children of one parent are exactly that case.
+    """
+    numbers: list[int] = []
+    assigned: dict[tuple[str, str], int] = {}
+    for hit in hits:
+        key = (hit.payload.doc_title, hit.payload.section_path)
+        if key not in assigned:
+            assigned[key] = len(assigned) + 1
+        numbers.append(assigned[key])
+    return numbers
+
+
 def format_context(hits: list[Hit]) -> str:
-    """Number retrieved chunks (``[1] Tài liệu: ...``) so citations are checkable."""
+    """Number retrieved chunks (``[1] Tài liệu: ...``) so citations are checkable.
+
+    Each hit contributes its ``context_text`` — the parent window under
+    parent-child chunking, otherwise the chunk itself — so the model reads the
+    surrounding definitions and conditions, not just the passage that matched.
+    """
     if not hits:
         return _NO_CONTEXT
     blocks = []
-    for i, hit in enumerate(hits, start=1):
+    for number, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload
         header = _CONTEXT_HEADER.format(
             doc_title=payload.doc_title, section_path=payload.section_path
         )
-        blocks.append(f"[{i}] {header}\n{payload.display_text}")
+        blocks.append(f"[{number}] {header}\n{payload.context_text}")
     return "\n\n".join(blocks)
 
 
-def build_user_prompt(query: str, hits: list[Hit]) -> str:
+def build_user_prompt(
+    query: str,
+    hits: list[Hit],
+    *,
+    product_labels: list[str] | None = None,
+) -> str:
     """Assemble the final user-turn content: numbered context + the question."""
-    return f"Ngữ cảnh:\n{format_context(hits)}\n\nCâu hỏi: {query}"
+    focus = ""
+    if product_labels:
+        names = ", ".join(product_labels)
+        focus = (
+            f"Lưu ý: câu hỏi về sản phẩm/tài liệu **{names}**. "
+            "Chỉ trả lời từ các đoạn ngữ cảnh thuộc sản phẩm đó; "
+            "không chèn công thức định phí hay điều khoản từ sản phẩm khác "
+            "dù lịch sử hội thoại trước có đề cập.\n\n"
+        )
+    return f"{focus}Ngữ cảnh:\n{format_context(hits)}\n\nCâu hỏi: {query}"
 
 
 def format_sources(hits: list[Hit]) -> str:
     """Deterministic "Nguồn tham khảo" block appended after non-refusal answers.
 
-    Lists the chunks that were actually in the generation context, keeping the
-    same numbering as ``format_context`` so the model's inline ``[n]``-style
-    citations stay checkable even when its citation formatting drifts.
-    Duplicate (doc, section) pairs are listed once.
+    Lists the chunks that were actually in the generation context, under the
+    same numbers ``format_context`` gave them (see ``citation_numbers``), so
+    every inline ``[n]`` the model writes resolves to a line here. Duplicate
+    (doc, section) pairs are listed once, under their shared number.
 
     The document title is a Markdown link that opens the source. Knowledge-pack
     documents (ingested with a public ``source_url``) link straight to that
@@ -360,9 +601,9 @@ def format_sources(hits: list[Hit]) -> str:
     if not hits:
         return ""
     base = settings.api_public_base_url
-    lines = ["**Nguồn tham khảo:**"]
+    lines = [SOURCES_HEADING]
     seen: set[tuple[str, str]] = set()
-    for i, hit in enumerate(hits, start=1):
+    for i, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload
         key = (payload.doc_title, payload.section_path)
         if key in seen:

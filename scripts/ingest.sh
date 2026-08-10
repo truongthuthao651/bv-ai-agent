@@ -12,7 +12,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # Read one variable from .env. Never `source` it: values contain spaces and
-# UTF-8 (ASSISTANT_NAME, WEBUI_NAME), which the shell would try to execute.
+# UTF-8 (ASSISTANT_NAME), which the shell would try to execute.
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 
 API_PORT="$(env_get API_PORT)"
@@ -23,6 +23,27 @@ TARGET="${1:-data/synthetic}"
 if [[ ! -d "$TARGET" ]]; then
   echo "ERROR: '$TARGET' is not a directory." >&2
   exit 1
+fi
+
+# /ingest sits behind the admin session gate (app/auth.py) whenever
+# ADMIN_PASSWORD is set, so log in once and reuse the session cookie. Without
+# this every upload comes back 401. Unset password = gate disabled = no login.
+COOKIE_JAR=""
+cleanup() { [[ -n "$COOKIE_JAR" ]] && rm -f "$COOKIE_JAR"; }
+trap cleanup EXIT
+
+ADMIN_PASSWORD="$(env_get ADMIN_PASSWORD)"
+if [[ -n "$ADMIN_PASSWORD" ]]; then
+  COOKIE_JAR="$(mktemp)"
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+    -c "$COOKIE_JAR" --data-urlencode "password=${ADMIN_PASSWORD}" \
+    "${API_URL}/login" || echo 000)"
+  if [[ "$status" != "200" ]]; then
+    echo "ERROR: admin login failed (HTTP $status). Check ADMIN_PASSWORD in .env" \
+      "and that the API is running at ${API_URL}." >&2
+    exit 1
+  fi
+  echo "==> Logged in to the admin session."
 fi
 
 # Keep in sync with app/ingestion/router.py (scanned images land with OCR).
@@ -43,6 +64,7 @@ while IFS= read -r file; do
   body="$(mktemp)"
   # Long --max-time: formula verbalization is slow on CPU (see the skill).
   status="$(curl -sS -o "$body" -w '%{http_code}' --max-time 600 \
+    ${COOKIE_JAR:+-b "$COOKIE_JAR"} \
     -F "file=@${file}" "${API_URL}/ingest" || echo 000)"
   if [[ "$status" == "200" ]]; then
     echo "  [ OK ] $file -> $(cat "$body")"

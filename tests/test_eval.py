@@ -51,8 +51,11 @@ def test_golden_set_loads_and_has_required_fields() -> None:
     assert len({i.id for i in items}) == len(items)  # unique ids
     for item in items:
         assert item.question and item.ground_truth and item.category
-        # Only refusal questions may lack a labeled source.
-        if item.category != "refusal":
+        # Refusal questions (nothing in the corpus answers them) and
+        # adversarial ones that deliberately span multiple/no specific
+        # document (e.g. a 3-product summary, a bare no-product coverage
+        # question) may lack a single labeled source.
+        if item.category not in ("refusal", "adversarial"):
             assert item.source_doc
 
 
@@ -99,6 +102,89 @@ def test_check_answer_citation_not_fooled_by_sources_block() -> None:
     checks = check_answer(_item(), answer)
     assert checks["has_citation"] is False
     assert checks["false_refusal"] is False
+
+
+def test_check_answer_counts_single_digit_markers_that_resolve() -> None:
+    # The model cites as [n] keyed to the numbered context blocks. A pattern
+    # requiring 2+ characters between the brackets scored every one of these as
+    # "no citation" and read 0.50 on a run whose real rate was 0.925.
+    answer = (
+        "Thời gian gia hạn là 60 ngày [2].\n\n**Nguồn tham khảo:**\n- [2] X — Điều 6"
+    )
+    checks = check_answer(_item(), answer)
+    assert checks["has_citation"] is True
+    assert checks["has_dangling_citation"] is False
+
+
+def test_check_answer_flags_a_citation_the_sources_block_does_not_list() -> None:
+    # [7] is not in the sources block: the employee clicks nothing. Invented
+    # provenance is worse than none, so it is reported separately.
+    answer = "Quyền lợi là 100% STBH [7].\n\n**Nguồn tham khảo:**\n- [1] X — Điều 4"
+    checks = check_answer(_item(), answer)
+    assert checks["has_citation"] is False
+    assert checks["has_dangling_citation"] is True
+
+
+def test_assertions_gate_exclusion_polarity_in_both_directions() -> None:
+    covered = GoldenItem(
+        id="q37",
+        category="policy_qa",
+        question="Có được chi trả không?",
+        ground_truth="Có.",
+        must_say=["được chi trả"],
+        must_not_say=["không chi trả", "không được chi trả"],
+    )
+    good = "Trường hợp này được chi trả, vì không thuộc các trường hợp loại trừ."
+    bad = "Do đó, Công ty không chi trả quyền lợi tử vong."
+    assert check_answer(covered, good)["assertions_pass"] is True
+    assert check_answer(covered, bad)["assertions_pass"] is False
+    # An item without assertions is not scored on them.
+    assert check_answer(_item(), good)["assertions_pass"] is None
+
+
+def test_must_say_alternative_list_satisfied_by_any_one() -> None:
+    # 2026-08-06: a fact the source spells one way ("hai mươi mốt (21)
+    # ngày") that the model sometimes faithfully quotes and sometimes
+    # paraphrases to the bare numeral ("21 ngày") -- both are correct, so a
+    # must_say entry can be a list of acceptable alternatives.
+    item = GoldenItem(
+        id="q51",
+        category="policy_qa",
+        question="X?",
+        ground_truth="Y.",
+        must_say=[["(21) ngày", "21 ngày"]],
+    )
+    assert (
+        check_answer(item, "Trong vòng hai mươi mốt (21) ngày...")["assertions_pass"]
+        is True
+    )
+    assert check_answer(item, "Trong vòng 21 ngày...")["assertions_pass"] is True
+    assert check_answer(item, "Trong vòng 30 ngày...")["assertions_pass"] is False
+
+
+def test_assertions_ignore_the_sources_block() -> None:
+    # A document title must never satisfy a content assertion.
+    item = GoldenItem(
+        id="qx",
+        category="policy_qa",
+        question="?",
+        ground_truth="…",
+        must_say=["24 tháng"],
+    )
+    answer = (
+        "Không nêu điều kiện.\n\n**Nguồn tham khảo:**\n- [1] Quy định 24 tháng — Điều 9"
+    )
+    assert check_answer(item, answer)["assertions_pass"] is False
+
+
+def test_gate_fails_on_assertions_and_dangling_citations() -> None:
+    rows = [
+        Row(id="a", category="policy_qa", checks={"assertions_pass": False}),
+        Row(id="b", category="policy_qa", checks={"has_dangling_citation": True}),
+    ]
+    result = gate(rows)
+    assert result["failed_assertions"] == ["a"]
+    assert result["dangling_citations"] == ["b"]
 
 
 def test_check_answer_refusal_category() -> None:
@@ -236,3 +322,32 @@ def test_gate_does_not_flag_undecided_hybrid_refusal_in_retrieval_only() -> None
         ),
     ]
     assert gate(rows)["leaked_refusals"] == []
+
+
+def test_judge_sends_matching_context_window(monkeypatch) -> None:
+    # 2026-08-06: found live mid-run that this payload lacked num_ctx, so the
+    # judge call (Ollama's modelfile default context) and the generation
+    # call for the NEXT item (num_ctx=llm_context_window) on the same loaded
+    # llama.cpp instance forced a full model reload between every single
+    # item -- not a no-op, and the direct cause of intermittent 500s
+    # observed during the Day 5 full-corpus run (~/.ollama/logs/server.log
+    # showed n_ctx_slot flip-flopping between consecutive requests).
+    from app.config.settings import settings
+
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"response": '{"correct": true}'}
+
+    def fake_post(url, json, **kwargs):
+        captured.update(json)
+        return _Resp()
+
+    monkeypatch.setattr(run_ragas.httpx, "post", fake_post)
+    out = run_ragas._judge("prompt bất kỳ", "correct")
+    assert out is True
+    assert captured["options"]["num_ctx"] == settings.llm_context_window

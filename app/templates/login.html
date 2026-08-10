@@ -3,171 +3,411 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#14456F" />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
 <title>Đăng nhập — Trợ lý AI Bảo Việt Life</title>
+<link rel="stylesheet" href="/tokens/styles.css" />
 <style>
-  :root {
-    --navy: #00559b;
-    --navy-dark: #003a63;
-    --blue: #0072bc;
-    --blue-dark: #005a96;
-    --gold: #f7b928;
-    --gold-dark: #d99e0b;
-    --bg: #f3f7fb;
-    --card: #ffffff;
-    --border: #dbe6ef;
-    --text: #1e2b33;
-    --muted: #6b7c85;
-    --bad: #c23b3b;
-  }
   * { box-sizing: border-box; }
   html, body {
     height: 100%;
     margin: 0;
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
   }
-  body {
+  .page {
+    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(160deg, var(--navy) 0%, var(--navy-dark) 55%, #001f36 100%);
-    padding: 20px;
+    padding: var(--space-8) var(--space-6);
+    background: linear-gradient(155deg, var(--brand-navy) 0%, var(--brand-ink) 58%, #06192B 100%);
+    position: relative;
+    overflow: hidden;
   }
-  .panel {
+  .glow {
+    position: absolute;
+    top: 10%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(560px, 92vw);
+    height: min(560px, 92vw);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(224,162,8,.14) 0%, rgba(42,122,193,.07) 40%, transparent 68%);
+    pointer-events: none;
+  }
+  .stack {
+    position: relative;
     width: 100%;
     max-width: 380px;
-    background: var(--card);
-    border-radius: 14px;
-    padding: 36px 32px 30px;
-    box-shadow: 0 20px 50px rgba(0, 20, 40, 0.35);
-    border-top: 4px solid var(--gold);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .card {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: var(--radius-xl);
+    padding: var(--pad-card-lg);
+    box-shadow: var(--shadow-lg);
   }
   .brand {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 26px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-6);
+    text-align: center;
   }
-  .brand-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 46px;
-    height: 46px;
-    border-radius: 10px;
-    background: var(--blue);
-    border-bottom: 3px solid var(--gold);
-    color: #fff;
-    font-weight: 800;
-    font-size: 19px;
-    flex-shrink: 0;
+  .brand img {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
   }
-  .brand h1 {
-    margin: 0;
-    font-size: 15px;
-    color: var(--navy-dark);
-    line-height: 1.35;
+  .brand-name {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: var(--tracking-tight);
   }
-  .brand p {
-    margin: 2px 0 0;
-    font-size: 12px;
-    color: var(--muted);
+  .card h1 {
+    margin: 0 0 var(--space-5);
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    color: var(--text-primary);
+    text-align: center;
   }
   label {
     display: block;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--navy-dark);
-    margin-bottom: 6px;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
   }
-  input[type="password"] {
+  input[type="password"], input[type="email"] {
     width: 100%;
     font: inherit;
-    padding: 11px 13px;
-    border-radius: 7px;
+    font-size: var(--text-sm);
+    height: var(--control-h-lg);
+    padding: 0 var(--pad-control-x);
+    border-radius: var(--radius-md);
     border: 1px solid var(--border);
-    background: #fff;
-    color: var(--text);
+    background: var(--surface);
+    color: var(--text-primary);
   }
-  input[type="password"]:focus {
+  input::placeholder { color: var(--text-muted); }
+  input[type="password"]:focus, input[type="email"]:focus {
     outline: none;
-    border-color: var(--blue);
-    box-shadow: 0 0 0 3px rgba(0, 114, 188, 0.15);
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 3px var(--accent-subtle);
   }
-  button {
+  input[type="password"]:focus-visible, input[type="email"]:focus-visible,
+  button[type="submit"]:focus-visible, .switch-mode button:focus-visible,
+  .back:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  button[type="submit"] {
     width: 100%;
-    margin-top: 18px;
+    margin-top: var(--space-5);
     font: inherit;
-    font-weight: 700;
-    padding: 11px 12px;
-    border-radius: 7px;
+    font-weight: var(--weight-bold);
+    font-size: var(--text-base);
+    height: var(--control-h-lg);
+    border-radius: var(--radius-md);
     border: none;
-    background: var(--blue);
-    color: #fff;
+    background: var(--accent);
+    color: var(--text-on-accent);
     cursor: pointer;
+    transition: background 150ms;
   }
-  button:hover:not(:disabled) { background: var(--blue-dark); }
-  button:disabled { opacity: .6; cursor: not-allowed; }
+  button[type="submit"]:hover:not(:disabled) { background: var(--accent-hover); }
+  button[type="submit"]:disabled { opacity: .6; cursor: not-allowed; }
   #err {
-    margin-top: 14px;
-    font-size: 13px;
-    color: var(--bad);
-    min-height: 18px;
-  }
-  .note {
-    margin-top: 22px;
-    font-size: 11.5px;
-    color: var(--muted);
-    line-height: 1.5;
+    margin-top: var(--space-3);
+    font-size: var(--text-xs);
+    color: var(--danger);
+    min-height: 16px;
     text-align: center;
+  }
+  .switch-mode {
+    margin-top: var(--space-5);
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+  .switch-mode button {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: inherit;
+    font-weight: var(--weight-semibold);
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .back {
+    display: block;
+    margin-top: var(--space-5);
+    text-align: center;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    color: rgba(255, 255, 255, .56);
+    text-decoration: none;
+    transition: color 150ms;
+  }
+  .back:hover { color: rgba(255, 255, 255, .88); }
+  .hidden { display: none; }
+  .field-gap { margin-bottom: var(--space-4); }
+  .lang-toggle {
+    position: absolute;
+    top: var(--space-5);
+    right: var(--space-5);
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--radius-md);
+    padding: 2px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .lang-toggle button {
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    transition: background 150ms, color 150ms;
+  }
+  .lang-toggle button.active {
+    background: rgba(224, 162, 8, 0.22);
+    color: var(--brand-gold-light);
+  }
+  .lang-toggle button:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
   }
 </style>
 </head>
 <body>
 
-<div class="panel">
-  <div class="brand">
-    <span class="brand-mark">BV</span>
-    <div>
-      <h1>Trợ lý AI Bảo Việt Life</h1>
-      <p>Trang quản trị tài liệu — chỉ dành cho quản trị viên</p>
-    </div>
+<div class="page">
+  <div class="glow" aria-hidden="true"></div>
+
+  <div class="lang-toggle" role="group" aria-label="Language" id="langToggle">
+    <button type="button" data-locale="vi" id="langVi">VI</button>
+    <button type="button" data-locale="en" id="langEn">EN</button>
   </div>
 
-  <form id="loginForm">
-    <label for="password">Mật khẩu quản trị</label>
-    <input type="password" id="password" name="password" autofocus autocomplete="current-password" required />
-    <button id="submitBtn" type="submit">Đăng nhập</button>
-    <div id="err"></div>
-  </form>
+  <div class="stack">
+    <div class="card">
+      <div class="brand">
+        <img src="/assets/favicon.svg" alt="" aria-hidden="true" />
+        <div class="brand-name" id="brandName">Trợ lý AI Bảo Việt Life</div>
+      </div>
 
-  <p class="note">Hệ thống chạy hoàn toàn nội bộ, không gọi dịch vụ bên ngoài.</p>
+      <h1 id="panelTitle">Đăng nhập</h1>
+
+      <form id="loginForm">
+        <div class="field-gap">
+          <label for="email" id="emailLabel">Email</label>
+          <input type="email" id="email" name="email" autofocus autocomplete="username" placeholder="you@baoviet.com" required />
+        </div>
+        <div>
+          <label for="password" id="passwordLabel">Mật khẩu</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required />
+        </div>
+        <div id="confirmWrap" class="hidden field-gap" style="margin-top: var(--space-4);">
+          <label for="confirmPassword" id="confirmLabel">Nhập lại mật khẩu</label>
+          <input type="password" id="confirmPassword" autocomplete="new-password" />
+        </div>
+        <button id="submitBtn" type="submit">Đăng nhập</button>
+        <div id="err"></div>
+      </form>
+
+      <p class="switch-mode">
+        <span id="switchPrompt">Chưa có tài khoản?</span>
+        <button type="button" id="modeToggle">Tạo tài khoản</button>
+      </p>
+    </div>
+
+    <a class="back" href="/" id="backHome">← Trang chủ</a>
+  </div>
 </div>
 
 <script>
+  // Keep in sync with frontend/src/i18n/messages.js (login + productName + lang).
+  const LOCALE_KEY = "bv-locale";
+  const I18N = {
+    vi: {
+      productName: "Trợ lý AI Bảo Việt Life",
+      langLabel: "Ngôn ngữ",
+      documentTitle: "Đăng nhập — Trợ lý AI Bảo Việt Life",
+      loginTitle: "Đăng nhập",
+      signupTitle: "Tạo tài khoản",
+      email: "Email",
+      password: "Mật khẩu",
+      confirmPassword: "Nhập lại mật khẩu",
+      submitLogin: "Đăng nhập",
+      submitSignup: "Tạo tài khoản",
+      noAccount: "Chưa có tài khoản?",
+      hasAccount: "Đã có tài khoản?",
+      createAccount: "Tạo tài khoản",
+      signIn: "Đăng nhập",
+      backHome: "← Trang chủ",
+      passwordMismatch: "Hai mật khẩu không khớp.",
+      emailDomain: "Email phải thuộc miền @baoviet.com.",
+      signupFailed: "Không thể tạo tài khoản. Vui lòng thử lại.",
+      loginFailed: "Sai email hoặc mật khẩu. Vui lòng thử lại.",
+      networkError: "Lỗi mạng: ",
+    },
+    en: {
+      productName: "Bao Viet Life AI Assistant",
+      langLabel: "Language",
+      documentTitle: "Sign in — Bao Viet Life AI Assistant",
+      loginTitle: "Sign in",
+      signupTitle: "Create account",
+      email: "Email",
+      password: "Password",
+      confirmPassword: "Confirm password",
+      submitLogin: "Sign in",
+      submitSignup: "Create account",
+      noAccount: "Don't have an account?",
+      hasAccount: "Already have an account?",
+      createAccount: "Create account",
+      signIn: "Sign in",
+      backHome: "← Home",
+      passwordMismatch: "Passwords do not match.",
+      emailDomain: "Email must use the @baoviet.com domain.",
+      signupFailed: "Could not create account. Please try again.",
+      loginFailed: "Incorrect email or password. Please try again.",
+      networkError: "Network error: ",
+    },
+  };
+
+  const API_ERROR_VI = {
+    "Sai email hoặc mật khẩu. Vui lòng thử lại.": "loginFailed",
+    "Email phải thuộc miền @baoviet.com.": "emailDomain",
+    "Không thể tạo tài khoản. Vui lòng thử lại.": "signupFailed",
+  };
+
+  function initialLocale() {
+    const stored = localStorage.getItem(LOCALE_KEY);
+    return stored === "en" ? "en" : "vi";
+  }
+
+  let locale = initialLocale();
+  let signupMode = false;
+
   const form = document.getElementById("loginForm");
   const err = document.getElementById("err");
   const btn = document.getElementById("submitBtn");
   const params = new URLSearchParams(location.search);
-  const next = params.get("next") || "/";
+  const next = params.get("next");
+  const modeToggle = document.getElementById("modeToggle");
+  const panelTitle = document.getElementById("panelTitle");
+  const switchPrompt = document.getElementById("switchPrompt");
+  const confirmWrap = document.getElementById("confirmWrap");
+  const confirmPassword = document.getElementById("confirmPassword");
+  const passwordInput = document.getElementById("password");
+  const langToggle = document.getElementById("langToggle");
+  const langVi = document.getElementById("langVi");
+  const langEn = document.getElementById("langEn");
+
+  function msg(key) {
+    return I18N[locale][key] ?? key;
+  }
+
+  function localizeApiError(detail) {
+    if (!detail || locale === "vi") return detail;
+    if (detail.includes("Sai email hoặc mật khẩu")) return msg("loginFailed");
+    if (detail.includes("Email phải thuộc miền")) return msg("emailDomain");
+    const mapped = API_ERROR_VI[detail];
+    return mapped ? msg(mapped) : detail;
+  }
+
+  function applyLocale() {
+    document.documentElement.lang = locale === "en" ? "en" : "vi";
+    document.title = msg("documentTitle");
+    langToggle.setAttribute("aria-label", msg("langLabel"));
+    langVi.classList.toggle("active", locale === "vi");
+    langEn.classList.toggle("active", locale === "en");
+    document.getElementById("brandName").textContent = msg("productName");
+    document.getElementById("emailLabel").textContent = msg("email");
+    document.getElementById("passwordLabel").textContent = msg("password");
+    document.getElementById("confirmLabel").textContent = msg("confirmPassword");
+    document.getElementById("backHome").textContent = msg("backHome");
+    setMode(signupMode);
+  }
+
+  function setLocale(nextLocale) {
+    locale = nextLocale === "en" ? "en" : "vi";
+    localStorage.setItem(LOCALE_KEY, locale);
+    applyLocale();
+  }
+
+  function setMode(signup) {
+    signupMode = signup;
+    panelTitle.textContent = signup ? msg("signupTitle") : msg("loginTitle");
+    btn.textContent = signup ? msg("submitSignup") : msg("submitLogin");
+    switchPrompt.textContent = signup ? msg("hasAccount") : msg("noAccount");
+    modeToggle.textContent = signup ? msg("signIn") : msg("createAccount");
+    confirmWrap.classList.toggle("hidden", !signup);
+    confirmPassword.required = signup;
+    passwordInput.autocomplete = signup ? "new-password" : "current-password";
+    err.textContent = "";
+  }
+
+  langVi.addEventListener("click", () => setLocale("vi"));
+  langEn.addEventListener("click", () => setLocale("en"));
+  modeToggle.addEventListener("click", () => setMode(!signupMode));
+  applyLocale();
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     btn.disabled = true;
     err.textContent = "";
     try {
-      const resp = await fetch("/login", {
+      const email = document.getElementById("email").value.trim();
+      const password = passwordInput.value;
+      if (signupMode) {
+        if (password !== confirmPassword.value) {
+          err.textContent = msg("passwordMismatch");
+          return;
+        }
+        if (!email.toLowerCase().endsWith("@baoviet.com")) {
+          err.textContent = msg("emailDomain");
+          return;
+        }
+      }
+      const endpoint = signupMode ? "/register" : "/login";
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "password=" + encodeURIComponent(document.getElementById("password").value),
+        body: "email=" + encodeURIComponent(email) + "&password=" + encodeURIComponent(password),
       });
       if (resp.ok) {
-        location.href = next;
+        const data = await resp.json().catch(() => ({}));
+        let dest = next || "/chat/";
+        if (dest.startsWith("/admin") && data.role !== "admin") dest = "/chat/";
+        location.href = dest;
         return;
       }
       const data = await resp.json().catch(() => ({}));
-      err.textContent = data.detail || "Sai mật khẩu. Vui lòng thử lại.";
+      err.textContent = localizeApiError(data.detail) || (signupMode ? msg("signupFailed") : msg("loginFailed"));
     } catch (e2) {
-      err.textContent = "Lỗi mạng: " + e2.message;
+      err.textContent = msg("networkError") + e2.message;
     } finally {
       btn.disabled = false;
     }

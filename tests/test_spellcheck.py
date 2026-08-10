@@ -88,6 +88,38 @@ def test_does_not_flag_correct_common_word_resembling_rare_term() -> None:
     assert find_suggestions(query, titles=_TITLES) == []
 
 
+def test_ordinary_corpus_word_is_not_read_as_a_typo_of_a_glossary_term() -> None:
+    # "giữa" ("between") folds to "giua", which scores 0.857 against "gia" and
+    # so was flagged as a misspelling of "mệnh giá bảo hiểm" — blocking a real
+    # question (golden q15) behind a nonsense confirmation prompt. It is only
+    # "unknown" because the vocabulary was built from glossary terms and titles
+    # alone; the documents use the word constantly.
+    query = "Mối liên hệ giữa bảo hiểm trọn đời và niên kim nhân thọ trọn đời là gì?"
+    assert find_suggestions(query, titles=[], corpus_words=frozenset({"giua"})) == []
+    # Without the corpus vocabulary it is flagged — that contrast is the point.
+    assert find_suggestions(query, titles=[], corpus_words=frozenset())
+
+
+def test_ho_so_is_not_read_as_a_typo_of_hop_dong() -> None:
+    # "Hồ" folds to "ho", exactly 0.800 against "hợp", so "Hồ sơ ..." was read
+    # as garbling the title "... Hợp đồng ..." (golden q27).
+    titles = ["Hướng dẫn Thẩm định Sơ bộ Hợp đồng (bản giả định)"]
+    query = "Hồ sơ thẩm định sơ bộ được xử lý trong thời hạn bao lâu?"
+    assert find_suggestions(query, titles=titles, corpus_words=frozenset({"ho"})) == []
+    assert find_suggestions(query, titles=titles, corpus_words=frozenset())
+
+
+def test_corpus_vocabulary_does_not_mask_a_real_telex_slip() -> None:
+    # The widened vocabulary must only excuse words the corpus actually uses;
+    # an unfinished Telex slip appears in no document, so it still triggers.
+    titles = ["SẢN PHẨM BẢO HIỂM HỖN HỢP Lộc Vững Bền"]
+    corpus = frozenset({"ho", "giua", "quyen", "loi", "cua", "bao", "hiem"})
+    query = "Liệt kê chi tiết quyền lợi của bảo hiểm an loc vuwng bênf"
+    suggestions = find_suggestions(query, titles=titles, corpus_words=corpus)
+    assert suggestions
+    assert suggestions[0].canonical == titles[0]
+
+
 def test_confirmation_prompt_is_recognized_round_trip() -> None:
     # A user confirming our clarification must be routable back to their
     # question: the message we emit is recognized, an unrelated one is not.

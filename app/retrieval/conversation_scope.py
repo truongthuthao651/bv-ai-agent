@@ -21,7 +21,15 @@ import re
 from collections import Counter
 
 from app.models.schemas import ChatMessage
-from app.retrieval.product_scope import _GENERIC, _fold_tokens, _product_span
+from app.retrieval.product_scope import (
+    _GENERIC,
+    _fold_tokens,
+    _product_span,
+    is_glossary_title,
+    is_product_summary_turn,
+    named_product_labels,
+    resolve_product_titles,
+)
 
 # Matches one line of the deterministic sources footer from format_sources:
 #   - [1] [Bảo hiểm liên kết chung An Khang Như Ý](http://...) — Điều 5
@@ -85,48 +93,77 @@ def query_covers_scope(query: str, scope: str) -> bool:
 
 
 def _scope_from_citations(history: list[ChatMessage]) -> str | None:
-    """Most-cited document title in the newest assistant turn that has sources."""
+    """Most-cited non-glossary document title in the newest sourced assistant turn."""
     for msg in reversed(history[-_MAX_HISTORY_TURNS:]):
         if msg.role != "assistant":
             continue
         titles = cited_doc_titles(msg.content)
         if not titles:
             continue
-        # Prefer the mode (same product cited many times); tie → first listed.
-        counts = Counter(titles)
+        pool = [t for t in titles if not is_glossary_title(t)]
+        if not pool:
+            continue
+        counts = Counter(pool)
         return counts.most_common(1)[0][0]
     return None
 
 
 def _scope_from_user_turns(history: list[ChatMessage]) -> str | None:
-    """Best-effort product phrase from recent user messages (pre-citation turns)."""
+    """Best-effort product phrase from recent user messages (pre-citation turns).
+
+    NEW1/fr06 (2026-08-05 audit, Day 5 triage): reuses ``named_product_labels``
+    (informal indexed-title matching, AGENT1's fix, plus its own cue-phrase
+    fallback) instead of the narrower cue-phrase-only ``_product_span``. A
+    turn like "tôi tham gia An Vui Toàn Diện và bị tai nạn..." names no
+    ``bảo hiểm``/``sản phẩm`` cue, so the old cue-phrase-only extraction found
+    nothing — ``active_scope`` returned None, and a later pushback follow-up
+    ("nhưng tôi đi đường bị người khác đâm mà") fell through to the
+    general-knowledge hybrid fallback instead of staying grounded in the
+    already-cited policy (an ungrounded answer, even one that reaches the
+    right verdict, is exactly the failure class CLAUDE.md's coverage_gate
+    exists to prevent). ``named_product_labels`` still prefers a cue-phrase
+    match when one exists, so already-working cases are unaffected.
+    """
+    from app.retrieval.product_scope import _load_indexed_titles, named_product_labels
+
+    known_titles = _load_indexed_titles()
     # Walk newest-first so the latest named product wins.
     for msg in reversed(history[-_MAX_HISTORY_TURNS:]):
         if msg.role != "user":
             continue
-        tokens = _fold_tokens(msg.content)
-        span = _product_span(tokens)
-        if not span:
-            continue
-        # Recover the original surface form: locate the span in the folded
-        # token list and slice the matching words from the raw message.
-        folded_msg = _fold_tokens(msg.content)
-        # Find where the span starts in the full token list.
-        for i in range(len(folded_msg) - len(span) + 1):
-            if folded_msg[i : i + len(span)] == span:
-                raw_words = re.findall(r"\w+", msg.content, flags=re.UNICODE)
-                if len(raw_words) == len(folded_msg):
-                    return " ".join(raw_words[i : i + len(span)])
-                return " ".join(span)
-        return " ".join(span)
+        labels = named_product_labels(msg.content, titles=known_titles)
+        if labels:
+            return labels[0]
     return None
 
 
-def active_scope(history: list[ChatMessage]) -> str | None:
-    """Sticky product/document label for this conversation, or ``None``."""
+def active_scope(
+    history: list[ChatMessage], current_query: str | None = None
+) -> str | None:
+    """Sticky product/document label for this conversation, or ``None``.
+
+    When ``current_query`` names a product, that product's policy title wins
+    over glossary citations from an earlier actuarial turn.
+    """
+    if current_query and current_query.strip():
+        from app.retrieval.product_scope import _load_indexed_titles
+
+        known = _load_indexed_titles()
+        labels = named_product_labels(current_query, titles=known)
+        if labels:
+            for title in resolve_product_titles(labels[0], known):
+                if not is_glossary_title(title):
+                    return title
+            resolved = resolve_product_titles(labels[0], known)
+            if resolved:
+                return resolved[0]
+
     if not history:
         return None
-    return _scope_from_citations(history) or _scope_from_user_turns(history)
+    cited = _scope_from_citations(history)
+    if cited:
+        return cited
+    return _scope_from_user_turns(history)
 
 
 def cited_titles_in_history(history: list[ChatMessage]) -> list[str]:
@@ -179,9 +216,23 @@ def ensure_prior_topic(query: str, history: list[ChatMessage]) -> str:
     "thế tử vong thì sao" → append ``(ngữ cảnh câu trước: …)`` so retrieval still
     sees skiing/diving. No-op when the rewrite already kept enough prior tokens,
     or the new turn does not look like a continuation.
+
+    Also no-op when the user names a product or asks for a product summary —
+    carrying an actuarial topic forward would contaminate the rewrite (observed:
+    Q1 phí thuần → Q3 "An Tâm Hoạch Định" rewritten as a phí-thuần question).
     """
+    if not query.strip():
+        return query
+    from app.retrieval.product_scope import _load_indexed_titles
+
+    known = _load_indexed_titles()
+    if named_product_labels(query, titles=known):
+        return query
+    if is_product_summary_turn(query, query):
+        return query
+
     prior = last_user_question(history)
-    if not prior or not query.strip():
+    if not prior:
         return query
     bare = _strip_injections(query)
     if not looks_like_followup(bare):

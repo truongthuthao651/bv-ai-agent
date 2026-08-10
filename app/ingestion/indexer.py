@@ -279,11 +279,66 @@ def get_document_chunks(doc_id: str) -> list[dict[str, Any]]:
     return out
 
 
+_index_version = 0
+
+
+def index_version() -> int:
+    """Counter bumped whenever this process changes the indexed points.
+
+    Lets read-mostly consumers (the spellcheck vocabulary) cache a snapshot of
+    the corpus and rebuild it only after an ingest, instead of re-scrolling the
+    whole collection on every query. A process that never ingests simply builds
+    its snapshot once, which is correct for it.
+    """
+    return _index_version
+
+
+def _bump_index_version() -> None:
+    global _index_version
+    _index_version += 1
+
+
+@lru_cache(maxsize=1)
+def corpus_snapshot(version: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(document titles, chunk texts)`` from ONE scroll, cached per version.
+
+    ``version`` is only a cache key — pass ``index_version()``. Callers that
+    need both titles and corpus text (spellcheck) would otherwise pay two full
+    scrolls per query.
+    """
+    client = get_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return (), ()
+    titles: dict[str, None] = {}
+    texts: list[str] = []
+    offset = None
+    while True:
+        records, offset = client.scroll(
+            collection_name=settings.qdrant_collection,
+            with_payload=True,
+            with_vectors=False,
+            limit=256,
+            offset=offset,
+        )
+        for rec in records:
+            payload = rec.payload or {}
+            title = payload.get("doc_title")
+            if title:
+                titles[title] = None
+            text = payload.get("display_text")
+            if text:
+                texts.append(text)
+        if offset is None:
+            break
+    return tuple(titles), tuple(texts)
+
+
 def delete_document(doc_id: str) -> None:
     """Remove all points for a document (idempotent re-ingest / deletion)."""
     client = get_client()
     if not client.collection_exists(settings.qdrant_collection):
         return
+    _bump_index_version()
     client.delete(
         collection_name=settings.qdrant_collection,
         points_selector=models.FilterSelector(
@@ -323,6 +378,7 @@ def index_chunks(chunks: list[Chunk]) -> int:
             )
         )
     get_client().upsert(collection_name=settings.qdrant_collection, points=points)
+    _bump_index_version()
     logger.info("Upserted %d points for doc_id(s) %s", len(points), doc_ids)
     return len(points)
 

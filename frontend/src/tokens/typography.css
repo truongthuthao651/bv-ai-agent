@@ -1,0 +1,12 @@
+:root{
+--font-sans:"Inter",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+--font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+/* Whole-pixel scale, no half sizes. 11-14 is the UI range; 16+ is content and headings. */
+--text-2xs:11px;--text-xs:12px;--text-sm:13px;--text-base:14px;--text-md:16px;
+--text-lg:18px;--text-xl:20px;--text-2xl:24px;--text-3xl:30px;--text-4xl:38px;
+--weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;--weight-heavy:800;
+/* Vietnamese diacritics need headroom: never set body copy below 1.5. */
+--leading-tight:1.2;--leading-snug:1.35;--leading-normal:1.5;--leading-relaxed:1.65;
+--tracking-tight:-0.02em;--tracking-normal:0em;--tracking-wide:0.04em;
+--tabular-nums:"tnum" 1,"lnum" 1; /* @kind other */
+}

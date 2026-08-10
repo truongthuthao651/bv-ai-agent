@@ -126,6 +126,37 @@ def test_rewrite_uses_llm_when_enabled_with_history() -> None:
     assert out == "Phí gộp của sản phẩm An Tâm Bảo Vệ là gì?"
 
 
+def test_ollama_rewrite_sends_matching_context_window(monkeypatch) -> None:
+    # 2026-08-06: found live during a Day 5 eval run that this payload lacked
+    # num_ctx, so this call (Ollama's modelfile default context) and the
+    # generation call right after it (num_ctx=llm_context_window) on the
+    # SAME loaded llama.cpp instance forced a full model reload between them
+    # every single turn -- not a no-op, and observed to occasionally 500
+    # mid-reload (~/.ollama/logs/server.log showed n_ctx_slot flip-flopping).
+    # This runs on every request with history, so it was the single biggest
+    # unnecessary latency cost in the whole pipeline.
+    import app.retrieval.query_rewrite as query_rewrite_module
+    from app.config.settings import settings
+
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"response": "câu hỏi đầy đủ"}
+
+    def fake_post(url, json, **kwargs):
+        captured.update(json)
+        return _Resp()
+
+    monkeypatch.setattr(query_rewrite_module.httpx, "post", fake_post)
+    out = query_rewrite_module._ollama_rewrite("prompt bất kỳ")
+    assert out == "câu hỏi đầy đủ"
+    assert captured["options"]["num_ctx"] == settings.llm_context_window
+
+
 def test_rewrite_falls_back_to_original_on_empty_llm_output() -> None:
     history = [ChatMessage(role="user", content="Phí thuần là gì?")]
     out = rewrite_standalone(
@@ -251,6 +282,44 @@ def test_active_scope_falls_back_to_user_product_phrase() -> None:
     assert query_covers_scope("An Khang Như Ý", scope)
 
 
+def test_active_scope_recognizes_informal_mention_without_cue_phrase(
+    monkeypatch,
+) -> None:
+    # NEW1/fr06 (2026-08-05 audit, Day 5 triage), live-reproduced: "tôi tham
+    # gia An Vui Toàn Diện..." names the product with no "bảo hiểm"/"sản
+    # phẩm" cue, so the old cue-phrase-only _product_span found nothing and
+    # active_scope() returned None. A later pushback follow-up then fell
+    # through to the general-knowledge hybrid fallback instead of staying
+    # grounded in the already-established policy.
+    import app.retrieval.product_scope as product_scope_module
+
+    monkeypatch.setattr(
+        product_scope_module,
+        "_load_indexed_titles",
+        lambda: ['Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"'],
+    )
+    history = [
+        ChatMessage(
+            role="user",
+            content=(
+                "tôi tham gia An Vui Toàn Diện và bị tai nạn xe khi đi du "
+                "lịch thì có được claim không?"
+            ),
+        ),
+        ChatMessage(
+            role="assistant",
+            content=(
+                "Không được claim. Theo mục Loại trừ trách nhiệm bảo hiểm, "
+                "Người được bảo hiểm tham gia đua xe ô tô, mô tô thuộc loại "
+                "trừ, nên không được chi trả."
+            ),
+        ),
+    ]
+    scope = active_scope(history)
+    assert scope is not None
+    assert "An Vui Toàn Diện" in scope
+
+
 def test_ensure_scope_injects_when_follow_up_drops_name() -> None:
     out = ensure_scope("thế đi trượt tuyết bị tử vong thì sao?", _AKNY)
     assert out.endswith(f"(tài liệu: {_AKNY})")
@@ -368,6 +437,47 @@ def test_rerank_empty_hits() -> None:
     assert rerank("query", [], score_fn=lambda _q, _d: []) == []
 
 
+def _child_hit(point_id: str, text: str, parent_index: int, parent_text: str) -> Hit:
+    hit = _hit(point_id, text)
+    hit.payload.parent_index = parent_index
+    hit.payload.parent_text = parent_text
+    return hit
+
+
+def test_rerank_keeps_only_the_best_child_of_each_parent() -> None:
+    # Generation widens every hit to its parent window, so two children of one
+    # parent would send the same text twice and waste the top_k budget.
+    hits = [
+        _child_hit("1", "child-a", 0, "window-0"),
+        _child_hit("2", "child-b", 0, "window-0"),
+        _child_hit("3", "child-c", 1, "window-1"),
+    ]
+    fake_scores = {"child-a": 0.4, "child-b": 0.9, "child-c": 0.5}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank("query", hits, top_k=5, score_fn=score_fn)
+    assert [h.point_id for h in ranked] == ["2", "3"]
+
+
+def test_rerank_collapse_frees_room_for_another_window() -> None:
+    # Collapsing happens BEFORE the top_k cut, so top_k means top_k distinct
+    # windows — a third parent still makes it into a top_k=2 result.
+    hits = [
+        _child_hit("1", "child-a", 0, "window-0"),
+        _child_hit("2", "child-b", 0, "window-0"),
+        _child_hit("3", "child-c", 1, "window-1"),
+    ]
+    fake_scores = {"child-a": 0.9, "child-b": 0.8, "child-c": 0.5}
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        return [next(v for k, v in fake_scores.items() if k in d) for d in docs]
+
+    ranked = rerank("query", hits, top_k=2, score_fn=score_fn)
+    assert [h.point_id for h in ranked] == ["1", "3"]
+
+
 def test_rerank_drops_hits_below_min_score() -> None:
     hits = [
         _hit("1", "chunk-irrelevant"),
@@ -429,6 +539,29 @@ def test_rerank_relative_floor_zero_is_noop() -> None:
         "query", hits, top_k=5, min_score=0.05, min_ratio=0.0, score_fn=score_fn
     )
     assert [h.point_id for h in ranked] == ["1", "2"]
+
+
+def test_rerank_candidates_truncates_before_scoring() -> None:
+    # Hits arrive RRF-sorted; only the first ``candidates`` should reach the
+    # cross-encoder. A later hit that would have scored highest must not win.
+    hits = [_hit("1", "a"), _hit("2", "b"), _hit("3", "c"), _hit("4", "d")]
+    seen: list[int] = []
+
+    def score_fn(_query: str, docs: list[str]) -> list[float]:
+        seen.append(len(docs))
+        # Prefer later docs if they were scored — proves truncation works.
+        return [0.1 + 0.1 * i for i in range(len(docs))]
+
+    ranked = rerank(
+        "query",
+        hits,
+        top_k=5,
+        candidates=2,
+        min_score=0.0,
+        score_fn=score_fn,
+    )
+    assert seen == [2]
+    assert [h.point_id for h in ranked] == ["2", "1"]
 
 
 # --------------------------------------------------------------------------- #
@@ -607,6 +740,130 @@ def test_informal_nicknames_resolve_via_indexed_titles() -> None:
     labels = named_product_labels(q, titles=titles)
     assert labels == mentioned
     assert is_multi_product_query(q, titles=titles)
+
+
+def test_mentioned_doc_titles_ignores_shared_title_boilerplate() -> None:
+    # AGENT1 (2026-08-05 audit, live-reproduced 3/3): every real indexed policy
+    # title starts "Quy tắc, Điều khoản Sản phẩm Bảo hiểm ...", so before "quy",
+    # "tac", "dieu", "khoan" were added to _GENERIC, those shared words counted
+    # as product-distinctive and inflated the required-overlap threshold past
+    # what an informal comparison mention (which never repeats "quy tắc điều
+    # khoản") could reach. "An Vui Toàn Diện" is this exact live repro: its
+    # distinctive set was {quy,tac,dieu,khoan,vui,toan,dien} (needed=4) before
+    # the fix — an informal mention supplies only {vui,toan,dien}=3 and always
+    # failed; now the set is just {vui,toan,dien} (needed=2) and it resolves.
+    #
+    # "An Bình Trọn Đời" ALSO now resolves (AGENT4, 2026-08-06 audit, Day 6):
+    # it used to reduce to a single static-only distinctive token ({"binh"}),
+    # below the >=2-token floor, because "trọn"/"đời" were in the static
+    # _GENERIC as whole-life policy-type vocabulary. mentioned_doc_titles now
+    # passes the full title list to _distinctive_title_tokens, which restores
+    # "trọn"/"đời" as distinctive for THIS title specifically because they
+    # aren't shared by any OTHER title in the given corpus — see
+    # _TITLE_ONLY_CANDIDATES' docstring for why this is safe (self-corrects
+    # if a second "Trọn Đời" product is ever indexed).
+    from app.retrieval.product_scope import mentioned_doc_titles
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+    ]
+    q = "So sánh sản phẩm An Vui Toàn Diện và An Bình Trọn Đời cho khách hàng"
+    mentioned = mentioned_doc_titles(q, titles)
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"' in mentioned
+    )
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"'
+        in mentioned
+    )
+
+
+def test_distinctive_title_tokens_self_corrects_for_a_second_same_type_product() -> (
+    None
+):
+    # The safety property that makes restoring "trọn"/"đời" as candidates
+    # sound: if a SECOND "Trọn Đời" product is ever indexed, both titles
+    # share "trọn"/"đời" and neither counts them as distinctive anymore —
+    # same corpus-frequency mechanism AGENT1 already relies on for
+    # "quy"/"tắc"/"điều"/"khoản".
+    from app.retrieval.product_scope import _distinctive_title_tokens
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Phúc Trọn Đời"',
+    ]
+    for title in titles:
+        dist = _distinctive_title_tokens(title, other_titles=titles)
+        assert "tron" not in dist
+        assert "doi" not in dist
+
+
+def test_mentioned_doc_titles_requires_a_hard_token_not_just_promoted_ones() -> None:
+    # Day 7 full-gate rerun (2026-08-07), live-reproduced: q12/q15 (annuity
+    # formula questions naming no product) both false-refused after AGENT4's
+    # fix, because "trọn đời" alone ("niên kim nhân thọ trọn đời" = whole-life
+    # annuity, ordinary actuarial terminology) matched >=2 tokens against "An
+    # Bình Trọn Đời" purely via the promoted _TITLE_ONLY_CANDIDATES tokens
+    # ("tron", "doi") with no brand-unique token ("binh") present anywhere in
+    # the query. mentioned_doc_titles must not treat an all-promoted overlap
+    # as a real product mention.
+    from app.retrieval.product_scope import mentioned_doc_titles
+
+    titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+    ]
+    q = r"Niên kim nhân thọ trọn đời trả đầu kỳ $\ddot{a}_x$ được tính theo công thức nào?"
+    assert mentioned_doc_titles(q, titles) == []
+
+    # A query that also carries the brand-unique token ("bình") still
+    # resolves — AGENT4's original 3-product-summary fix must still hold.
+    q2 = "So sánh sản phẩm An Vui Toàn Diện và An Bình Trọn Đời cho khách hàng"
+    mentioned = mentioned_doc_titles(q2, titles)
+    assert (
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"'
+        in mentioned
+    )
+
+
+def test_product_guard_does_not_refuse_routine_calc_phrasing_with_gia_dinh() -> None:
+    # NEW1/q08 (2026-08-05 audit, Day 5 triage), live-reproduced: every
+    # internal-guide doc in this corpus is suffixed "(tài liệu nội bộ giả
+    # định)"/"(bản giả định)", so "giả định" (gia+dinh folded) was
+    # product-distinctive on THOSE titles. An ordinary calculation question
+    # using the routine phrase "lãi suất giả định" (an assumed rate) then
+    # false-matched >=2 tokens against an UNRELATED title ("Quy trình Giải
+    # quyết... (bản giả định)") and the guard refused a fully-answerable,
+    # correctly-retrieved (rank 1, score 0.999) question.
+    from app.retrieval.product_scope import (
+        query_names_absent_product,
+        named_product_labels,
+    )
+
+    all_titles = [
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Nhân thọ Trọn đời "An Bình Trọn Đời"',
+        "Từ điển thuật ngữ định phí bảo hiểm",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm liên kết chung "An Phú Liên Kết"',
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+        "Hướng dẫn Tính Niên kim Nhân thọ và Sử dụng Bảng Tỷ lệ Tử vong (tài liệu nội bộ giả định)",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Hỗn hợp "An Vui Toàn Diện"',
+        "Quy trình Giải quyết Quyền lợi Bảo hiểm (bản giả định)",
+        "Hướng dẫn Thẩm định Sơ bộ Hợp đồng (bản giả định)",
+        "Danh sách chi trả quyền lợi bảo hiểm Quý 1/2025",
+        "Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)",
+    ]
+    q = (
+        "Với lãi suất kỹ thuật giả định $i = 0,05$, hệ số chiết khấu $v$ "
+        "xấp xỉ bằng bao nhiêu theo tài liệu?"
+    )
+    hit_titles = [
+        "Hướng dẫn Tính Dự phòng Toán học (tài liệu nội bộ giả định)",
+        "Từ điển thuật ngữ định phí bảo hiểm",
+        "Hướng dẫn Tính Niên kim Nhân thọ và Sử dụng Bảng Tỷ lệ Tử vong (tài liệu nội bộ giả định)",
+    ]
+    assert named_product_labels(q, titles=all_titles) == []
+    assert query_names_absent_product(q, hit_titles, known_titles=all_titles) is False
 
 
 def test_product_guard_allows_partial_comparison_hit() -> None:
@@ -902,3 +1159,149 @@ def test_metric_guard_noop_for_interest_rate_question() -> None:
     )
     q = "Lãi suất cam kết tối thiểu năm 1 là bao nhiêu?"
     assert filter_metric_mismatch(q, [interest]) == [interest]
+
+
+def test_metric_guard_sees_the_parent_window_of_a_child_chunk() -> None:
+    # Under parent-child chunking the caption naming the metric can sit in the
+    # parent while the matched child is a bare row group. The guard must judge
+    # the text generation would receive, not just the child.
+    from app.retrieval.metric_guard import filter_metric_mismatch
+
+    child = _metric_hit("Chương II > Điều 4", "| Năm | % |\n| --- | --- |\n| 1 | 2.5 |")
+    child.payload.parent_index = 0
+    child.payload.parent_text = (
+        "Lãi suất cam kết tối thiểu theo năm hợp đồng:\n\n"
+        "| Năm | % |\n| --- | --- |\n| 1 | 2.5 |"
+    )
+    q = "gặp tai nạn xe cộ và chết thì được claim bao nhiêu%?"
+    assert filter_metric_mismatch(q, [child]) == []
+
+
+def test_filter_hits_to_named_products_drops_other_products() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hits = [
+        _cmp_hit("1", known[0]),
+        _cmp_hit("2", known[1]),
+        _cmp_hit("3", known[1]),
+    ]
+    q = "tóm tắt bảo hiểm an tâm hoạch định"
+    filtered = filter_hits_to_named_products(q, hits, known_titles=known)
+    assert [h.point_id for h in filtered] == ["1"]
+
+
+def test_filter_hits_uses_rewritten_query_when_raw_names_product() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hits = [_cmp_hit("1", known[0]), _cmp_hit("2", known[1])]
+    raw = "tóm tắt bảo hiểm an tâm hoạch định"
+    rewritten = "Tóm tắt sản phẩm liên kết chung"  # rewrite dropped the name
+    filtered = filter_hits_to_named_products(
+        raw, hits, known_titles=known, standalone_query=rewritten
+    )
+    assert [h.point_id for h in filtered] == ["1"]
+
+
+def test_named_product_labels_from_queries_unions_both_forms() -> None:
+    from app.retrieval.product_scope import named_product_labels_from_queries
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    raw = "tóm tắt bảo hiểm an tâm hoạch định"
+    rewritten = "Tóm tắt sản phẩm liên kết chung"
+    labels = named_product_labels_from_queries(raw, rewritten, titles=known)
+    assert any("Hoạch Định" in label for label in labels)
+
+
+def test_is_product_summary_turn() -> None:
+    from app.retrieval.product_scope import is_product_summary_turn
+
+    assert is_product_summary_turn(
+        "tóm tắt bảo hiểm an tâm hoạch định",
+        "Giới thiệu sản phẩm liên kết chung",
+    )
+    assert not is_product_summary_turn("phí thuần là gì", "phí thuần là gì")
+
+
+def test_filter_hits_to_named_products_noop_without_product_name() -> None:
+    from app.retrieval.product_scope import filter_hits_to_named_products
+
+    known = ["Bảo hiểm Liên kết chung An Tâm Hoạch Định"]
+    hits = [_cmp_hit("1", known[0])]
+    assert (
+        filter_hits_to_named_products("phí thuần là gì", hits, known_titles=known)
+        == hits
+    )
+
+
+def test_is_product_summary_query() -> None:
+    from app.retrieval.product_scope import is_product_summary_query
+
+    assert is_product_summary_query("tóm tắt bảo hiểm an tâm hoạch định")
+    assert is_product_summary_query("tóm tắt chi tiết bảo hiểm an tâm hoạch định")
+    assert not is_product_summary_query("phí thuần là gì")
+
+
+def test_filter_hits_for_product_summary_drops_glossary_when_policy_present() -> None:
+    from app.models.schemas import DocType, QdrantPayload
+    from app.models.schemas import Hit
+    from app.retrieval.product_scope import filter_hits_for_product_summary
+
+    athd = "Bảo hiểm Liên kết chung An Tâm Hoạch Định"
+    glossary = "Từ điển thuật ngữ định phí bảo hiểm"
+    known = [athd, glossary]
+    policy = Hit(
+        point_id="1",
+        score=1.0,
+        payload=QdrantPayload(
+            doc_id="p1",
+            doc_title=athd,
+            section_path="Phí",
+            doc_type=DocType.POLICY,
+            display_text="phí ban đầu",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    glossary_hit = Hit(
+        point_id="2",
+        score=0.9,
+        payload=QdrantPayload(
+            doc_id="g1",
+            doc_title=glossary,
+            section_path="phí thuần",
+            doc_type=DocType.GLOSSARY,
+            display_text="định nghĩa",
+            chunk_index=0,
+            ingested_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+    out = filter_hits_for_product_summary(
+        [policy, glossary_hit], ["An Tâm Hoạch Định"], known_titles=known
+    )
+    assert [h.point_id for h in out] == ["1"]
+
+
+def test_resolve_product_titles_distinguishes_an_tam_family() -> None:
+    from app.retrieval.product_scope import resolve_product_titles, title_covers_product
+
+    known = [
+        "Bảo hiểm Liên kết chung An Tâm Hoạch Định",
+        'Quy tắc, Điều khoản Sản phẩm Bảo hiểm Tử kỳ "An Tâm Bảo Vệ"',
+    ]
+    hoach = resolve_product_titles("An Tâm Hoạch Định", known)
+    assert hoach == [known[0]]
+    assert title_covers_product(known[0], "An Tâm Hoạch Định", known_titles=known)
+    assert not title_covers_product(known[1], "An Tâm Hoạch Định", known_titles=known)
+    bao_ve = resolve_product_titles("An Tâm Bảo Vệ", known)
+    assert bao_ve == [known[1]]

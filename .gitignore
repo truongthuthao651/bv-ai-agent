@@ -2,7 +2,6 @@
 .env
 *.env
 !.env.example
-/TEAM_GUIDE.md
 
 # ---- Data (confidential) ----
 # The whole data/ tree is ignored EXCEPT the public glossary and the
@@ -30,17 +29,23 @@ data/knowledge_pack/*
 /run/
 
 # ---- Python ----
+# Anchored to repo root: an unanchored "dist/" would also match
+# app/static/dist/, the frontend build output, which IS committed
+# (deployment ships the built bundle from frontend/; no Node on deploy machine).
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 .venv/
 venv/
 env/
 .python-version
+
+# ---- Frontend (dev-machine only; app/static/dist/ build output IS committed) ----
+frontend/node_modules/
 
 # ---- Tooling caches ----
 .pytest_cache/
@@ -61,5 +66,9 @@ data/assets/
 
 # ---- Eval outputs (per-run JSON reports; compare locally, don't commit) ----
 /eval/results/
+# Local reference material for golden-set authoring; not read by any code path
+# (eval/run_ragas.py doesn't import it) and has held real-company-name content
+# in the past (SEC5, 2026-08-05 audit) — never force-add it.
+/eval/golden_set_reference.json
 .webui_secret_key
 .venv-webui/

@@ -9,7 +9,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-pid_files=(run/api.pid run/webui.pid run/ollama.pid)
+pid_files=(run/api.pid run/ollama.pid)
 found=0
 for pid_file in "${pid_files[@]}"; do
   [[ -f "$pid_file" ]] && found=1

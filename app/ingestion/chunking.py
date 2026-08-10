@@ -15,6 +15,14 @@ hard equation/table constraints (skill, section 3):
 * If a single unit exceeds the budget it becomes its own oversized chunk —
   correctness beats budget.
 
+Optionally the packing runs twice (parent-child chunking, ``child_max_tokens``):
+each 500-800 token chunk becomes a PARENT that is packed again into smaller
+children, and one indexed chunk is emitted per child carrying its parent's
+text. The child is what gets embedded and reranked (a short passage matches a
+short question far more precisely than an 800-token block), the parent is what
+generation reads. Both passes consume the same units, so the rules above hold
+at either size.
+
 Token counting is injectable so tests run without the embedding model; the
 indexer passes the real bge-m3 tokenizer.
 """
@@ -192,16 +200,20 @@ def _pack_units(
     count_tokens: TokenCounter,
     max_tokens: int,
     overlap_tokens: int,
-) -> list[str]:
-    """Greedily pack units into <=max_tokens chunks with block-level overlap."""
-    chunks: list[str] = []
+) -> list[list[_Block]]:
+    """Greedily pack units into <=max_tokens groups with block-level overlap.
+
+    Returns the units per group rather than joined text so a group can be packed
+    again at a smaller budget (parent -> children) without losing the unit
+    boundaries that make the equation/table rules hold.
+    """
+    groups: list[list[_Block]] = []
     cur: list[_Block] = []
     cur_tokens = 0
 
     def flush() -> None:
-        nonlocal cur, cur_tokens
         if cur:
-            chunks.append("\n\n".join(u.text for u in cur))
+            groups.append(cur)
 
     for unit in units:
         # Oversized table / caption+table -> split by row groups; other
@@ -214,19 +226,26 @@ def _pack_units(
         )
         for piece in pieces:
             pt = count_tokens(piece)
+            # Keep the unit's kind: re-packing a parent's units into children
+            # must still recognize a table it may have to row-split again.
+            block = _Block(unit.kind, piece)
             if pt > max_tokens:
                 flush()
-                chunks.append(piece)  # oversized: correctness beats budget
+                groups.append([block])  # oversized: correctness beats budget
                 cur, cur_tokens = [], 0
                 continue
             if cur and cur_tokens + pt > max_tokens:
                 flush()
                 cur = _overlap_suffix(cur, count_tokens, overlap_tokens)
                 cur_tokens = sum(count_tokens(u.text) for u in cur)
-            cur.append(_Block("para", piece))
+            cur.append(block)
             cur_tokens += pt
     flush()
-    return chunks
+    return groups
+
+
+def _join(units: list[_Block]) -> str:
+    return "\n\n".join(u.text for u in units)
 
 
 def chunk_document(
@@ -236,35 +255,61 @@ def chunk_document(
     count_tokens: TokenCounter = default_token_counter,
     max_tokens: int = 800,
     overlap_pct: float = 0.12,
+    child_max_tokens: int | None = None,
 ) -> list[Chunk]:
     """Chunk a parsed document into retrievable ``Chunk`` objects.
 
     Chunks never cross section boundaries, so each carries a single
     ``section_path`` for clean citations. ``embed_text`` is seeded with the
     document/section prefix + display text; enrichment appends verbalizations.
+
+    With ``child_max_tokens`` set, each ``max_tokens`` chunk becomes a PARENT
+    that is packed again into smaller children, and one ``Chunk`` is emitted per
+    child carrying its parent's text. Retrieval then matches the narrow child
+    while generation reads the parent. Children are cut from the same units as
+    parents, so the equation and table rules hold at both sizes. Leaving it None
+    produces the flat one-chunk-per-parent output.
     """
     overlap_tokens = int(max_tokens * overlap_pct)
     source_filename = Path(doc.source_path).name if doc.source_path else None
     chunks: list[Chunk] = []
     idx = 0
+    parent_idx = 0
     for section in doc.sections:
         units = _bind_table_units(_bind_equation_units(_raw_blocks(section.text)))
-        for piece in _pack_units(units, count_tokens, max_tokens, overlap_tokens):
-            prefix = f"Tài liệu: {doc.doc_title} > {section.section_path}\n\n"
-            chunks.append(
-                Chunk(
-                    doc_id=doc_id,
-                    doc_title=doc.doc_title,
-                    section_path=section.section_path,
-                    doc_type=doc.doc_type,
-                    display_text=piece,
-                    embed_text=prefix + piece,
-                    chunk_index=idx,
-                    page=section.page,
-                    department=doc.department,
-                    source_filename=source_filename,
-                    source_url=doc.source_url,
-                )
+        prefix = f"Tài liệu: {doc.doc_title} > {section.section_path}\n\n"
+        for parent_units in _pack_units(
+            units, count_tokens, max_tokens, overlap_tokens
+        ):
+            parent_text = _join(parent_units)
+            # Children tile their parent with NO overlap: overlap exists to keep
+            # context across a cut, and here the parent itself restores it.
+            child_groups = (
+                _pack_units(parent_units, count_tokens, child_max_tokens, 0)
+                if child_max_tokens
+                else [parent_units]
             )
-            idx += 1
+            for child_units in child_groups:
+                child_text = _join(child_units)
+                # A child that is the whole parent has nothing to widen to.
+                widens = child_text != parent_text
+                chunks.append(
+                    Chunk(
+                        doc_id=doc_id,
+                        doc_title=doc.doc_title,
+                        section_path=section.section_path,
+                        doc_type=doc.doc_type,
+                        display_text=child_text,
+                        embed_text=prefix + child_text,
+                        parent_text=parent_text if widens else None,
+                        parent_index=parent_idx if widens else None,
+                        chunk_index=idx,
+                        page=section.page,
+                        department=doc.department,
+                        source_filename=source_filename,
+                        source_url=doc.source_url,
+                    )
+                )
+                idx += 1
+            parent_idx += 1
     return chunks

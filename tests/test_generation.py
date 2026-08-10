@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from urllib.parse import quote
 
 from app.config.settings import settings
@@ -49,6 +50,7 @@ def _hit(
     page: int | None = None,
     source_filename: str | None = None,
     source_url: str | None = None,
+    parent_text: str | None = None,
 ) -> Hit:
     payload = QdrantPayload(
         doc_id="d1",
@@ -57,6 +59,8 @@ def _hit(
         page=page,
         doc_type=DocType.OTHER,
         display_text=text,
+        parent_text=parent_text,
+        parent_index=0 if parent_text else None,
         chunk_index=0,
         source_filename=source_filename,
         source_url=source_url,
@@ -72,7 +76,7 @@ def _hit(
 
 def test_system_prompt_keeps_the_four_mandatory_properties() -> None:
     assert "CHỈ trả lời dựa trên nội dung" in SYSTEM_PROMPT
-    assert "[Tên tài liệu, mục X]" in SYSTEM_PROMPT
+    assert "trích dẫn nguồn bằng SỐ của đoạn ngữ cảnh" in SYSTEM_PROMPT
     assert "Tôi không tìm thấy thông tin trong tài liệu" in SYSTEM_PROMPT
     assert (
         "Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức"
@@ -103,6 +107,40 @@ def test_system_prompt_forbids_overapplying_exclusions() -> None:
     assert "tài liệu không nêu mức chi trả cụ thể" in SYSTEM_PROMPT
 
 
+def test_system_prompt_numbers_its_rules_in_order() -> None:
+    # Assembled from shared blocks, so a reordering can leave the visible
+    # numbering out of sequence.
+    positions = [SYSTEM_PROMPT.index(f"\n{n}. ") for n in range(1, 8)]
+    assert positions == sorted(positions)
+
+
+def test_prompt_never_points_at_a_rule_by_number() -> None:
+    # The model copies the prompt's wording: "trả lời theo quy tắc 3" came back
+    # verbatim to the employee as "Trả lời theo quy tắc 3: Tôi không tìm thấy
+    # thông tin trong tài liệu." (golden fr02) — leaking internals and refusing
+    # after it had already answered. Rules must state what to do, not point at a
+    # number. The single allowed mention is the line forbidding exactly this.
+    allowed = 'kể cả số hiệu quy tắc (ví dụ "theo quy tắc 3")'
+    for advisory in (False, True):
+        prompt = system_prompt(advisory=advisory)
+        assert allowed in prompt
+        assert not re.findall(r"quy tắc \d", prompt.replace(allowed, ""))
+
+
+def test_refusal_sentence_is_written_out_only_once() -> None:
+    # Rules 1 and 6 name the refusal ("CÂU TỪ CHỐI BẮT BUỘC") instead of quoting
+    # it. Spelling it out three times made refusal salient enough to flip an
+    # answerable question (golden q29_en) into a refusal.
+    for advisory in (False, True):
+        assert system_prompt(advisory=advisory).count(REFUSAL_MESSAGE.rstrip(".")) == 1
+
+
+def test_refusal_sentence_is_the_whole_answer_or_absent() -> None:
+    # Answering and then appending the refusal is self-contradictory (fr02).
+    for advisory in (False, True):
+        assert "TOÀN BỘ câu trả lời khi dùng" in system_prompt(advisory=advisory)
+
+
 def test_system_prompt_forbids_remapping_interest_to_claim_percent() -> None:
     assert "Lãi suất cam kết" in SYSTEM_PROMPT
     assert "tỷ lệ bồi thường" in SYSTEM_PROMPT
@@ -131,6 +169,27 @@ def test_format_context_numbers_chunks_with_citation_header() -> None:
 def test_format_context_empty_hits_says_nothing_found() -> None:
     context = format_context([])
     assert "Không tìm thấy" in context
+
+
+def test_format_context_widens_a_child_to_its_parent_window() -> None:
+    # Retrieval matched a narrow passage; the model must still see the
+    # surrounding conditions it was cut from (parent-child chunking).
+    parent = (
+        "Điều kiện chi trả quyền lợi tử vong.\n\n"
+        "Công ty chi trả 100% số tiền bảo hiểm.\n\n"
+        "Trong đó số tiền bảo hiểm là mệnh giá ghi trên hợp đồng."
+    )
+    hits = [
+        _hit(
+            "Quy tắc An Tâm Bảo Vệ",
+            "Điều 5",
+            "Công ty chi trả 100% số tiền bảo hiểm.",
+            parent_text=parent,
+        )
+    ]
+    context = format_context(hits)
+    assert "Điều kiện chi trả quyền lợi tử vong." in context
+    assert "mệnh giá ghi trên hợp đồng" in context
 
 
 def test_build_user_prompt_includes_context_and_question() -> None:
@@ -240,7 +299,8 @@ def test_advisory_prompt_keeps_every_non_negotiable_property() -> None:
     # the citation format, the wrong-product ban, the calc disclaimer, the
     # exclusion rules and the metric rule must all survive verbatim.
     assert REFUSAL_MESSAGE.rstrip(".") in ADVISORY_SYSTEM_PROMPT
-    assert "[Tên tài liệu, mục X]" in ADVISORY_SYSTEM_PROMPT
+    assert "trích dẫn nguồn bằng SỐ của đoạn ngữ cảnh" in ADVISORY_SYSTEM_PROMPT
+    assert "trích dẫn theo định dạng [n]" in ADVISORY_SYSTEM_PROMPT
     assert (
         "TUYỆT ĐỐI không trả lời thay bằng nội dung của một sản phẩm khác"
         in ADVISORY_SYSTEM_PROMPT
@@ -297,7 +357,7 @@ def test_general_knowledge_block_is_opt_in_via_settings() -> None:
     assert without == SYSTEM_PROMPT
     # It may never displace the grounded answer, nor carry company specifics.
     assert "KHÔNG BAO GIỜ thay thế phần trả lời dựa trên ngữ cảnh" in with_block
-    assert "KHÔNG trích dẫn [Tên tài liệu, mục X]" in with_block
+    assert "KHÔNG trích dẫn nguồn [n]" in with_block
 
 
 def test_general_knowledge_label_added_only_when_the_section_is_present() -> None:
@@ -308,6 +368,19 @@ def test_general_knowledge_label_added_only_when_the_section_is_present() -> Non
     # Not duplicated, and never attached to a refusal.
     assert _general_knowledge_suffix(f"{mixed}\n{GENERAL_KNOWLEDGE_DISCLAIMER}") == ""
     assert _general_knowledge_suffix(REFUSAL_MESSAGE) == ""
+
+
+def test_product_named_prompt_suppresses_general_knowledge() -> None:
+    named = system_prompt(product_named=True, general_knowledge=True)
+    assert GENERAL_KNOWLEDGE_HEADING not in named
+    assert "Chỉ dùng các đoạn ngữ cảnh thuộc tài liệu của sản phẩm đó" in named
+
+
+def test_product_summary_prompt_adds_structure_rule() -> None:
+    summary = system_prompt(product_named=True, product_summary=True)
+    assert "TÓM TẮT / GIỚI THIỆU SẢN PHẨM" in summary
+    assert "KHÔNG chèn công thức actuarial" in summary
+    assert "Từ điển thuật ngữ" in summary
 
 
 # --------------------------------------------------------------------------- #
@@ -330,10 +403,33 @@ def test_format_sources_numbers_match_context_and_dedupes() -> None:
     # Page is carried in the link too, so a native PDF opens at the cited page.
     link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5}&page=3)"
     assert f"- [1] {link} — Điều 5 (trang 3)" in block
-    assert "[2]" not in block  # deduped, and numbering keeps context indices
+    # The duplicate shares [1] rather than consuming [2]: numbering stays
+    # contiguous, so the third source is [2] here AND [2] in the context.
     sec2 = quote("Điều 2", safe="")
     link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2})"
-    assert f"- [3] {link2} — Điều 2" in block
+    assert f"- [2] {link2} — Điều 2" in block
+    assert "[3]" not in block
+
+
+def test_every_context_number_resolves_to_a_source_line() -> None:
+    """The citation contract: no marker the model can copy is a dead link.
+
+    Enumerating context and sources independently broke this — a duplicated
+    (doc, section) consumed a context number that the deduped sources block
+    never listed, so a model citing it sent the employee to nothing. Under
+    parent-child chunking, two children of one parent are exactly that case.
+    """
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "child A"),
+        _hit("Quy tắc An Tâm", "Điều 5", "child B"),  # same parent section
+        _hit("Hướng dẫn dự phòng", "Điều 2", "C"),
+        _hit("Quy tắc An Tâm", "Điều 9", "D"),
+    ]
+    context_numbers = set(
+        re.findall(r"^\[(\d+)\] Tài liệu:", format_context(hits), re.M)
+    )
+    source_numbers = set(re.findall(r"^- \[(\d+)\]", format_sources(hits), re.M))
+    assert context_numbers == source_numbers == {"1", "2", "3"}
 
 
 def test_format_sources_links_pdf_straight_to_original_file_at_page() -> None:
@@ -516,3 +612,93 @@ def test_think_stripper_unclosed_think_is_dropped() -> None:
     # If generation ends mid-reasoning, emit nothing rather than raw thoughts.
     deltas = ["<think>đang nghĩ dở"]
     assert _feed_all(ThinkStripper(), deltas) == ""
+
+
+# --------------------------------------------------------------------------- #
+# ADM2 (2026-08-05 audit): dangling citations, runtime-enforced not just
+# eval-measured (app/generation/citations.py)
+# --------------------------------------------------------------------------- #
+
+
+def test_strip_dangling_citations_removes_unresolvable_marker() -> None:
+    from app.generation.citations import strip_dangling_citations
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]  # only [1] resolves
+    answer = "Theo [1] và [7], sự kiện này được chi trả."
+    assert (
+        strip_dangling_citations(answer, hits)
+        == "Theo [1] và , sự kiện này được chi trả."
+    )
+
+
+def test_strip_dangling_citations_leaves_valid_markers_untouched() -> None:
+    from app.generation.citations import strip_dangling_citations
+
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "A"),
+        _hit("Hướng dẫn dự phòng", "Điều 2", "B"),
+    ]
+    answer = "Theo [1], quyền lợi tử vong được chi trả. Điều 6 loại trừ nêu tại [2]."
+    assert strip_dangling_citations(answer, hits) == answer
+
+
+def test_has_dangling_citation_true_only_when_unresolvable() -> None:
+    from app.generation.citations import has_dangling_citation
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    assert has_dangling_citation("Theo [1] và [9].", hits) is True
+    assert has_dangling_citation("Theo [1].", hits) is False
+    assert has_dangling_citation("Không có trích dẫn.", hits) is False
+
+
+def test_grounded_suffix_flags_dangling_citation_in_streamed_body() -> None:
+    # The streaming path can't un-send an already-displayed [n], so it flags
+    # instead of stripping (generator._grounded_suffix_fn).
+    from app.generation.citations import DANGLING_CITATION_NOTICE
+    from app.generation.generator import _grounded_suffix_fn
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    suffix_fn = _grounded_suffix_fn(hits, advisory=False)
+    suffix = suffix_fn("Theo [1] và [9], sự kiện này được chi trả.")
+    assert DANGLING_CITATION_NOTICE in suffix
+    assert "**Nguồn tham khảo:**" in suffix  # sources block still appended after
+
+
+def test_grounded_suffix_no_notice_when_all_citations_resolve() -> None:
+    from app.generation.citations import DANGLING_CITATION_NOTICE
+    from app.generation.generator import _grounded_suffix_fn
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    suffix_fn = _grounded_suffix_fn(hits, advisory=False)
+    suffix = suffix_fn("Theo [1], sự kiện này được chi trả.")
+    assert DANGLING_CITATION_NOTICE not in suffix
+
+
+def test_generate_chat_strips_dangling_citation_before_client_sees_it(
+    monkeypatch,
+) -> None:
+    # Non-streaming path: nothing has reached the client yet, so silently
+    # strip rather than flag (generator._generate_chat's hits= param).
+    from app.generation import generator
+
+    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A")]
+    monkeypatch.setattr(
+        generator,
+        "_chat_raw",
+        lambda messages: "Theo [1] và [9], sự kiện này được chi trả.",
+    )
+    out = generator._generate_chat(
+        [], generator._grounded_suffix_fn(hits, advisory=False), hits=hits
+    )
+    assert "[9]" not in out.split("**Nguồn tham khảo:**")[0]
+    assert "[1]" in out
+
+
+def test_generate_chat_without_hits_does_not_strip(monkeypatch) -> None:
+    # Hybrid/other non-grounded callers pass no hits: no citation concept to
+    # check, so bracketed text (however unlikely) is left alone.
+    from app.generation import generator
+
+    monkeypatch.setattr(generator, "_chat_raw", lambda messages: "Xem thêm [9].")
+    out = generator._generate_chat([], lambda body: "")
+    assert out == "Xem thêm [9]."

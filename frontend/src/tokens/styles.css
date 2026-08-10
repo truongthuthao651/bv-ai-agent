@@ -1,0 +1,9 @@
+/* Vendored from the design system's styles.css. Import paths are relative here
+   because this file sits next to its tokens/*.css, not above a tokens/ dir. */
+@import "./fonts.css";
+@import "./colors.css";
+@import "./base.css";
+@import "./typography.css";
+@import "./spacing.css";
+@import "./radii-shadows.css";
+@import "./interaction.css";

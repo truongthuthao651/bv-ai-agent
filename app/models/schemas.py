@@ -8,7 +8,7 @@ Two layers live here:
 * **Qdrant payload + API models** (pydantic) — what gets stored per point and
   what the HTTP surface accepts/returns.
 
-The Qdrant payload fields MUST stay in sync with CLAUDE.md (Chunk fields /
+The Qdrant payload fields MUST stay in sync with TEAMMATE_GUIDE.md (Chunk fields /
 "Qdrant payload") — change both together.
 """
 
@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocType(str, Enum):
-    """Allowed document types (CLAUDE.md: ``doc_type`` domain)."""
+    """Allowed document types (TEAMMATE_GUIDE.md: ``doc_type`` domain)."""
 
     POLICY = "policy"
     PROCEDURE = "procedure"
@@ -94,8 +94,13 @@ class Chunk:
 
     ``embed_text`` is what bge-m3 sees (doc/section prefix + display text +
     Vietnamese verbalizations); ``display_text`` is clean Markdown+LaTeX that
-    goes into the generation context and UI. Only ``display_text`` is stored in
-    the payload — ``embed_text`` exists solely to produce the vectors.
+    identifies this chunk in retrieval, reranking, and the UI. ``embed_text`` is
+    not stored in the payload — it exists solely to produce the vectors.
+
+    With parent-child chunking (settings.parent_child_chunking_enabled) the
+    chunk is a small CHILD and ``parent_text`` carries the larger window it was
+    cut from, which is what generation reads. ``parent_text`` is None when the
+    child is the whole parent (nothing to widen to) or the feature is off.
     """
 
     doc_id: str
@@ -108,6 +113,10 @@ class Chunk:
     page: int | None = None
     department: str | None = None
     figure_image_path: str | None = None
+    # Parent window for generation, and the index identifying it within the
+    # document so several retrieved children of one parent can be collapsed.
+    parent_text: str | None = None
+    parent_index: int | None = None
     # Basename of the originally uploaded file (under data/uploads), so
     # citations can link back to the source document. None for sources that
     # were never an uploaded file (e.g. glossary entries built in-memory).
@@ -128,6 +137,8 @@ class Chunk:
             department=self.department,
             doc_type=self.doc_type,
             display_text=self.display_text,
+            parent_text=self.parent_text,
+            parent_index=self.parent_index,
             figure_image_path=self.figure_image_path,
             source_filename=self.source_filename,
             source_url=self.source_url,
@@ -145,8 +156,10 @@ class Chunk:
 class QdrantPayload(BaseModel):
     """Payload stored alongside each vector point.
 
-    Mirrors CLAUDE.md's field list. ``display_text`` is included so retrieval
-    can assemble the generation context without a second lookup.
+    Mirrors TEAMMATE_GUIDE.md's field list. ``display_text`` — and, under parent-child
+    chunking, ``parent_text`` — are included so retrieval can assemble the
+    generation context without a second lookup. Both parent fields default to
+    None, so points indexed before parent-child chunking existed still load.
     """
 
     doc_id: str
@@ -156,12 +169,24 @@ class QdrantPayload(BaseModel):
     department: str | None = None
     doc_type: DocType
     display_text: str
+    parent_text: str | None = None
+    parent_index: int | None = None
     figure_image_path: str | None = None
     source_filename: str | None = None
     source_url: str | None = None
     needs_review: bool = False
     chunk_index: int
     ingested_at: str  # ISO-8601 UTC
+
+    @property
+    def context_text(self) -> str:
+        """The text generation should read: the parent window when there is one.
+
+        Retrieval and reranking work on the narrow ``display_text``; only the
+        prompt widens to the parent, so a match on a short passage still gives
+        the model the definitions and conditions around it.
+        """
+        return self.parent_text or self.display_text
 
 
 # --------------------------------------------------------------------------- #
@@ -289,8 +314,9 @@ class ChatCompletionResponse(BaseModel):
 class ModelCard(BaseModel):
     """One entry in the OpenAI-compatible ``GET /v1/models`` list.
 
-    ``name`` is a non-standard extra field that Open WebUI reads to show a
-    friendly label in its model dropdown; plain OpenAI clients ignore it.
+    ``name`` is a non-standard extra field for a friendly display label;
+    plain OpenAI clients ignore it. Kept for compatibility with any
+    OpenAI-compatible client — /chat itself doesn't call this endpoint.
     """
 
     id: str
@@ -305,3 +331,38 @@ class ModelList(BaseModel):
 
     object: Literal["list"] = "list"
     data: list[ModelCard]
+
+
+class FeedbackRequest(BaseModel):
+    """``POST /feedback`` (P2-F2, audit/REPORT.md) — a thumbs-down signal on
+    one streamed answer. Deliberately metadata-only: no query or answer text
+    field exists here at all, matching query_timing.py's established
+    no-content-logging design (see that module's docstring) rather than the
+    audit's own suggested payload shape, which named query/answer text —
+    this codebase's existing privacy convention wins over a generic
+    recommendation. ``completion_id`` is the same id every SSE chunk of that
+    answer already carried (``chatcmpl-...``), so a later admin-side view
+    could join this against logs/query_timings.jsonl if that log is ever
+    extended to record completion_id too (it doesn't yet — see the fix's
+    changelog entry for why that join isn't wired up in this first version).
+    """
+
+    completion_id: str
+    reason: str | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    """``POST /change-password`` (P2-J6, audit/REPORT.md — the minimum viable
+    self-service surface: any signed-in account changes its OWN password,
+    never someone else's — the target account always comes from the session,
+    never from this body)."""
+
+    current_password: str
+    new_password: str
+
+
+class UpdateMeRequest(BaseModel):
+    """``PATCH /me`` — server-side profile prefs for the signed-in account."""
+
+    display_name: str | None = None
+    avatar_swatch: str | None = None

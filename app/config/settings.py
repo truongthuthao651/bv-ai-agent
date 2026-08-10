@@ -34,7 +34,12 @@ class Settings(BaseSettings):
     )
 
     # ---- Application server (FastAPI) ----
-    api_host: str = "0.0.0.0"
+    # Loopback-only by default (fail-safe: a fresh install with no .env, or an
+    # .env missing this line, must NOT come up LAN-exposed with an empty
+    # API_SHARED_SECRET — see SEC-B, audit/01-engineering.md §1.4). Set to
+    # 0.0.0.0 explicitly in .env once employees need to reach /chat over the
+    # LAN, alongside API_SHARED_SECRET per .env.example's guidance.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     log_level: str = "INFO"
     # Base URL the API is actually reachable at, used to build citation links
@@ -42,11 +47,26 @@ class Settings(BaseSettings):
     # matching the admin API's default 127.0.0.1-only binding (README); change
     # only if API_HOST is opened up beyond this machine.
     api_public_base_url: str = "http://localhost:8000"
-    # Single shared password gating the admin dashboard (app/auth.py) — upload,
-    # delete, and the quick-ask test page. Empty disables the gate entirely
-    # (today's default: open on loopback). Not the employee-facing login —
-    # that's Open WebUI's own WEBUI_AUTH.
+    # DEPRECATED — the admin gate now checks per-account email+password
+    # (app/accounts.py) instead of one shared password. Kept only so an old
+    # .env with ADMIN_PASSWORD set doesn't silently do nothing; app/auth.py
+    # logs a warning and ignores it otherwise.
     admin_password: str = ""
+    # Signs the session cookie (app/auth.py). Auto-generated and logged as a
+    # warning if unset (sessions won't survive a restart); set a fixed random
+    # value here for sessions to persist across restarts.
+    session_secret_key: str = ""
+    # Extra, opt-in gate on /v1/* for callers OTHER than /chat itself (a
+    # script, a future integration) — /chat's own fetch calls already carry
+    # the account session cookie, which app.main.admin_session_gate accepts
+    # for /v1 directly, so this is never required just to make /chat work.
+    # Empty (default) = /v1 relies only on network placement (loopback by
+    # default) and the session cookie. When API_HOST is opened to the LAN
+    # (see API_PUBLIC_BASE_URL), set this to a random value so a direct,
+    # sessionless HTTP request from elsewhere on the LAN can't call
+    # /v1/chat/completions — see README "Liên kết trích dẫn cho người dùng
+    # trong mạng LAN" (SEC1).
+    api_shared_secret: str = ""
     # Warm the heavy, lazily-loaded pieces at startup (bge-m3 + reranker weights,
     # the Qdrant collection, and the Ollama chat model) so the first user request
     # doesn't pay their cold-load latency — significant on CPU-only hosts. Each
@@ -66,20 +86,30 @@ class Settings(BaseSettings):
     # is not telemetry — nothing leaves the machine).
     query_timing_log_enabled: bool = True
     query_timing_log_path: Path = Path("./logs/query_timings.jsonl")
+    # Thumbs-down signal on one streamed answer (P2-F2, audit/REPORT.md) —
+    # same metadata-only design as query timing above:
+    # completion_id + an optional short reason, never the query or answer
+    # text. The only quality signal this app has beyond eval/'s golden set;
+    # without it a bad answer in production leaves no trace at all.
+    feedback_log_enabled: bool = True
+    feedback_log_path: Path = Path("./logs/feedback.jsonl")
 
     # ---- Assistant identity / branding ----
-    # Display name shown in Open WebUI (browser title/header) and the admin page.
-    # The underlying local model never changes — this is presentation only.
+    # Display name shown in the browser tab/header. The underlying local
+    # model never changes — this is presentation only.
     assistant_name: str = "Trợ lý AI Bảo Việt Life"
-    # OpenAI-style model id advertised by GET /v1/models. Open WebUI lists this in
-    # its model dropdown; chat_completions ignores the requested model and always
-    # serves settings.chat_model, so this is purely a stable, branded label.
+    # OpenAI-style model id advertised by GET /v1/models. chat_completions
+    # ignores the requested model and always serves settings.chat_model, so
+    # this is purely a stable, branded label (kept for OpenAI-compatibility —
+    # /chat itself doesn't need it, but a future non-browser API client might).
     assistant_model_id: str = "bao-viet-life"
+    # Cross-origin callers of the API — empty by default, since /admin, /chat,
+    # and /v1 are all same-origin (one FastAPI process, one port) with no
+    # separate frontend origin to allow. Only needed for something calling
+    # this API from a genuinely different origin.
     # NoDecode: keep pydantic-settings from JSON-decoding this from `.env`;
     # the validator below splits the comma-separated string instead.
-    cors_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://localhost:8080"]
-    )
+    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # ---- Ollama ----
     ollama_base_url: str = "http://localhost:11434"
@@ -92,7 +122,13 @@ class Settings(BaseSettings):
     # Relative to the repository working directory.
     embed_model_path: str = "./models/bge-m3"
     rerank_model_path: str = "./models/bge-reranker-v2-m3"
-    llm_temperature: float = 0.2
+    # Greedy decoding. Sampling buys nothing on a grounded compliance task and
+    # costs correctness in the tail: on a question no exclusion clause covered,
+    # 0.2 answered "không chi trả" in 5 of 12 samples (inventing an exclusion
+    # after correctly listing the real ones), while 0.0 was right 12 of 12
+    # — measured interleaved, same prompt and context. It also makes eval runs
+    # comparable instead of resampling a new answer each time.
+    llm_temperature: float = 0.0
     llm_max_tokens: int = 2048
     llm_context_window: int = 8192
     # How many trailing chat turns are sent to the model as history. Kept small
@@ -131,6 +167,15 @@ class Settings(BaseSettings):
     retrieve_top_k: int = 20
     rrf_k: int = 60
     rerank_top_k: int = 5
+    # Cap how many RRF-fused hits the cross-encoder scores. Dense+sparse each
+    # return retrieve_top_k, so the fused pool can approach 2× that; the
+    # cross-encoder is the hot path, and ranks past ~15 almost never enter
+    # generation after the top_k cut. Lowering this is H8 lever (a).
+    rerank_candidates: int = 15
+    # Token cap passed to FlagReranker.compute_score. Library default is 512;
+    # with parent-child children at CHUNK_CHILD_MAX_TOKENS≈250 the query+doc
+    # pair rarely needs more. Lower values cut CPU padding cost (H8).
+    rerank_max_length: int = 512
     # Reranker (bge-reranker-v2-m3, normalized 0-1) hits scoring below this are
     # dropped before generation; when nothing survives, the API returns the
     # refusal message deterministically instead of trusting the LLM to refuse
@@ -183,6 +228,14 @@ class Settings(BaseSettings):
     # product (near-identical benefit clauses fool the reranker), refuse instead
     # of answering from the wrong product. False disables the guard.
     product_scope_guard_enabled: bool = True
+    # When a query names exactly one indexed product, scope hybrid search to
+    # that product's doc_id(s) before reranking — same isolation as conversation
+    # scope, but for the opening turn that already names the product.
+    single_product_retrieval_enabled: bool = True
+    # After rerank on single-product turns, drop chunks whose doc_title does not
+    # cover the named product(s). Belt-and-braces when scoping misses abbreviated
+    # titles or a rewrite reintroduces a product name the search filter skipped.
+    product_hit_filter_enabled: bool = True
     # Comparison / multi-product questions (app/retrieval/comparison.py): when
     # the query names ≥2 products, retrieve + rerank per product and merge so
     # one product's overview chunks cannot crowd the other out of the global
@@ -211,11 +264,46 @@ class Settings(BaseSettings):
     # (app/retrieval/metric_guard.py) so a "claim bao nhiêu%?" question cannot
     # be answered from a lãi suất cam kết table. False disables the filter.
     metric_guard_enabled: bool = True
+    # Coverage questions ("tôi bị X thì có được chi trả không?"): mix benefit /
+    # scope terms into the search text so an exclusion article is never the
+    # whole context, and when it is anyway, forbid a denial and answer as
+    # enumerated cases (app/retrieval/coverage.py). Observed real-doc failure:
+    # a car-accident question retrieved one exclusion section and the answer
+    # denied the claim using a substandard-health underwriting clause.
+    coverage_guard_enabled: bool = True
+    # Post-generation gate on coverage verdicts: a "được/không được chi trả"
+    # conclusion that never cites a benefit clause sitting in its own context is
+    # regenerated once, then replaced by a deterministic enumeration
+    # (app/generation/coverage_gate.py). Measured need: with the benefit clause
+    # backfilled AND ranked first, a real 4-turn conversation still denied the
+    # claim citing only the exclusions page, 4 times out of 4. Coverage turns
+    # give up token streaming while this is on — the verdict can only be checked
+    # once the answer is complete.
+    coverage_verdict_gate_enabled: bool = True
+    # Second LLM pass over a finished coverage answer: did it invent facts about
+    # the customer, or conclude against the clause it quoted? Both are semantic,
+    # so the deterministic gate cannot see them (app/generation/verify.py).
+    # DEFENCE IN DEPTH, NOT A GUARANTEE: eval/run_ragas.py records this repo's
+    # own local judge scoring 1.0 on every category of every run, including one
+    # where the model denied a covered death. It fails open, and costs one extra
+    # model call per coverage turn. A/B it before trusting it.
+    coverage_llm_verify_enabled: bool = True
 
     # ---- Chunking ----
     chunk_min_tokens: int = 500
     chunk_max_tokens: int = 800
     chunk_overlap_pct: float = 0.12
+    # Parent-child chunking: each indexed point is a SMALL child chunk (what
+    # bge-m3 embeds and the reranker scores — short passages match a short
+    # question far more precisely), but generation receives the larger parent
+    # chunk the child was cut from, so the model still sees the surrounding
+    # definitions and conditions. Parents are exactly the chunks produced
+    # without this feature, so turning it off restores the flat behavior.
+    parent_child_chunking_enabled: bool = True
+    # Child budget in tokens. Children are packed from the same indivisible
+    # units as parents (equation units, table row groups), so a unit larger
+    # than this still becomes one oversized child rather than being split.
+    chunk_child_max_tokens: int = 250
 
     # ---- Ingestion / parsing ----
     ocr_language: str = "vi"
@@ -234,6 +322,13 @@ class Settings(BaseSettings):
     # that env var and hard-fails at convert time if the dir doesn't exist.
     docling_models_path: Path = Path("./models/docling")
 
+    # ---- Upload limits (SEC4, 2026-08-05 audit) ----
+    # POST /ingest rejects a file once its streamed byte count exceeds this,
+    # before the whole thing is buffered in memory (app/api/ingest.py). 50 MB
+    # comfortably covers a full-length scanned policy PDF; raise per-deployment
+    # if real documents run larger.
+    max_upload_mb: int = 50
+
     # ---- Paths ----
     # Relative to the repository working directory.
     data_dir: Path = Path("./data")
@@ -241,16 +336,10 @@ class Settings(BaseSettings):
     glossary_path: Path = Path("./data/glossary/thuat_ngu.yaml")
     asset_dir: Path = Path("./data/assets")
 
-    # ---- Open WebUI / OpenAI-compatible surface ----
-    open_webui_port: int = 3000
-    openai_api_base_url: str = "http://localhost:8000/v1"
-    openai_api_key: str = "local-no-auth"
-    webui_auth: bool = False
-
     # ---- Departments (phòng ban) ----
     # Selectable when uploading a document and editable per document. This is the
-    # source of truth for validation; the admin UI (static/index.html) mirrors
-    # the same list in its <select> options — keep the two in sync.
+    # Source of truth for validation. Frontend upload forms mirror this list
+    # (frontend/src/documents/documentUploadOptions.js) — keep in sync.
     departments: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["PTSP", "DP", "DVA"]
     )

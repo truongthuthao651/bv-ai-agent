@@ -25,10 +25,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 
 from app.config.settings import settings
+from app.generation.prompts import REFUSAL_MESSAGE
+from app.models.schemas import Hit
+from app.vn_time import now_vn_iso
 
 logger = logging.getLogger("bv-ai-agent.query_timing")
 
@@ -53,6 +55,21 @@ class TimingContext:
     n_hits: int = 0
     query_chars: int = 0
     stream: bool = True
+    # ADM1 (2026-08-05 audit): enough to reconstruct what a bad answer saw,
+    # without ever logging the query/answer text itself. ``hits`` holds only
+    # doc_id/section_path/score (never chunk text) per Hit, taken as-is from
+    # ResponsePlan.hits — see log_query_timing for the compact record shape.
+    hits: list[Hit] = field(default_factory=list)
+    advisory: bool = False
+    coverage: bool = False
+    scope_labels: list[str] = field(default_factory=list)
+    # Set by generator.py mid-generation (this object is threaded by
+    # reference into generation) when a coverage turn goes through
+    # coverage_gate.py's correction path: "none" (verdict was fine as
+    # generated), "regenerated" (a corrected retry was accepted), or
+    # "fallback" (the retry also failed and the deterministic enumeration
+    # was used instead). None for non-coverage turns.
+    coverage_gate_outcome: str | None = None
 
     def elapsed_s(self) -> float:
         """Seconds since the request arrived (never negative)."""
@@ -70,22 +87,35 @@ def response_time_footer(ctx: TimingContext | None) -> str:
     return f"\n\n_⏱ Thời gian trả lời: {format_elapsed(ctx.elapsed_s())}_"
 
 
+def _answer_is_refusal(answer: str) -> bool:
+    """True when the answer contains the mandated refusal sentence (MODE-1)."""
+    return REFUSAL_MESSAGE.rstrip(".") in answer
+
+
 def log_query_timing(
     ctx: TimingContext | None,
     *,
     answer_chars: int,
     first_token_s: float | None = None,
+    answer_text: str | None = None,
 ) -> None:
     """Append one metadata-only JSONL timing record. Best-effort, never raises.
 
     No-op when timing wasn't requested or ``query_timing_log_enabled`` is off.
     Records coarse metadata only — never the query or answer text.
+
+    When ``answer_text`` is supplied and matches the refusal sentence, the
+    logged ``mode`` is forced to ``refusal`` even if the route was hybrid
+    (MODE-1, audit/REPORT.md) so admin KPIs count hybrid-path refusals.
     """
     if ctx is None or not settings.query_timing_log_enabled:
         return
+    mode = ctx.mode
+    if answer_text is not None and _answer_is_refusal(answer_text):
+        mode = "refusal"
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "mode": ctx.mode,
+        "ts": now_vn_iso(),
+        "mode": mode,
         "stream": ctx.stream,
         "elapsed_ms": round(ctx.elapsed_s() * 1000),
         "first_token_ms": (
@@ -94,6 +124,18 @@ def log_query_timing(
         "n_hits": ctx.n_hits,
         "query_chars": ctx.query_chars,
         "answer_chars": answer_chars,
+        "advisory": ctx.advisory,
+        "coverage": ctx.coverage,
+        "coverage_gate": ctx.coverage_gate_outcome,
+        "scope_labels": ctx.scope_labels,
+        "hits": [
+            {
+                "doc_id": hit.payload.doc_id,
+                "section_path": hit.payload.section_path,
+                "score": round(hit.score, 4),
+            }
+            for hit in ctx.hits
+        ],
     }
     logger.info("query timing: %s", record)
     try:
@@ -103,3 +145,27 @@ def log_query_timing(
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:  # a logging failure must never break the answer
         logger.warning("Could not write query timing log to %s: %s", path, exc)
+
+
+def log_feedback(completion_id: str, reason: str | None) -> None:
+    """Append one thumbs-down record (P2-F2, audit/REPORT.md). Metadata-only,
+    same convention as ``log_query_timing`` above: never the query or answer
+    text, just enough to see *that* and *roughly why* an answer was flagged.
+    Best-effort, never raises — a logging failure must never surface as an
+    error to the person who just took the time to flag a bad answer.
+    """
+    if not settings.feedback_log_enabled:
+        return
+    record = {
+        "ts": now_vn_iso(),
+        "completion_id": completion_id,
+        "reason": reason,
+    }
+    logger.info("feedback: %s", record)
+    try:
+        path = settings.feedback_log_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:  # a logging failure must never break the UI
+        logger.warning("Could not write feedback log to %s: %s", path, exc)

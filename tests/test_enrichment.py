@@ -46,6 +46,33 @@ def test_disabled_skips_verbalization() -> None:
     assert out[0].embed_text == embed_before
 
 
+def test_ollama_verbalize_sends_matching_context_window(monkeypatch) -> None:
+    # 2026-08-06: the sibling omission in query_rewrite.py/verify.py forced a
+    # full model reload whenever this call and a live chat generation hit
+    # the same Ollama instance back-to-back (e.g. ingestion running
+    # alongside a live server) -- fixed here too for consistency.
+    import app.ingestion.enrichment as enrichment_module
+    from app.config.settings import settings
+
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"response": "Mô tả công thức."}
+
+    def fake_post(url, json, **kwargs):
+        captured.update(json)
+        return _Resp()
+
+    monkeypatch.setattr(enrichment_module.httpx, "post", fake_post)
+    out = enrichment_module._ollama_verbalize("$x = 1$")
+    assert out == "Mô tả công thức."
+    assert captured["options"]["num_ctx"] == settings.llm_context_window
+
+
 def test_metric_hint_appended_for_interest_table_even_when_enrichment_off() -> None:
     display = (
         "Lãi suất cam kết tối thiểu theo năm hợp đồng:\n\n"

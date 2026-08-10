@@ -19,6 +19,27 @@ from collections.abc import AsyncIterator, Callable
 import httpx
 
 from app.config.settings import settings
+from app.generation.citations import (
+    DANGLING_CITATION_NOTICE,
+    has_dangling_citation,
+    strip_dangling_citations,
+)
+from app.generation.coverage_gate import (
+    VerdictProblem,
+    check_verdict,
+    correction_messages,
+    fallback_answer,
+    strip_leaked_instructions,
+)
+from app.generation.verify import (
+    averify_answer,
+    verification_messages,
+    verify_answer,
+)
+from app.generation.history import (
+    strip_appended_artifacts,
+    truncate_at_sources_heading,
+)
 from app.generation.prompts import (
     ADVISORY_DISCLAIMER,
     CALC_DISCLAIMER,
@@ -27,21 +48,20 @@ from app.generation.prompts import (
     HYBRID_DISCLAIMER,
     HYBRID_SYSTEM_PROMPT,
     REFUSAL_MESSAGE,
+    SOURCES_HEADING,
     build_user_prompt,
     format_sources,
     system_prompt,
 )
 from app.models.schemas import ChatMessage, Hit
+from app.generation.product_answer import polish_product_answer
 from app.query_timing import TimingContext, log_query_timing, response_time_footer
+from app.text_utils import sanitize_model_output
 
 logger = logging.getLogger(__name__)
 
 _CONNECTION_ERROR_MESSAGE = (
     "Xin lỗi, hiện không thể kết nối tới mô hình sinh câu trả lời. "
-    "Vui lòng thử lại sau."
-)
-_GENERATION_TIMEOUT_MESSAGE = (
-    "Xin lỗi, mô hình sinh câu trả lời mất quá lâu để phản hồi. "
     "Vui lòng thử lại sau."
 )
 
@@ -65,6 +85,34 @@ def _partial_tail_len(text: str, tag: str) -> int:
         if tag.startswith(text[-k:]):
             return k
     return 0
+
+
+class GeneralKnowledgeTruncator:
+    """Drop a model-written general-knowledge section on product-named turns."""
+
+    def __init__(self, marker: str = GENERAL_KNOWLEDGE_HEADING) -> None:
+        self._marker = marker
+        self._buf = ""
+        self._truncated = False
+
+    def feed(self, text: str) -> str:
+        if self._truncated:
+            return ""
+        self._buf += text
+        idx = self._buf.find(self._marker)
+        if idx != -1:
+            out, self._buf, self._truncated = self._buf[:idx], "", True
+            return out
+        keep = _partial_tail_len(self._buf, self._marker)
+        out = self._buf[: len(self._buf) - keep]
+        self._buf = self._buf[len(self._buf) - keep :]
+        return out
+
+    def flush(self) -> str:
+        if self._truncated:
+            return ""
+        out, self._buf = self._buf, ""
+        return out
 
 
 class ThinkStripper:
@@ -112,22 +160,96 @@ class ThinkStripper:
         return out
 
 
+class SourcesTruncator:
+    """Drop everything from a model-written "Nguồn tham khảo" heading onward.
+
+    Sanitizing history removes the model's *reason* to write one, but a stray
+    imitation must never reach the user: it carries the model's own numbering,
+    which contradicts the canonical block ``_sources_suffix`` appends right
+    underneath it (observed: the model's [1] and ours naming different
+    sections in the same answer). Buffers a partial tail the same way
+    ``ThinkStripper`` does, so a heading split across two token deltas is
+    still caught.
+    """
+
+    def __init__(self, marker: str = SOURCES_HEADING) -> None:
+        self._marker = marker
+        self._buf = ""
+        self._truncated = False
+
+    def feed(self, text: str) -> str:
+        if self._truncated:
+            return ""
+        self._buf += text
+        idx = self._buf.find(self._marker)
+        if idx != -1:
+            out, self._buf, self._truncated = self._buf[:idx], "", True
+            return out
+        keep = _partial_tail_len(self._buf, self._marker)
+        out = self._buf[: len(self._buf) - keep]
+        self._buf = self._buf[len(self._buf) - keep :]
+        return out
+
+    def flush(self) -> str:
+        """Emit the buffered tail (empty once a heading has been seen)."""
+        if self._truncated:
+            return ""
+        out, self._buf = self._buf, ""
+        return out
+
+
 def build_messages(
     query: str,
     hits: list[Hit],
     history: list[ChatMessage] | None = None,
     *,
     advisory: bool = False,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the Ollama ``messages`` array: system + trimmed history + grounded user turn.
 
     ``advisory`` selects the synthesis-permitting variant of the grounded system
     prompt (comparison / "which should the customer pick?" turns).
+    ``coverage`` / ``coverage_undetermined`` add the "có được chi trả không"
+    answer shape and, when the context is exclusion-only, the block forbidding a
+    denial (see ``app/retrieval/coverage.py``).
+
+    Assistant turns are replayed WITHOUT the suffixes we appended to them (see
+    ``generation/history.py``): Open WebUI returns the rendered answer, and
+    feeding our own sources block back taught the model to emit imitations of
+    it under conflicting numbering.
     """
-    messages = [{"role": "system", "content": system_prompt(advisory=advisory)}]
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt(
+                advisory=advisory,
+                coverage=coverage,
+                coverage_undetermined=coverage_undetermined,
+                product_named=product_named,
+                product_summary=product_summary,
+            ),
+        }
+    ]
     for turn in (history or [])[-settings.max_history_turns :]:
-        messages.append({"role": turn.role, "content": turn.content})
-    messages.append({"role": "user", "content": build_user_prompt(query, hits)})
+        content = turn.content
+        if turn.role == "assistant":
+            content = strip_appended_artifacts(content)
+            if not content:
+                continue
+        messages.append({"role": turn.role, "content": content})
+    messages.append(
+        {
+            "role": "user",
+            "content": build_user_prompt(
+                query, hits, product_labels=product_labels or None
+            ),
+        }
+    )
     return messages
 
 
@@ -313,7 +435,7 @@ async def stream_static_answer(
     footer = response_time_footer(timing)
     if footer:
         yield _sse_chunk(completion_id, model, {"content": footer}, None)
-    log_query_timing(timing, answer_chars=len(text))
+    log_query_timing(timing, answer_chars=len(text), answer_text=text)
     yield _sse_chunk(completion_id, model, {}, "stop")
     yield "data: [DONE]\n\n"
 
@@ -323,6 +445,9 @@ async def _stream_chat(
     suffix_fn: Callable[[str], str],
     *,
     timing: TimingContext | None = None,
+    product_named: bool = False,
+    buffer_for_polish: bool = False,
+    polish_fn: Callable[[str], str] | None = None,
 ) -> AsyncIterator[str]:
     """Shared Ollama-streaming core: SSE chunks + a deterministic suffix.
 
@@ -334,6 +459,10 @@ async def _stream_chat(
     ``timing``, when provided, appends the "⏱ Thời gian trả lời" footer as the
     final content chunk (after the sources block, so it reads as a footer) and
     writes one metadata-only timing record once streaming completes.
+
+    When ``buffer_for_polish`` is set (product-summary turns), the model output
+    is buffered and post-processed before anything reaches the client — same
+    trade-off as the coverage gate.
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     model = settings.chat_model
@@ -341,6 +470,8 @@ async def _stream_chat(
     yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
 
     stripper = ThinkStripper()
+    truncator = SourcesTruncator()
+    gk_truncator = GeneralKnowledgeTruncator() if product_named else None
     answer_parts: list[str] = []
     started = time.perf_counter()
     first_token_at: float | None = None
@@ -359,21 +490,34 @@ async def _stream_chat(
                         continue
                     content, done = parse_ollama_line(line)
                     if content:
-                        visible = stripper.feed(content)
+                        visible = sanitize_model_output(stripper.feed(content))
+                        if gk_truncator is not None:
+                            visible = gk_truncator.feed(visible)
+                        visible = truncator.feed(visible)
                         if visible:
                             if first_token_at is None:
                                 first_token_at = time.perf_counter()
                             answer_parts.append(visible)
-                            yield _sse_chunk(
-                                completion_id, model, {"content": visible}, None
-                            )
+                            if not buffer_for_polish:
+                                yield _sse_chunk(
+                                    completion_id, model, {"content": visible}, None
+                                )
                     if done:
                         break
-        tail = stripper.flush()
+        tail = sanitize_model_output(stripper.flush())
+        if gk_truncator is not None:
+            tail = gk_truncator.feed(tail) + gk_truncator.flush()
+        tail = sanitize_model_output(truncator.feed(tail) + truncator.flush())
         if tail:
             answer_parts.append(tail)
-            yield _sse_chunk(completion_id, model, {"content": tail}, None)
+            if not buffer_for_polish:
+                yield _sse_chunk(completion_id, model, {"content": tail}, None)
         body = "".join(answer_parts)
+        if polish_fn is not None:
+            body = polish_fn(body)
+        body = sanitize_model_output(body, strip_edges=True)
+        if buffer_for_polish and body:
+            yield _sse_chunk(completion_id, model, {"content": body}, None)
         suffix = suffix_fn(body)
         if suffix:
             yield _sse_chunk(completion_id, model, {"content": suffix}, None)
@@ -387,7 +531,10 @@ async def _stream_chat(
             else None
         )
         log_query_timing(
-            timing, answer_chars=len(body) + len(suffix), first_token_s=first_token_s
+            timing,
+            answer_chars=len(body) + len(suffix),
+            first_token_s=first_token_s,
+            answer_text=body + suffix,
         )
         total_ms = (time.perf_counter() - started) * 1000
         first_ms = (
@@ -396,17 +543,8 @@ async def _stream_chat(
         logger.info(
             "generation timings: first_token=%.0fms total=%.0fms", first_ms, total_ms
         )
-    except httpx.TimeoutException as exc:
-        logger.error(
-            "Generation timed out after %.0fs: %r",
-            settings.ollama_generation_timeout,
-            exc,
-        )
-        yield _sse_chunk(
-            completion_id, model, {"content": _GENERATION_TIMEOUT_MESSAGE}, None
-        )
     except httpx.HTTPError as exc:
-        logger.error("Generation failed (%s): %r", exc.__class__.__name__, exc)
+        logger.error("Generation failed: %s", exc)
         yield _sse_chunk(
             completion_id, model, {"content": _CONNECTION_ERROR_MESSAGE}, None
         )
@@ -415,19 +553,33 @@ async def _stream_chat(
     yield "data: [DONE]\n\n"
 
 
-def _grounded_suffix_fn(hits: list[Hit], advisory: bool) -> Callable[[str], str]:
+def _grounded_suffix_fn(
+    hits: list[Hit], advisory: bool, *, product_named: bool = False
+) -> Callable[[str], str]:
     """Suffixes appended after a grounded answer, in reading order.
 
     Calculation disclaimer, then the advisory label, then the general-knowledge
-    label, then the sources block — the sources stay last so the numbered
-    citations remain the final thing on screen.
+    label, then a dangling-citation notice (ADM2) if needed, then the sources
+    block — the sources stay last so the numbered citations remain the final
+    thing on screen.
+
+    ADM2 (2026-08-05 audit): this is the STREAMING path, where ``body`` has
+    already been sent to the client token-by-token by the time ``suffix_fn``
+    runs — an already-displayed ``[n]`` can't be un-sent, so a dangling one is
+    flagged here rather than stripped. The non-streaming path
+    (``_generate_chat``) strips instead, since nothing has reached the client
+    yet there.
     """
 
     def suffix_fn(body: str) -> str:
         out = _disclaimer_suffix(body)
         if advisory:
             out += _advisory_disclaimer_suffix(body)
-        out += _general_knowledge_suffix(body)
+        if not product_named:
+            out += _general_knowledge_suffix(body)
+        if hits and has_dangling_citation(body, hits):
+            logger.warning("dangling citation in streamed answer; flagging")
+            out += f"\n\n{DANGLING_CITATION_NOTICE}"
         return out + _sources_suffix(body, hits)
 
     return suffix_fn
@@ -439,14 +591,98 @@ async def stream_answer(
     history: list[ChatMessage] | None = None,
     *,
     advisory: bool = False,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
     timing: TimingContext | None = None,
 ) -> AsyncIterator[str]:
-    """Stream the assistant's grounded answer as SSE lines."""
-    messages = build_messages(query, hits, history, advisory=advisory)
+    """Stream the assistant's grounded answer as SSE lines.
+
+    Coverage turns take the gated path instead, which emits the answer in one
+    block: its verdict can only be checked once complete, and streaming
+    "Không được claim." before checking means the employee has already read a
+    verdict we are about to reject.
+    """
+    labels = product_labels or []
+
+    def _polish(body: str) -> str:
+        return polish_product_answer(
+            body,
+            hits=hits,
+            product_labels=labels,
+            product_named=product_named,
+            product_summary=product_summary,
+        )
+
+    messages = build_messages(
+        query,
+        hits,
+        history,
+        advisory=advisory,
+        coverage=coverage,
+        coverage_undetermined=coverage_undetermined,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=labels,
+    )
+    suffix_fn = _grounded_suffix_fn(hits, advisory, product_named=product_named)
+    if coverage and settings.coverage_verdict_gate_enabled:
+        async for chunk in _stream_gated_coverage(
+            messages, hits, suffix_fn, question=query, timing=timing
+        ):
+            yield chunk
+        return
     async for chunk in _stream_chat(
-        messages, _grounded_suffix_fn(hits, advisory), timing=timing
+        messages,
+        suffix_fn,
+        timing=timing,
+        product_named=product_named,
+        buffer_for_polish=product_summary,
+        polish_fn=_polish if (product_named or product_summary) else None,
     ):
         yield chunk
+
+
+async def _stream_gated_coverage(
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    suffix_fn: Callable[[str], str],
+    *,
+    question: str,
+    timing: TimingContext | None = None,
+) -> AsyncIterator[str]:
+    """Emit a verdict-checked coverage answer as one SSE content chunk.
+
+    Token streaming is traded for the check. These turns already run about a
+    minute on CPU, so a regeneration lengthens an existing wait rather than
+    introducing a new kind of one — and an employee reading a wrong "không
+    được chi trả" is the failure this whole path exists to prevent.
+    """
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    model = settings.chat_model
+    yield _sse_chunk(completion_id, model, {"role": "assistant"}, None)
+
+    failed = False
+    try:
+        answer = await _agated_coverage_answer(messages, hits, question, timing=timing)
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.error("Generation failed: %s", exc)
+        answer, failed = _CONNECTION_ERROR_MESSAGE, True
+
+    yield _sse_chunk(completion_id, model, {"content": answer}, None)
+    suffix = "" if failed else suffix_fn(answer)
+    if suffix:
+        yield _sse_chunk(completion_id, model, {"content": suffix}, None)
+    footer = response_time_footer(timing)
+    if footer:
+        yield _sse_chunk(completion_id, model, {"content": footer}, None)
+    log_query_timing(
+        timing, answer_chars=len(answer) + len(suffix), answer_text=answer + suffix
+    )
+    yield _sse_chunk(completion_id, model, {}, "stop")
+    yield "data: [DONE]\n\n"
 
 
 async def stream_hybrid_answer(
@@ -485,7 +721,7 @@ def preload_model() -> None:
             "think": False,
             "keep_alive": settings.ollama_keep_alive,
         },
-        timeout=settings.ollama_generation_timeout,
+        timeout=settings.ollama_timeout,
     )
     resp.raise_for_status()
 
@@ -511,29 +747,200 @@ def generate_plain(prompt: str) -> str:
         return ""
 
 
-def _generate_chat(
-    messages: list[dict[str, str]], suffix_fn: Callable[[str], str]
-) -> str:
-    """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``)."""
-    try:
-        resp = httpx.post(
+def _chat_raw(messages: list[dict[str, str]]) -> str:
+    """One non-streaming Ollama call: the model's answer, no suffixes.
+
+    Split out of ``_generate_chat`` so the coverage gate can inspect a bare
+    answer and ask for another one before any suffix is computed.
+    """
+    resp = httpx.post(
+        f"{settings.ollama_base_url}/api/chat",
+        json=_ollama_payload(messages, stream=False),
+        timeout=settings.ollama_generation_timeout,
+    )
+    resp.raise_for_status()
+    content = resp.json().get("message", {}).get("content", "")
+    return sanitize_model_output(
+        truncate_at_sources_heading(strip_think(content)), strip_edges=True
+    )
+
+
+async def _achat_raw(messages: list[dict[str, str]]) -> str:
+    """Async twin of ``_chat_raw`` — the streaming path's gate needs it too."""
+    async with httpx.AsyncClient(timeout=settings.ollama_generation_timeout) as client:
+        resp = await client.post(
             f"{settings.ollama_base_url}/api/chat",
             json=_ollama_payload(messages, stream=False),
-            timeout=settings.ollama_generation_timeout,
         )
         resp.raise_for_status()
         content = resp.json().get("message", {}).get("content", "")
-        answer = strip_think(content)
-        return answer + suffix_fn(answer)
-    except httpx.TimeoutException as exc:
-        logger.error(
-            "Generation timed out after %.0fs: %r",
-            settings.ollama_generation_timeout,
-            exc,
+    return sanitize_model_output(
+        truncate_at_sources_heading(strip_think(content)), strip_edges=True
+    )
+
+
+def _resolve_verdict(answer: str, hits: list[Hit]) -> VerdictProblem | None:
+    """Log and return whatever the coverage gate found wrong with ``answer``."""
+    problem = check_verdict(answer, hits)
+    if problem is not None:
+        logger.info(
+            "coverage gate: %s verdict ignored benefit clause(s) %s; regenerating",
+            problem.kind,
+            list(problem.uncited_benefits),
         )
-        return _GENERATION_TIMEOUT_MESSAGE
+    return problem
+
+
+def _settle(
+    retry: str, hits: list[Hit], question: str, *, timing: TimingContext | None = None
+) -> str:
+    """Accept the regenerated answer, or fall back to the enumeration.
+
+    BOTH checks run here. The first version returned straight out of the
+    deterministic path, so a regeneration triggered by the verdict gate was
+    never seen by the semantic verifier — and that is exactly the path that
+    shipped a wrong denial in testing: the retry dutifully cited [1] and [2],
+    satisfying the verdict gate, then read the EXCLUSION list as the list of
+    covered cases and denied anyway. Citing a clause is not reading it.
+
+    The regeneration budget stays at one: a retry that fails either check is
+    replaced by the deterministic enumeration rather than generated again.
+    ``timing`` (ADM1) is written in place, not returned: it's the same object
+    the caller already threads into log_query_timing. Every return path is
+    stripped of dangling citations (ADM2) — nothing here has reached the
+    client yet, coverage answers are always emitted as one buffered block.
+    """
+    retry = strip_leaked_instructions(retry)
+    if check_verdict(retry, hits) is not None:
+        logger.warning(
+            "coverage gate: regeneration still ungrounded; "
+            "using deterministic enumeration"
+        )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
+        return strip_dangling_citations(fallback_answer(hits), hits)
+    if verify_answer(question, retry) is not None:
+        logger.warning(
+            "coverage gate: regeneration failed verification; "
+            "using deterministic enumeration"
+        )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
+        return strip_dangling_citations(fallback_answer(hits), hits)
+    if timing is not None:
+        timing.coverage_gate_outcome = "regenerated"
+    return strip_dangling_citations(retry, hits)
+
+
+async def _asettle(
+    retry: str, hits: list[Hit], question: str, *, timing: TimingContext | None = None
+) -> str:
+    """Async twin of ``_settle``."""
+    retry = strip_leaked_instructions(retry)
+    if check_verdict(retry, hits) is not None:
+        logger.warning(
+            "coverage gate: regeneration still ungrounded; "
+            "using deterministic enumeration"
+        )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
+        return strip_dangling_citations(fallback_answer(hits), hits)
+    if await averify_answer(question, retry) is not None:
+        logger.warning(
+            "coverage gate: regeneration failed verification; "
+            "using deterministic enumeration"
+        )
+        if timing is not None:
+            timing.coverage_gate_outcome = "fallback"
+        return strip_dangling_citations(fallback_answer(hits), hits)
+    if timing is not None:
+        timing.coverage_gate_outcome = "regenerated"
+    return strip_dangling_citations(retry, hits)
+
+
+def _gated_coverage_answer(
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    question: str,
+    *,
+    timing: TimingContext | None = None,
+) -> str:
+    """Generate a coverage answer whose verdict engaged with the payout side.
+
+    Two checks, at most ONE regeneration between them: the deterministic gate
+    (did the verdict cite a benefit clause at all) and, when that passes, the
+    semantic verifier (did it invent the customer's facts, or conclude against
+    the clause it quoted — see ``generation/verify.py``). ``timing`` records
+    which of none/regenerated/fallback happened (ADM1) — see TimingContext.
+    """
+    # Strip BEFORE checking: a leaked "…kết thúc bằng những gì còn cần kiểm tra
+    # để kết luận" heading is the last "kết luận" in the text, so it captures
+    # ``verdict_region`` and hides the real conclusion underneath it.
+    answer = sanitize_model_output(
+        strip_leaked_instructions(_chat_raw(messages)), strip_edges=True
+    )
+    problem = _resolve_verdict(answer, hits)
+    if problem is not None:
+        retry = _chat_raw(correction_messages(messages, answer, problem))
+        return _settle(retry, hits, question, timing=timing)
+    reason = verify_answer(question, answer)
+    if reason is not None:
+        retry = _chat_raw(verification_messages(messages, answer, reason))
+        return _settle(retry, hits, question, timing=timing)
+    if timing is not None:
+        timing.coverage_gate_outcome = "none"
+    # Strip on the clean path too: a leak from an earlier turn comes back in
+    # the history and gets copied forward even when no gate fires.
+    return strip_dangling_citations(strip_leaked_instructions(answer), hits)
+
+
+async def _agated_coverage_answer(
+    messages: list[dict[str, str]],
+    hits: list[Hit],
+    question: str,
+    *,
+    timing: TimingContext | None = None,
+) -> str:
+    """Async twin of ``_gated_coverage_answer``."""
+    answer = sanitize_model_output(
+        strip_leaked_instructions(await _achat_raw(messages)), strip_edges=True
+    )
+    problem = _resolve_verdict(answer, hits)
+    if problem is not None:
+        retry = await _achat_raw(correction_messages(messages, answer, problem))
+        return await _asettle(retry, hits, question, timing=timing)
+    reason = await averify_answer(question, answer)
+    if reason is not None:
+        retry = await _achat_raw(verification_messages(messages, answer, reason))
+        return await _asettle(retry, hits, question, timing=timing)
+    if timing is not None:
+        timing.coverage_gate_outcome = "none"
+    return strip_dangling_citations(strip_leaked_instructions(answer), hits)
+
+
+def _generate_chat(
+    messages: list[dict[str, str]],
+    suffix_fn: Callable[[str], str],
+    *,
+    hits: list[Hit] | None = None,
+    polish_fn: Callable[[str], str] | None = None,
+) -> str:
+    """Shared non-streaming Ollama call + deterministic suffix (mirrors ``_stream_chat``).
+
+    ADM2: unlike the streaming path, nothing has reached the client yet here,
+    so a dangling ``[n]`` citation is silently stripped rather than flagged —
+    ``hits`` is optional (hybrid/other non-grounded callers pass none, so no
+    stripping runs; there's no citation concept to check there).
+    """
+    try:
+        answer = sanitize_model_output(_chat_raw(messages), strip_edges=True)
+        if polish_fn is not None:
+            answer = polish_fn(answer)
+        if hits:
+            answer = strip_dangling_citations(answer, hits)
+        return answer + suffix_fn(answer)
     except (httpx.HTTPError, ValueError) as exc:
-        logger.error("Generation failed (%s): %r", exc.__class__.__name__, exc)
+        logger.error("Generation failed: %s", exc)
         return _CONNECTION_ERROR_MESSAGE
 
 
@@ -545,7 +952,7 @@ def _with_timing(answer: str, timing: TimingContext | None) -> str:
     monkeypatch — while both non-streaming answer paths still get the footer.
     """
     footer = response_time_footer(timing)
-    log_query_timing(timing, answer_chars=len(answer))
+    log_query_timing(timing, answer_chars=len(answer), answer_text=answer)
     return answer + footer
 
 
@@ -555,12 +962,49 @@ def generate_answer(
     history: list[ChatMessage] | None = None,
     advisory: bool = False,
     *,
+    coverage: bool = False,
+    coverage_undetermined: bool = False,
+    product_named: bool = False,
+    product_summary: bool = False,
+    product_labels: list[str] | None = None,
     timing: TimingContext | None = None,
 ) -> str:
     """Non-streaming variant: block for the full grounded answer (``stream: false``)."""
-    messages = build_messages(query, hits, history, advisory=advisory)
+    labels = product_labels or []
+
+    def _polish(body: str) -> str:
+        return polish_product_answer(
+            body,
+            hits=hits,
+            product_labels=labels,
+            product_named=product_named,
+            product_summary=product_summary,
+        )
+
+    messages = build_messages(
+        query,
+        hits,
+        history,
+        advisory=advisory,
+        coverage=coverage,
+        coverage_undetermined=coverage_undetermined,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=labels,
+    )
+    suffix_fn = _grounded_suffix_fn(hits, advisory, product_named=product_named)
+    polish = _polish if (product_named or product_summary) else None
+    if coverage and settings.coverage_verdict_gate_enabled:
+        try:
+            answer = _gated_coverage_answer(messages, hits, query, timing=timing)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.error("Generation failed: %s", exc)
+            return _with_timing(_CONNECTION_ERROR_MESSAGE, timing)
+        if polish is not None:
+            answer = polish(answer)
+        return _with_timing(answer + suffix_fn(answer), timing)
     return _with_timing(
-        _generate_chat(messages, _grounded_suffix_fn(hits, advisory)), timing
+        _generate_chat(messages, suffix_fn, hits=hits, polish_fn=polish), timing
     )
 
 

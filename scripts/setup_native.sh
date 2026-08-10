@@ -3,8 +3,8 @@
 # One-time native setup for the local RAG stack.
 #
 # UV is preferred. If it is unavailable, the script falls back to Python 3.11
-# or 3.12 with venv/pip. Both the FastAPI app and Open WebUI get separate,
-# repository-local environments so no project dependency is system-installed.
+# or 3.12 with venv/pip. The FastAPI app serves the committed frontend build;
+# no container runtime or Open WebUI environment is required.
 # =============================================================================
 set -euo pipefail
 
@@ -123,15 +123,14 @@ install_into "$APP_PYTHON" torchvision==0.27.1 --index-url https://download.pyto
 install_into "$APP_PYTHON" -r requirements-embed.txt
 install_into "$APP_PYTHON" -r requirements-pdf.txt
 
-echo "==> Preparing Open WebUI environment (.venv-webui)"
-create_venv .venv-webui
-WEBUI_PYTHON="$(venv_python .venv-webui)"
-"$WEBUI_PYTHON" -c 'import sys; raise SystemExit(not ((3, 11) <= sys.version_info < (3, 13)))' \
-  || { echo "ERROR: .venv-webui must use Python 3.11 or 3.12." >&2; exit 1; }
-install_into "$WEBUI_PYTHON" open-webui==0.5.4
-
-# Branding is idempotent and run again before each Open WebUI start.
-"$WEBUI_PYTHON" scripts/open_webui/apply_branding.py || true
+if [[ -f frontend/package.json ]]; then
+  if command -v npm >/dev/null 2>&1; then
+    echo "==> Building frontend (frontend/ -> app/static/dist/)"
+    (cd frontend && npm ci && npm run build)
+  else
+    echo "WARN: npm is unavailable; using the committed frontend build in app/static/dist/." >&2
+  fi
+fi
 
 echo "==> Downloading local model weights"
 bash scripts/setup_models.sh

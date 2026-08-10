@@ -1,0 +1,23 @@
+/* 4px grid. --space-N is always N x 4px, so the name tells you the value.
+   Steps thin out above 24px where fine gradation stops being useful. */
+:root{
+--space-0:0px;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;
+--space-6:24px;--space-8:32px;--space-10:40px;--space-12:48px;--space-16:64px;--space-20:80px;
+/* half-step, only for optical nudges inside controls */
+--space-half:2px;
+
+/* Layout constants — the values every screen should agree on rather than
+   re-deciding per component. */
+--pad-control-y:8px;--pad-control-x:12px;   /* buttons, chips, inputs */
+--pad-cell-y:12px;--pad-cell-x:16px;        /* table cells */
+--pad-card:20px;                            /* standard card */
+--pad-card-lg:24px;                         /* hero / chart card */
+--pad-page:32px;                            /* page gutter */
+--gap-tight:8px;                            /* inside a component */
+--gap-card:16px;                            /* between sibling cards */
+--gap-section:32px;                         /* between page sections */
+--rail-width:264px;                         /* chat + admin left nav */
+--panel-width:360px;                        /* source / detail panel */
+--content-max:768px;                        /* reading measure */
+--control-h-sm:32px;--control-h-md:36px;--control-h-lg:44px; /* one control height per size */
+}

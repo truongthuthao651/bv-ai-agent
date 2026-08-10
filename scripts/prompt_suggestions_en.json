@@ -1,0 +1,26 @@
+[
+  {
+    "title": ["Explain a term", "What is net premium?"],
+    "content": "What is net premium and how is it calculated according to the pricing documentation? State the formula and explain each symbol."
+  },
+  {
+    "title": ["Look up a formula", "Actuarial reserve"],
+    "content": "Present the formula for the actuarial reserve and explain the meaning of each component. Cite the source document."
+  },
+  {
+    "title": ["Explain notation", "Actuarial pricing symbols"],
+    "content": "What do the symbols $\\ddot{a}_x$ and $A_x$ mean in the pricing documentation? How are they related?"
+  },
+  {
+    "title": ["Internal procedure", "Claims settlement process"],
+    "content": "What are the steps in the insurance claims settlement process? List them according to the internal procedure document with section references."
+  },
+  {
+    "title": ["Policy terms", "Free-look period"],
+    "content": "How is the free-look period defined in the product rules and policy terms? Quote the specific clause."
+  },
+  {
+    "title": ["Read a chart", "Data in uploaded figures"],
+    "content": "Summarize the key figures in the chart from a recently uploaded document and cite the source (document name, section)."
+  }
+]

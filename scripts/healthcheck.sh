@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Smoke test for the native stack: Ollama, FastAPI (including embedded Qdrant),
-# and Open WebUI. Exits non-zero when any required endpoint is unavailable.
+# Smoke test for the native stack: Ollama and FastAPI (including embedded
+# Qdrant and the built-in frontend). Exits non-zero when either is unavailable.
 # =============================================================================
 set -euo pipefail
 
@@ -11,7 +11,6 @@ cd "$ROOT_DIR"
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 
 API_PORT="$(env_get API_PORT)";               API_PORT="${API_PORT:-8000}"
-OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)"; OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
 OLLAMA_BASE_URL="$(env_get OLLAMA_BASE_URL)"; OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 
 process_running() {
@@ -63,5 +62,4 @@ fail=0
 check_endpoint "Ollama" "${OLLAMA_BASE_URL}/api/tags" "run/ollama.pid" || fail=1
 echo "  [ -- ] Qdrant (embedded in FastAPI; covered by the API health check)"
 check_endpoint "FastAPI" "http://localhost:${API_PORT}/health" "run/api.pid" || fail=1
-check_endpoint "Open WebUI" "http://localhost:${OPEN_WEBUI_PORT}/" "run/webui.pid" || fail=1
 exit "$fail"

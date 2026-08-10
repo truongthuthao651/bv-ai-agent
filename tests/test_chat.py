@@ -158,11 +158,12 @@ def _post(monkeypatch, query: str, history: list[ChatMessage]) -> bool:
             [_stub_hit()],
             chat_module._advisory_followup_labels(q, h),
             [],
+            False,
         ),
     )
     seen: dict[str, str] = {}
 
-    def fake_generate_chat(messages, suffix_fn):
+    def fake_generate_chat(messages, suffix_fn, **kwargs):
         seen["system"] = messages[0]["content"]
         return "Câu trả lời."
 
@@ -210,10 +211,12 @@ def test_company_self_reference_is_not_refused_by_the_product_guard(
     from app.main import app
 
     monkeypatch.setattr(
-        chat_module, "_retrieve", lambda q, h: (q, [_stub_hit()], [], [])
+        chat_module, "_retrieve", lambda q, h: (q, [_stub_hit()], [], [], False)
     )
     monkeypatch.setattr(
-        generator, "_generate_chat", lambda messages, suffix_fn: "Câu trả lời."
+        generator,
+        "_generate_chat",
+        lambda messages, suffix_fn, **kwargs: "Câu trả lời.",
     )
     body = {
         "messages": [
@@ -232,3 +235,31 @@ def test_company_self_reference_is_not_refused_by_the_product_guard(
     content = resp.json()["choices"][0]["message"]["content"]
     assert content != REFUSAL_MESSAGE
     assert "Câu trả lời." in content
+
+
+def test_retrieval_failure_returns_vietnamese_message_not_a_500(monkeypatch) -> None:
+    # S2 (2026-08-05 audit): Qdrant lock contention / reranker OOM had no
+    # exception handling anywhere in the retrieval path, so it surfaced as a
+    # raw English 500 instead of the graceful Vietnamese message every other
+    # failure path (e.g. Ollama down) already gives the user.
+    from fastapi.testclient import TestClient
+
+    from app.api import chat as chat_module
+    from app.main import app
+
+    def _boom(query, history):
+        raise RuntimeError(
+            "Storage folder ./qdrant_storage is already accessed by another "
+            "instance of Qdrant client."
+        )
+
+    monkeypatch.setattr(chat_module, "plan_response", _boom)
+    body = {
+        "messages": [{"role": "user", "content": "quyền lợi tử vong?"}],
+        "stream": False,
+    }
+    resp = TestClient(app).post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200
+    content = resp.json()["choices"][0]["message"]["content"]
+    assert content == chat_module._RETRIEVAL_ERROR_MESSAGE
+    assert "Storage folder" not in content

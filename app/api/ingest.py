@@ -13,10 +13,11 @@ import unicodedata
 import uuid
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
+from app import auth
 from app.api import docview
 from app.config.settings import settings
 from app.ingestion import indexer
@@ -32,6 +33,10 @@ from app.models.schemas import (
 )
 
 router = APIRouter(tags=["ingest"])
+
+# Read/write granularity for _write_upload_capped. Small enough to reject an
+# oversized upload without buffering it all in memory first.
+_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 # Stable doc_id per filename so re-uploading the same file replaces its points.
 _DOC_NAMESPACE = uuid.UUID("6f4a1d9e-0b2c-4e77-9a1b-000000000002")
@@ -136,6 +141,33 @@ def _title_warning(doc, ext: str, override_given: bool) -> str | None:
     )
 
 
+async def _write_upload_capped(file: UploadFile, dest: Path) -> None:
+    """Stream ``file`` to ``dest``, rejecting once it exceeds ``MAX_UPLOAD_MB``.
+
+    Reads in fixed-size chunks instead of ``await file.read()`` in one shot
+    (the previous behavior), so an oversized upload is rejected mid-stream
+    rather than only after the whole thing is already buffered in memory
+    (SEC4). The partial file is removed before raising, so a rejected upload
+    never leaves anything on disk.
+    """
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    written = 0
+    too_large = False
+    with dest.open("wb") as out:
+        while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
+            written += len(chunk)
+            if written > max_bytes:
+                too_large = True
+                break
+            out.write(chunk)
+    if too_large:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=413,
+            detail=(f"Tệp vượt quá giới hạn {settings.max_upload_mb} MB cho phép."),
+        )
+
+
 def _run_pipeline(
     path: Path,
     doc_type: DocType | None,
@@ -165,6 +197,11 @@ def _run_pipeline(
         count_tokens=indexer.count_tokens,
         max_tokens=settings.chunk_max_tokens,
         overlap_pct=settings.chunk_overlap_pct,
+        child_max_tokens=(
+            settings.chunk_child_max_tokens
+            if settings.parent_child_chunking_enabled
+            else None
+        ),
     )
     chunks = enrich_chunks(chunks)
     n_points = indexer.index_chunks(chunks)
@@ -178,7 +215,9 @@ def _run_pipeline(
     )
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post(
+    "/ingest", response_model=IngestResponse, dependencies=[Depends(auth.require_admin)]
+)
 async def ingest_file(
     file: UploadFile = File(...),
     doc_type: DocType | None = Form(default=None),
@@ -198,19 +237,36 @@ async def ingest_file(
     uploads = settings.data_dir / "uploads"
     uploads.mkdir(parents=True, exist_ok=True)
     dest = uploads / filename
-    dest.write_bytes(await file.read())
+    await _write_upload_capped(file, dest)
 
     try:
         return await run_in_threadpool(
             _run_pipeline, dest, doc_type, doc_title, department, source_url
         )
     except (NotImplementedError, ValueError) as exc:
+        # SEC4: previously left the uploaded file orphaned on disk, unindexed,
+        # on every parse-format failure.
+        dest.unlink(missing_ok=True)
         raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except Exception:
+        # Anything else (a corrupt file, an OOM in enrichment, ...) must not
+        # leave the file behind either — re-raise unchanged so it's still
+        # reported the same way it would have been before this change.
+        dest.unlink(missing_ok=True)
+        raise
 
 
-@router.get("/documents", response_model=list[DocumentInfo])
+@router.get(
+    "/documents",
+    response_model=list[DocumentInfo],
+    dependencies=[Depends(auth.require_admin)],
+)
 async def list_documents() -> list[DocumentInfo]:
-    """List documents currently indexed in Qdrant."""
+    """List documents currently indexed in Qdrant. Admin-only: this is
+    admin-console data, not something the chat UI's employee accounts need —
+    /chat's citation links resolve via the /documents/{id}/view and /file
+    routes instead, which require only a signed-in session (any role), not
+    admin (see app.auth.PUBLIC_PREFIXES's SEC-A note)."""
     return await run_in_threadpool(indexer.list_documents)
 
 
@@ -255,6 +311,9 @@ async def get_document_file(doc_id: str) -> FileResponse:
     ``content_disposition_type="inline"`` lets the browser display the file
     (PDFs scroll natively) instead of downloading it. 404 covers both "no such
     doc_id" and "doc has no backing upload" (e.g. a glossary entry) identically.
+    Requires any signed-in session (not admin-only) — enforced by
+    ``admin_session_gate`` in app/main.py, since this route is no longer in
+    ``auth.PUBLIC_PREFIXES`` (SEC-A: it used to have no session check at all).
     """
     path = await run_in_threadpool(_source_path_for, doc_id)
     if path is None:
@@ -311,7 +370,11 @@ async def view_document(
     return HTMLResponse(rendered)
 
 
-@router.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)
+@router.delete(
+    "/documents/{doc_id}",
+    response_model=DocumentDeleteResponse,
+    dependencies=[Depends(auth.require_admin)],
+)
 async def delete_document(doc_id: str) -> DocumentDeleteResponse:
     """Remove all indexed chunks of one document (by ``doc_id``)."""
     n_chunks = await run_in_threadpool(indexer.count_document_points, doc_id)
@@ -397,7 +460,11 @@ def _apply_update(doc_id: str, req: DocumentUpdateRequest) -> DocumentInfo:
     return info
 
 
-@router.patch("/documents/{doc_id}", response_model=DocumentInfo)
+@router.patch(
+    "/documents/{doc_id}",
+    response_model=DocumentInfo,
+    dependencies=[Depends(auth.require_admin)],
+)
 async def update_document(doc_id: str, request: DocumentUpdateRequest) -> DocumentInfo:
     """Edit a document's title, type, and/or department.
 

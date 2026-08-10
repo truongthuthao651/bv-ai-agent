@@ -12,9 +12,9 @@ Pure and offline — unit-tested without Qdrant or an LLM.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from app.models.schemas import Hit
+from app.text_utils import fold_text as _fold
 
 # Benefit-payout intent: event + asking for amount/%/claim (diacritic-folded).
 _PAYOUT_MARKERS: tuple[str, ...] = (
@@ -48,12 +48,6 @@ _FEE_INTEREST_MARKERS: tuple[str, ...] = (
 )
 
 
-def _fold(text: str) -> str:
-    text = unicodedata.normalize("NFC", text).lower().replace("đ", "d")
-    text = unicodedata.normalize("NFD", text)
-    return "".join(c for c in text if not unicodedata.combining(c))
-
-
 def is_benefit_payout_query(query: str) -> bool:
     """True when the user is asking how much / what % a benefit pays out."""
     if not query.strip():
@@ -73,8 +67,14 @@ def is_benefit_payout_query(query: str) -> bool:
 
 
 def looks_like_fee_or_interest(hit: Hit) -> bool:
-    """True when the hit is a fee / guaranteed-interest section or table."""
-    blob = _fold(f"{hit.payload.section_path}\n{hit.payload.display_text}")
+    """True when the hit is a fee / guaranteed-interest section or table.
+
+    Matches against ``context_text`` — the parent window under parent-child
+    chunking — because that is what generation would receive: a child that is a
+    harmless-looking paragraph can still be cut from a lãi suất cam kết table
+    whose caption only appears in the parent.
+    """
+    blob = _fold(f"{hit.payload.section_path}\n{hit.payload.context_text}")
     return any(m in blob for m in _FEE_INTEREST_MARKERS)
 
 

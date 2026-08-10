@@ -2,8 +2,8 @@
 
 ``POST /v1/chat/completions`` implements the full query flow (skill, sections
 5-6): standalone-question rewrite -> glossary expansion -> hybrid search ->
-rerank -> generation. Streams SSE in OpenAI format by default so Open WebUI
-works unmodified; also supports ``stream: false`` for plain API clients.
+rerank -> generation. Streams SSE in OpenAI format by default; also supports
+``stream: false`` for plain API clients.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config.settings import settings
@@ -32,10 +33,32 @@ from app.models.schemas import (
     ModelCard,
     ModelList,
 )
-from app.retrieval.comparison import is_multi_product_query, retrieve_multi_product
+from app.retrieval.comparison import (
+    _load_indexed_docs,
+    is_multi_product_query,
+    product_doc_ids,
+    retrieve_multi_product,
+)
 from app.retrieval.conversation_scope import active_scope, cited_titles_in_history
+from app.retrieval.coverage import (
+    backfill_payout_clause,
+    expand_coverage_query,
+    grants_a_benefit,
+    is_coverage_question,
+    is_coverage_thread,
+    no_payout_clause_retrieved,
+    payout_clauses_first,
+)
 from app.retrieval.metric_guard import filter_metric_mismatch
-from app.retrieval.product_scope import query_names_absent_product
+from app.retrieval.product_scope import (
+    backfill_product_policy_hits,
+    filter_hits_for_product_summary,
+    filter_hits_to_named_products,
+    is_product_summary_turn,
+    named_product_labels_from_queries,
+    policy_hits_first,
+    query_names_absent_product_from_queries,
+)
 from app.retrieval.query_expansion import expand_query
 from app.retrieval.query_rewrite import rewrite_standalone
 from app.retrieval.reranker import rerank
@@ -50,6 +73,26 @@ from app.retrieval.spellcheck import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["chat"])
+
+# S2 (2026-08-05 audit): retrieval (Qdrant + the reranker) had no exception
+# handling anywhere, so a lock-contention error, a dropped embedded-storage
+# connection, or an OOM during rerank surfaced as a raw English 500 — the one
+# gap in an otherwise careful Vietnamese-first error posture (compare
+# generator._CONNECTION_ERROR_MESSAGE for the equivalent Ollama-side message).
+_RETRIEVAL_ERROR_MESSAGE = (
+    "Xin lỗi, hiện không thể truy xuất tài liệu để trả lời. Vui lòng thử lại sau."
+)
+# RuntimeError: embedded Qdrant's storage-lock contention (two processes
+# opening QDRANT_LOCAL_PATH at once) and FlagEmbedding/FlagReranker's
+# CPU-OOM failure both surface as this. MemoryError: a harder OOM.
+# UnexpectedResponse/ResponseHandlingException: Qdrant server-mode failures
+# (Docker dev stack only; embedded mode never raises these).
+_RETRIEVAL_EXCEPTIONS = (
+    RuntimeError,
+    MemoryError,
+    UnexpectedResponse,
+    ResponseHandlingException,
+)
 
 
 @router.get("/models", response_model=ModelList)
@@ -129,7 +172,7 @@ def _static_response(
         from app.query_timing import log_query_timing, response_time_footer
 
         footer = response_time_footer(timing)
-        log_query_timing(timing, answer_chars=len(text))
+        log_query_timing(timing, answer_chars=len(text), answer_text=text)
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
         created=int(time.time()),
@@ -196,9 +239,94 @@ def _advisory_followup_labels(query: str, history: list[ChatMessage]) -> list[st
     return titles if len(titles) >= 2 else []
 
 
+def _named_product_filter(
+    standalone_query: str,
+    raw_query: str = "",
+    *,
+    product_summary: bool = False,
+) -> dict[str, list[str]] | None:
+    """Scope search to the one product named in the query (first-turn isolation)."""
+    if not settings.single_product_retrieval_enabled:
+        return None
+    docs = _load_indexed_docs()
+    titles = [t for _, t in docs]
+    labels = named_product_labels_from_queries(
+        raw_query or standalone_query, standalone_query, titles=titles
+    )
+    if len(labels) != 1:
+        return None
+    doc_ids = set(product_doc_ids(labels[0], docs))
+    if not doc_ids:
+        return None
+    if not product_summary:
+        # Glossary / guides are not product policies but are needed for actuarial Q&A.
+        try:
+            from app.ingestion import indexer
+            from app.models.schemas import DocType
+
+            for doc in indexer.list_documents():
+                if doc.doc_type != DocType.POLICY:
+                    doc_ids.add(doc.doc_id)
+        except Exception:  # pragma: no cover - Qdrant offline
+            pass
+    logger.info(
+        "named-product scope: restricting search to %d doc(s) for %r summary=%s",
+        len(doc_ids),
+        labels[0],
+        product_summary,
+    )
+    return {"doc_id": list(doc_ids)}
+
+
+def _retrieval_filters(
+    scope: str | None,
+    standalone_query: str,
+    raw_query: str = "",
+    *,
+    product_summary: bool = False,
+) -> dict[str, list[str]] | None:
+    """Conversation sticky scope first; else single named-product scope."""
+    scoped = _scope_filter(scope, standalone_query, raw_query=raw_query)
+    if scoped:
+        return scoped
+    return _named_product_filter(
+        standalone_query, raw_query=raw_query, product_summary=product_summary
+    )
+
+
+def _scope_filter(
+    scope: str | None, standalone_query: str, *, raw_query: str = ""
+) -> dict[str, list[str]] | None:
+    """Restrict retrieval to the product this conversation is already about.
+
+    ``active_scope`` recovered the sticky product but only ever fed the
+    standalone-question rewrite, so a follow-up naming no product ("thế nếu tôi
+    bị tử vong thì sao") still searched the whole corpus — and answered about
+    one product while citing three others. Scoping the search by ``doc_id``
+    fixes that the same way the comparison path already does per product.
+
+    Skipped when the rewritten question names a product of its own (the user
+    switched products, and the query text is the better signal) or when the
+    scope label matches no indexed title.
+    """
+    if not scope or not settings.conversation_scope_enabled:
+        return None
+    docs = _load_indexed_docs()
+    titles = [t for _, t in docs]
+    if named_product_labels_from_queries(
+        raw_query or standalone_query, standalone_query, titles=titles
+    ):
+        return None
+    doc_ids = product_doc_ids(scope, docs)
+    if not doc_ids:
+        return None
+    logger.info("conversation scope: restricting search to %d doc(s)", len(doc_ids))
+    return {"doc_id": doc_ids}
+
+
 def _retrieve(
     query: str, history: list[ChatMessage]
-) -> tuple[str, list[Hit], list[str], list[Hit]]:
+) -> tuple[str, list[Hit], list[str], list[Hit], bool]:
     """Run rewrite -> expansion -> hybrid search -> rerank; each stage is self-gating.
 
     Multi-product (comparison) queries take a per-product search path so each
@@ -207,10 +335,12 @@ def _retrieve(
     eval/run_ragas.py drives the SAME pipeline through ``plan_response`` (it no
     longer re-implements this flow), so retrieval metrics reflect production.
 
-    Returns ``(standalone_query, hits, followup_labels, fused)``: ``fused`` is the
-    pre-rerank hybrid pool (empty on the per-product path), returned so callers
-    can report search-vs-rerank quality; ``labels`` are the carried-over
-    comparison products (empty for ordinary turns).
+    Returns ``(standalone_query, hits, followup_labels, fused, coverage)``:
+    ``fused`` is the pre-rerank hybrid pool (empty on the per-product path),
+    returned so callers can report search-vs-rerank quality; ``labels`` are the
+    carried-over comparison products (empty for ordinary turns); ``coverage``
+    is decided here, once, because query expansion needs it before the search
+    and ``plan_response`` needs the same answer afterwards.
     """
     # Sticky single-product scope biases rewrite toward one title; skip it when
     # the user already named ≥2 products (comparison / side-by-side questions)
@@ -222,11 +352,24 @@ def _retrieve(
     scope = (
         None
         if multi
-        else (active_scope(history) if settings.conversation_scope_enabled else None)
+        else (
+            active_scope(history, current_query=query)
+            if settings.conversation_scope_enabled
+            else None
+        )
     )
     t0 = time.perf_counter()
     standalone_query = rewrite_standalone(history, query, scope=scope)
     t1 = time.perf_counter()
+
+    indexed_docs = _load_indexed_docs()
+    indexed_titles = [t for _, t in indexed_docs]
+    product_labels = named_product_labels_from_queries(
+        query, standalone_query, titles=indexed_titles
+    )
+    product_summary = bool(product_labels) and is_product_summary_turn(
+        query, standalone_query
+    )
 
     # Re-check on the rewritten question (rewrite may surface a second product
     # from history, or drop one — prefer the standalone form for routing).
@@ -237,6 +380,12 @@ def _retrieve(
     # products of its own (otherwise the query text is the better signal).
     explicit_labels = followup_labels if not named_multi else []
     use_multi = named_multi or bool(explicit_labels)
+    # Sticky across the thread: the opening turn carries the "có được chi trả
+    # không" marker and its follow-ups ("tai nạn xe tử vong cơ mà") do not, so
+    # keying on the current turn alone left the guard to the LLM rewrite.
+    coverage = settings.coverage_guard_enabled and (
+        is_coverage_thread(query, history) or is_coverage_question(standalone_query)
+    )
     if use_multi:
         t2 = time.perf_counter()
 
@@ -262,11 +411,47 @@ def _retrieve(
         t3 = t2
         t4 = time.perf_counter()
     else:
-        search_query = expand_query(standalone_query)
+        # Coverage questions get benefit/scope terms mixed in BEFORE glossary
+        # expansion, so an exclusion article can never be the whole pool: the
+        # observed real-doc failure denied a claim from a context that held
+        # nothing but exclusions.
+        search_query = expand_query(
+            expand_coverage_query(standalone_query) if coverage else standalone_query
+        )
         t2 = time.perf_counter()
-        fused = hybrid_search(search_query)
+        fused = hybrid_search(
+            search_query,
+            filters=_retrieval_filters(
+                scope, standalone_query, query, product_summary=product_summary
+            ),
+        )
         t3 = time.perf_counter()
         hits = rerank(standalone_query, fused)
+        if settings.product_hit_filter_enabled and not use_multi:
+            before = len(hits)
+            hits = filter_hits_to_named_products(
+                query, hits, standalone_query=standalone_query
+            )
+            if before and not hits:
+                logger.info(
+                    "product hit filter: dropped all %d hit(s) from other products",
+                    before,
+                )
+        if product_summary and product_labels:
+            hits = filter_hits_for_product_summary(
+                hits, product_labels, known_titles=indexed_titles
+            )
+            hits = backfill_product_policy_hits(
+                hits,
+                product_labels,
+                search_fn=lambda q, doc_ids: hybrid_search(
+                    q, filters={"doc_id": doc_ids}
+                ),
+                budget=settings.rerank_top_k,
+                known_titles=indexed_titles,
+                docs=indexed_docs,
+            )
+            hits = policy_hits_first(hits, product_labels, known_titles=indexed_titles)
         t4 = time.perf_counter()
 
     if settings.metric_guard_enabled:
@@ -280,7 +465,8 @@ def _retrieve(
     t5 = time.perf_counter()
     logger.info(
         "retrieval timings: rewrite=%.0fms expand=%.0fms search=%.0fms "
-        "rerank=%.0fms metric_guard=%.0fms hits=%d scope=%s multi=%s carried=%s",
+        "rerank=%.0fms metric_guard=%.0fms hits=%d scope=%s multi=%s carried=%s "
+        "coverage=%s",
         (t1 - t0) * 1000,
         (t2 - t1) * 1000,
         (t3 - t2) * 1000,
@@ -290,8 +476,9 @@ def _retrieve(
         scope or "-",
         use_multi,
         explicit_labels or "-",
+        coverage,
     )
-    return standalone_query, hits, explicit_labels, fused
+    return standalone_query, hits, explicit_labels, fused, coverage
 
 
 @dataclass
@@ -318,6 +505,20 @@ class ResponsePlan:
     hits: list[Hit] = field(default_factory=list)
     fused: list[Hit] = field(default_factory=list)
     advisory: bool = False
+    # "Có được chi trả không" turn: answer as enumerated cases, not a verdict.
+    coverage: bool = False
+    # ...and every retrieved chunk is an exclusion clause, so no denial can be
+    # grounded (app/retrieval/coverage.py).
+    coverage_undetermined: bool = False
+    # Product/document labels carried into retrieval from conversation_scope
+    # (sticky product across follow-up turns) or comparison's per-product
+    # split. Empty when the turn named its own scope from scratch. Logged
+    # (query_timing.py) so an operator can tell whether a wrong answer traces
+    # to a scope-carry decision, without logging the query/answer text itself.
+    scope_labels: list[str] = field(default_factory=list)
+    product_named: bool = False
+    product_summary: bool = False
+    product_labels: list[str] = field(default_factory=list)
 
 
 def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
@@ -351,7 +552,7 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
                 kind="clarification", query=query, history=history, text=clarification
             )
 
-    standalone_query, hits, carried_labels, fused = _retrieve(query, history)
+    standalone_query, hits, carried_labels, fused, coverage = _retrieve(query, history)
 
     # Product-scope guard: the query names a specific product but every retrieved
     # document is a DIFFERENT product. Refuse rather than answer from — and cite —
@@ -359,8 +560,10 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
     if (
         hits
         and settings.product_scope_guard_enabled
-        and query_names_absent_product(
-            standalone_query, [hit.payload.doc_title for hit in hits]
+        and query_names_absent_product_from_queries(
+            query,
+            standalone_query,
+            [hit.payload.doc_title for hit in hits],
         )
     ):
         logger.info(
@@ -376,13 +579,17 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
             text=REFUSAL_MESSAGE,
             hits=hits,
             fused=fused,
+            scope_labels=carried_labels,
         )
 
     # No hit survived the reranker's floor: fall back to a clearly-labeled
     # general-knowledge answer or refuse deterministically. Scoped follow-ups
     # (prior turn pinned a company product/document) always refuse.
     if not hits:
-        scoped = bool(settings.conversation_scope_enabled and active_scope(history))
+        scoped = bool(
+            settings.conversation_scope_enabled
+            and active_scope(history, current_query=query)
+        )
         if not settings.hybrid_fallback_enabled or scoped:
             if scoped:
                 logger.info(
@@ -396,12 +603,14 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
                 standalone_query=standalone_query,
                 text=REFUSAL_MESSAGE,
                 fused=fused,
+                scope_labels=carried_labels,
             )
         return ResponsePlan(
             kind="hybrid",
             query=query,
             history=history,
             standalone_query=standalone_query,
+            scope_labels=carried_labels,
             fused=fused,
         )
 
@@ -415,6 +624,54 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
     )
     if advisory:
         logger.info("advisory mode: synthesizing over %d hit(s)", len(hits))
+
+    if coverage and no_payout_clause_retrieved(hits):
+        # Nothing in context says when the Company pays, so a denial is the only
+        # conclusion the model can reach — measured, twice, including with a
+        # prompt block forbidding it. Fetch the benefit article from the same
+        # documents instead of arguing with the model about it.
+        before = len(hits)
+        hits = backfill_payout_clause(
+            hits,
+            search_fn=lambda q, doc_ids: hybrid_search(q, filters={"doc_id": doc_ids}),
+            budget=settings.rerank_top_k,
+        )
+        # Count the clauses ADDED, not the length delta: once the context is at
+        # budget the backfill evicts as many weak hits as it adds, so a delta of
+        # 0 read as "found nothing" when it had in fact found two.
+        logger.info(
+            "coverage guard: no payout clause among %d hit(s); backfilled %d",
+            before,
+            sum(1 for h in hits if grants_a_benefit(h)),
+        )
+    coverage_undetermined = coverage and no_payout_clause_retrieved(hits)
+    if coverage_undetermined:
+        # Backfill found nothing either: the documents genuinely do not state
+        # the coverage side, so generation must qualify instead of concluding.
+        logger.info("coverage guard: still no payout clause; denial forbidden")
+    elif coverage:
+        # Benefit clauses lead the context. The model cites what it reads first:
+        # with the exclusions page at rank 1 it cited only that and denied a
+        # covered death, ignoring the benefit clauses lower in the same context.
+        hits = payout_clauses_first(hits)
+    indexed_titles = [t for _, t in _load_indexed_docs()]
+    product_labels = named_product_labels_from_queries(
+        query, standalone_query, titles=indexed_titles
+    )
+    product_named = bool(product_labels)
+    product_summary = product_named and is_product_summary_turn(query, standalone_query)
+    if product_named and len(product_labels) == 1:
+        from app.generation.product_answer import foreign_policy_hits
+
+        stray = foreign_policy_hits(hits, product_labels, known_titles=indexed_titles)
+        if stray:
+            stray_ids = {h.point_id for h in stray}
+            hits = [h for h in hits if h.point_id not in stray_ids]
+            logger.info(
+                "product hit filter: dropped %d foreign-policy chunk(s) for %r",
+                len(stray),
+                product_labels[0],
+            )
     return ResponsePlan(
         kind="grounded",
         query=query,
@@ -423,6 +680,12 @@ def plan_response(query: str, history: list[ChatMessage]) -> ResponsePlan:
         hits=hits,
         fused=fused,
         advisory=advisory,
+        coverage=coverage,
+        coverage_undetermined=coverage_undetermined,
+        scope_labels=carried_labels,
+        product_named=product_named,
+        product_summary=product_summary,
+        product_labels=product_labels,
     )
 
 
@@ -434,7 +697,11 @@ async def chat_completions(request: ChatCompletionRequest):
     # log reflect the real answer latency, not just token generation.
     started_at = time.perf_counter()
     query, history = _split_request(request)
-    plan = await run_in_threadpool(plan_response, query, history)
+    try:
+        plan = await run_in_threadpool(plan_response, query, history)
+    except _RETRIEVAL_EXCEPTIONS as exc:
+        logger.error("Retrieval failed: %s", exc)
+        return _static_response(request, _RETRIEVAL_ERROR_MESSAGE)
 
     if plan.kind == "meta":
         answer = await run_in_threadpool(generator.generate_plain, plan.query)
@@ -451,6 +718,8 @@ async def chat_completions(request: ChatCompletionRequest):
                 n_hits=len(plan.hits),
                 query_chars=len(plan.standalone_query),
                 stream=request.stream,
+                hits=plan.hits,
+                scope_labels=plan.scope_labels,
             ),
         )
 
@@ -461,6 +730,7 @@ async def chat_completions(request: ChatCompletionRequest):
             n_hits=0,
             query_chars=len(plan.standalone_query),
             stream=request.stream,
+            scope_labels=plan.scope_labels,
         )
         if request.stream:
             return StreamingResponse(
@@ -482,6 +752,10 @@ async def chat_completions(request: ChatCompletionRequest):
             n_hits=len(plan.hits),
             query_chars=len(plan.standalone_query),
             stream=request.stream,
+            hits=plan.hits,
+            advisory=plan.advisory,
+            coverage=plan.coverage,
+            scope_labels=plan.scope_labels,
         )
         if request.stream:
             return StreamingResponse(
@@ -490,6 +764,11 @@ async def chat_completions(request: ChatCompletionRequest):
                     plan.hits,
                     plan.history,
                     advisory=plan.advisory,
+                    coverage=plan.coverage,
+                    coverage_undetermined=plan.coverage_undetermined,
+                    product_named=plan.product_named,
+                    product_summary=plan.product_summary,
+                    product_labels=plan.product_labels,
                     timing=timing,
                 ),
                 media_type="text/event-stream",
@@ -500,6 +779,11 @@ async def chat_completions(request: ChatCompletionRequest):
             plan.hits,
             plan.history,
             plan.advisory,
+            coverage=plan.coverage,
+            coverage_undetermined=plan.coverage_undetermined,
+            product_named=plan.product_named,
+            product_summary=plan.product_summary,
+            product_labels=plan.product_labels,
             timing=timing,
         )
     return ChatCompletionResponse(

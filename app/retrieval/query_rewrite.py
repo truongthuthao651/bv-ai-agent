@@ -52,6 +52,9 @@ _REWRITE_PROMPT = (
     "Ví dụ: câu trước là «KH đi trượt tuyết và lặn biển claim QL thương tật?» "
     "rồi hỏi «thế tử vong thì sao» → viết lại thành «KH đi trượt tuyết và lặn "
     "biển claim quyền lợi tử vong có được không?».\n"
+    "Nếu câu hỏi cuối NÊU TÊN SẢN PHẨM MỚI hoặc yêu cầu TÓM TẮT / GIỚI THIỆU "
+    "sản phẩm, KHÔNG gắn chủ đề actuarial/định phí từ lượt trước (ví dụ phí "
+    "thuần, công thức niên kim) — chỉ viết lại đúng ý câu hỏi cuối.\n"
     "Chỉ trả về câu hỏi đã viết lại, không thêm lời dẫn hay giải thích.\n\n"
     "{scope_line}"
     "Lịch sử hội thoại:\n{history}\n\n"
@@ -103,7 +106,20 @@ def _ollama_rewrite(prompt: str) -> str:
                 "stream": False,
                 "think": False,  # qwen3: skip chain-of-thought for this fast utility call
                 "keep_alive": settings.ollama_keep_alive,
-                "options": {"temperature": 0.0},
+                # num_ctx MUST match generator._ollama_payload's: this call
+                # runs on EVERY turn, immediately before generation on the
+                # same loaded llama.cpp instance. A mismatched context size
+                # forces a full model reload for the size change, not a
+                # no-op — found live, 2026-08-06, via
+                # ~/.ollama/logs/server.log showing n_ctx_slot flip-flopping
+                # between requests and correlating with intermittent Ollama
+                # 500s. Since this runs before generation on every request,
+                # it was the single biggest unnecessary latency cost in the
+                # whole pipeline, not just an eval-time issue.
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": settings.llm_context_window,
+                },
             },
             timeout=settings.ollama_timeout,
         )

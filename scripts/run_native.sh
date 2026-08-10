@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Start Ollama, FastAPI (with embedded Qdrant), and Open WebUI natively.
-# Existing services are left alone. Logs live in ./logs and PID files for
-# processes started here live in ./run.
+# Start the native stack: Ollama plus FastAPI with embedded Qdrant. FastAPI
+# serves the committed landing, chat, and admin frontend from app/static/dist/.
+# Works in Windows Git Bash and macOS/Linux without Docker or activation.
 # =============================================================================
 set -euo pipefail
 
@@ -22,23 +22,14 @@ venv_executable() {
   fi
 }
 
-API_HOST="$(env_get API_HOST)";                     API_HOST="${API_HOST:-127.0.0.1}"
-API_PORT="$(env_get API_PORT)";                     API_PORT="${API_PORT:-8000}"
-OPEN_WEBUI_PORT="$(env_get OPEN_WEBUI_PORT)";       OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
-OLLAMA_BASE_URL="$(env_get OLLAMA_BASE_URL)";       OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
-QDRANT_LOCAL_PATH="$(env_get QDRANT_LOCAL_PATH)";   QDRANT_LOCAL_PATH="${QDRANT_LOCAL_PATH:-./qdrant_storage/local}"
-OPENAI_API_BASE_URL="$(env_get OPENAI_API_BASE_URL)"; OPENAI_API_BASE_URL="${OPENAI_API_BASE_URL:-http://localhost:${API_PORT}/v1}"
-OPENAI_API_KEY="$(env_get OPENAI_API_KEY)";         OPENAI_API_KEY="${OPENAI_API_KEY:-local-no-auth}"
-WEBUI_AUTH="$(env_get WEBUI_AUTH)";                 WEBUI_AUTH="${WEBUI_AUTH:-false}"
-WEBUI_NAME="$(env_get WEBUI_NAME)";                 WEBUI_NAME="${WEBUI_NAME:-Local RAG Assistant}"
-DEFAULT_MODELS="$(env_get DEFAULT_MODELS)";         DEFAULT_MODELS="${DEFAULT_MODELS:-bao-viet-life}"
+API_HOST="$(env_get API_HOST)";                   API_HOST="${API_HOST:-127.0.0.1}"
+API_PORT="$(env_get API_PORT)";                   API_PORT="${API_PORT:-8000}"
+OLLAMA_BASE_URL="$(env_get OLLAMA_BASE_URL)";     OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
+QDRANT_LOCAL_PATH="$(env_get QDRANT_LOCAL_PATH)"; QDRANT_LOCAL_PATH="${QDRANT_LOCAL_PATH:-./qdrant_storage/local}"
 
-APP_PYTHON="$(venv_executable .venv python python || true)"
 APP_UVICORN="$(venv_executable .venv uvicorn uvicorn || true)"
-WEBUI_PYTHON="$(venv_executable .venv-webui python python || true)"
-WEBUI_COMMAND="$(venv_executable .venv-webui open-webui open-webui || true)"
-if [[ -z "$APP_PYTHON" || -z "$APP_UVICORN" || -z "$WEBUI_PYTHON" || -z "$WEBUI_COMMAND" ]]; then
-  echo "ERROR: required executables are missing. Run bash scripts/setup_native.sh first." >&2
+if [[ -z "$APP_UVICORN" ]]; then
+  echo "ERROR: .venv Uvicorn executable is missing. Run bash scripts/setup_native.sh first." >&2
   exit 1
 fi
 
@@ -58,9 +49,7 @@ process_running() {
         | tr -d '\r' \
         | awk -v expected="$pid" '$2 == expected { found = 1 } END { exit !found }'
       ;;
-    *)
-      return 1
-      ;;
+    *) return 1 ;;
   esac
 }
 
@@ -80,8 +69,7 @@ remove_stale_pid_file() {
 }
 
 wait_for_health() {
-  local name="$1" url="$2" attempts="$3" delay="$4"
-  local attempt
+  local name="$1" url="$2" attempts="$3" delay="$4" attempt
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     healthy "$url" && return 0
     sleep "$delay"
@@ -90,31 +78,22 @@ wait_for_health() {
   return 1
 }
 
-for service in ollama api webui; do
+for service in ollama api; do
   remove_stale_pid_file "$service" "run/${service}.pid"
 done
-
-startup_failed=0
 
 if healthy "${OLLAMA_BASE_URL}/api/tags"; then
   echo "==> Ollama already running at ${OLLAMA_BASE_URL}"
 else
-  if pid_file_running run/ollama.pid; then
-    echo "==> Ollama PID $(cat run/ollama.pid) is still running; waiting for readiness"
-  else
-    if ! command -v ollama >/dev/null 2>&1; then
-      echo "ERROR: Ollama is not running and its CLI is not on PATH." >&2
-      exit 1
-    fi
-    echo "==> Starting Ollama (logs/ollama.log)"
-    log_start logs/ollama.log "Starting Ollama"
-    nohup ollama serve >> logs/ollama.log 2>&1 &
-    echo $! > run/ollama.pid
-  fi
-  if ! wait_for_health "Ollama" "${OLLAMA_BASE_URL}/api/tags" 30 1; then
-    echo "       See logs/ollama.log." >&2
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "ERROR: Ollama is not running and its CLI is not on PATH." >&2
     exit 1
   fi
+  echo "==> Starting Ollama (logs/ollama.log)"
+  log_start logs/ollama.log "Starting Ollama"
+  nohup ollama serve >> logs/ollama.log 2>&1 &
+  echo $! > run/ollama.pid
+  wait_for_health "Ollama" "${OLLAMA_BASE_URL}/api/tags" 30 1
 fi
 
 API_HEALTH_URL="http://localhost:${API_PORT}/health"
@@ -123,8 +102,8 @@ if reachable "$API_HEALTH_URL"; then
     echo "==> API already healthy on port ${API_PORT}"
   else
     echo "ERROR: API is reachable on port ${API_PORT} but reports unhealthy." >&2
-    echo "       Not starting a duplicate process; run the healthcheck and inspect logs/api.log." >&2
-    startup_failed=1
+    echo "       Not starting a duplicate process; inspect logs/api.log." >&2
+    exit 1
   fi
 else
   if pid_file_running run/api.pid; then
@@ -138,51 +117,12 @@ else
       >> logs/api.log 2>&1 &
     echo $! > run/api.pid
   fi
-  if ! wait_for_health "FastAPI/embedded Qdrant" "$API_HEALTH_URL" 120 1; then
-    echo "       See logs/api.log." >&2
-    startup_failed=1
-  fi
-fi
-
-WEBUI_URL="http://localhost:${OPEN_WEBUI_PORT}/"
-if healthy "$WEBUI_URL"; then
-  echo "==> Open WebUI already healthy on port ${OPEN_WEBUI_PORT}"
-else
-  if reachable "$WEBUI_URL"; then
-    echo "ERROR: Open WebUI is reachable on port ${OPEN_WEBUI_PORT} but reports unhealthy." >&2
-    echo "       Not starting a duplicate process; inspect logs/webui.log." >&2
-    startup_failed=1
-  else
-    if pid_file_running run/webui.pid; then
-      echo "==> Open WebUI PID $(cat run/webui.pid) is still running; waiting for readiness"
-    else
-      echo "==> Starting Open WebUI on port ${OPEN_WEBUI_PORT} (logs/webui.log)"
-      log_start logs/webui.log "Starting Open WebUI on port ${OPEN_WEBUI_PORT}"
-      "$WEBUI_PYTHON" scripts/open_webui/apply_branding.py >> logs/webui.log 2>&1 || true
-      DATA_DIR="$ROOT_DIR/open_webui_data" \
-        OPENAI_API_BASE_URL="$OPENAI_API_BASE_URL" \
-        OPENAI_API_KEY="$OPENAI_API_KEY" \
-        WEBUI_AUTH="$WEBUI_AUTH" \
-        WEBUI_NAME="$WEBUI_NAME" \
-        DEFAULT_MODELS="$DEFAULT_MODELS" \
-        nohup "$WEBUI_COMMAND" serve --host 0.0.0.0 --port "$OPEN_WEBUI_PORT" \
-        >> logs/webui.log 2>&1 &
-      echo $! > run/webui.pid
-    fi
-    if ! wait_for_health "Open WebUI" "$WEBUI_URL" 120 1; then
-      echo "       See logs/webui.log." >&2
-      startup_failed=1
-    fi
-  fi
-fi
-
-if [[ "$startup_failed" -ne 0 ]]; then
-  echo "ERROR: one or more native services are unhealthy." >&2
-  exit 1
+  wait_for_health "FastAPI/embedded Qdrant" "$API_HEALTH_URL" 120 1
 fi
 
 echo "==> Native stack is healthy."
-echo "    Chat UI:    http://localhost:${OPEN_WEBUI_PORT}"
-echo "    Admin page: http://localhost:${API_PORT}"
+echo "    Chat UI:    http://localhost:${API_PORT}/chat"
+echo "    Admin page: http://localhost:${API_PORT}/admin"
+echo "    Landing:    http://localhost:${API_PORT}/"
 echo "    Health:     bash scripts/healthcheck.sh"
 echo "    Stop:       bash scripts/stop_native.sh"
