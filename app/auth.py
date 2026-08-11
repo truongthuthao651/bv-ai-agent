@@ -6,7 +6,7 @@ second, separate login anymore). It USED TO be one shared ``ADMIN_PASSWORD``;
 per-account email+password against ``app/accounts.py`` instead — every
 account email must end in ``accounts.EMAIL_DOMAIN``. Accounts are
 provisioned directly (``scripts/seed_accounts.py``); employees may
-self-register at ``POST /register`` (``@baoviet.com`` only, employee role).
+self-register at ``POST /register`` (``@baoviet.com.vn`` only, employee role).
 Role gates WHICH surfaces an account reaches: any
 signed-in account can use ``/chat``; only ``role="admin"`` can reach
 ``/admin`` or its mutating endpoints (``app.main.admin_session_gate``,

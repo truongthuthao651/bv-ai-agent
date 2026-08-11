@@ -11,7 +11,7 @@ else
   echo "ERROR: .venv not found — run scripts/setup_native.sh first." >&2
   exit 1
 fi
-"$PY" scripts/seed_accounts.py admin@baoviet.com 'Admin123!' admin
+"$PY" scripts/seed_accounts.py admin@baoviet.com.vn 'Admin123!' admin
 echo ""
-echo "Demo admin: admin@baoviet.com / Admin123!"
-echo "Employees: sign up at /login with any @baoviet.com email."
+echo "Demo admin: admin@baoviet.com.vn / Admin123!"
+echo "Employees: sign up at /login with any @baoviet.com.vn email."

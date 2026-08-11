@@ -31,11 +31,6 @@ async def prompt_suggestions(lang: str | None = Query(default=None)) -> list[dic
 
 @router.post("/feedback")
 async def feedback(body: FeedbackRequest) -> dict[str, bool]:
-    """Thumbs-down signal on one streamed answer (P2-F2, audit/REPORT.md) —
-    the only quality signal this app has in production beyond eval/'s golden
-    set today. Log-only: no admin-facing view of this yet (a Wave-3-scale
-    follow-up once there's enough volume to be worth a screen for), but a
-    bad answer now leaves a trace instead of vanishing with no record.
-    """
+    """Store a user's written thumbs-down feedback for admin review."""
     log_feedback(body.completion_id, body.reason)
     return {"ok": True}

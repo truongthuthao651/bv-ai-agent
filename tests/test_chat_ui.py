@@ -20,7 +20,7 @@ def test_feedback_requires_a_session(monkeypatch) -> None:
     # The gate is a no-op until any account is provisioned (fresh-install
     # convention, see test_auth.py) — provision one but don't log in, so
     # this actually exercises "session required", not "gate disabled".
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.post(
@@ -35,10 +35,12 @@ def test_employee_can_submit_feedback(monkeypatch, tmp_path) -> None:
     path = tmp_path / "feedback.jsonl"
     monkeypatch.setattr(settings, "feedback_log_enabled", True)
     monkeypatch.setattr(settings, "feedback_log_path", path)
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.post(
             "/feedback", json={"completion_id": "chatcmpl-abc", "reason": "khong_dung"}
         )
@@ -50,13 +52,16 @@ def test_employee_can_submit_feedback(monkeypatch, tmp_path) -> None:
     assert record["reason"] == "khong_dung"
 
 
-def test_feedback_reason_is_optional(monkeypatch, tmp_path) -> None:
+def test_feedback_requires_written_message(monkeypatch, tmp_path) -> None:
     path = tmp_path / "feedback.jsonl"
     monkeypatch.setattr(settings, "feedback_log_enabled", True)
     monkeypatch.setattr(settings, "feedback_log_path", path)
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.post("/feedback", json={"completion_id": "chatcmpl-abc"})
-        assert resp.status_code == 200
+        assert resp.status_code == 422
+    assert not path.exists()

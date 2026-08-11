@@ -222,7 +222,7 @@ Verified against the codebase and test suite (498 passing tests).
 
 ### Auth & accounts
 
-- [x] Email `@baoviet.com` + password (PBKDF2, SQLite)
+- [x] Email `@baoviet.com.vn` + password (PBKDF2, SQLite)
 - [x] Admin provisioning via `scripts/seed_accounts.py`
 - [x] Employee self-registration at `/login`
 - [x] Session-protected document view/file routes

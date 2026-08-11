@@ -9,10 +9,10 @@ enterprise scale, but there is no SSO available to integrate against here).
 
 There is no email-sending: admin accounts are provisioned directly (see
 ``scripts/seed_accounts.py``); employees may self-register with any
-``@baoviet.com`` email via ``POST /register`` (employee role only). Every
-account's email must end in ``EMAIL_DOMAIN`` — a format check only, since
-there is no corporate identity provider to actually verify domain membership
-against; it keeps out typos and obviously-wrong addresses, nothing more.
+``@baoviet.com.vn`` email via ``POST /register`` (employee role only). Every
+account must use that domain. The domain check is format-only, since there is
+no corporate identity provider to actually verify domain membership against;
+it keeps out typos and obviously-wrong addresses, nothing more.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Literal
 
 from app.config.settings import settings
 
-EMAIL_DOMAIN = "@baoviet.com"
+EMAIL_DOMAIN = "@baoviet.com.vn"
 
 Role = Literal["admin", "employee"]
 _ROLES: tuple[Role, ...] = ("admin", "employee")
@@ -42,6 +42,7 @@ class Account:
 
 
 def is_valid_domain(email: str) -> bool:
+    """Return whether an email uses the only domain accepted by the app."""
     return email.strip().lower().endswith(EMAIL_DOMAIN)
 
 
@@ -183,7 +184,7 @@ def list_accounts() -> list[Account]:
 
 
 def register_employee(email: str, password: str) -> Account:
-    """Self-service signup — ``employee`` role only, ``@baoviet.com`` emails.
+    """Self-service signup — ``employee`` role only, ``@baoviet.com.vn`` emails.
 
     Domain check is format-only (no corporate IdP). Raises ``ValueError`` on
     bad email, weak password, or duplicate account — never reveals whether the

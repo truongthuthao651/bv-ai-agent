@@ -304,6 +304,13 @@ def test_coverage_turns_are_never_told_to_be_brief() -> None:
     assert "**Cần kiểm tra thêm để kết luận:**" in shaped
 
 
+def test_prompt_requires_readable_markdown_layout() -> None:
+    prompt = system_prompt(general_knowledge=False)
+    assert "TRÌNH BÀY DỄ ĐỌC" in prompt
+    assert 'từng dòng bắt đầu bằng "- "' in prompt
+    assert "Tiêu đề của một mục phải đứng trên dòng riêng" in prompt
+
+
 def test_prompt_carries_the_worked_example_for_grouped_exclusions() -> None:
     """Racing ≠ a traffic accident — the misapplication seen in turns 1 and 2."""
     for advisory in (False, True):

@@ -334,21 +334,15 @@ class ModelList(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    """``POST /feedback`` (P2-F2, audit/REPORT.md) — a thumbs-down signal on
-    one streamed answer. Deliberately metadata-only: no query or answer text
-    field exists here at all, matching query_timing.py's established
-    no-content-logging design (see that module's docstring) rather than the
-    audit's own suggested payload shape, which named query/answer text —
-    this codebase's existing privacy convention wins over a generic
-    recommendation. ``completion_id`` is the same id every SSE chunk of that
-    answer already carried (``chatcmpl-...``), so a later admin-side view
-    could join this against logs/query_timings.jsonl if that log is ever
-    extended to record completion_id too (it doesn't yet — see the fix's
-    changelog entry for why that join isn't wired up in this first version).
+    """``POST /feedback`` — a thumbs-down plus the user's written feedback.
+
+    ``reason`` intentionally contains only the feedback the user chooses to
+    submit; the application does not add question or answer text to the log.
+    ``completion_id`` identifies the corresponding streamed answer.
     """
 
     completion_id: str
-    reason: str | None = None
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class ChangePasswordRequest(BaseModel):

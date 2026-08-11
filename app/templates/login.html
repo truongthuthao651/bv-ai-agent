@@ -88,7 +88,7 @@
     color: var(--text-primary);
     margin-bottom: var(--space-2);
   }
-  input[type="password"], input[type="email"] {
+  input[type="email"], .password-input {
     width: 100%;
     font: inherit;
     font-size: var(--text-sm);
@@ -100,12 +100,13 @@
     color: var(--text-primary);
   }
   input::placeholder { color: var(--text-muted); }
-  input[type="password"]:focus, input[type="email"]:focus {
+  input[type="email"]:focus, .password-input:focus {
     outline: none;
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 3px var(--accent-subtle);
   }
-  input[type="password"]:focus-visible, input[type="email"]:focus-visible,
+  input[type="email"]:focus-visible, .password-input:focus-visible,
+  .password-toggle:focus-visible,
   button[type="submit"]:focus-visible, .switch-mode button:focus-visible,
   .back:focus-visible {
     outline: 2px solid var(--focus-ring);
@@ -165,6 +166,42 @@
   .back:hover { color: rgba(255, 255, 255, .88); }
   .hidden { display: none; }
   .field-gap { margin-bottom: var(--space-4); }
+  .password-field {
+    position: relative;
+  }
+  .password-field .password-input {
+    padding-right: calc(var(--pad-control-x) + 32px);
+  }
+  .password-toggle {
+    position: absolute;
+    top: 50%;
+    right: var(--space-2);
+    transform: translateY(-50%);
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .password-toggle:hover { color: var(--text-primary); }
+  .password-toggle svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .password-toggle .eye-off { display: none; }
+  .password-toggle[aria-pressed="true"] .eye-on { display: none; }
+  .password-toggle[aria-pressed="true"] .eye-off { display: block; }
   .lang-toggle {
     position: absolute;
     top: var(--space-5);
@@ -222,15 +259,37 @@
       <form id="loginForm">
         <div class="field-gap">
           <label for="email" id="emailLabel">Email</label>
-          <input type="email" id="email" name="email" autofocus autocomplete="username" placeholder="you@baoviet.com" required />
+          <input type="email" id="email" name="email" autofocus autocomplete="username" placeholder="you@baoviet.com.vn" required />
         </div>
         <div>
           <label for="password" id="passwordLabel">Mật khẩu</label>
-          <input type="password" id="password" name="password" autocomplete="current-password" required />
+          <div class="password-field">
+            <input class="password-input" type="password" id="password" name="password" autocomplete="current-password" required />
+            <button class="password-toggle" type="button" data-password-target="password" aria-label="Hiện mật khẩu" aria-pressed="false">
+              <svg class="eye-on" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                <circle cx="12" cy="12" r="2.5" />
+              </svg>
+              <svg class="eye-off" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 3l18 18M10.6 6.2A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16.8 16.8 0 0 1-2.1 2.8M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3.2-.6M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+              </svg>
+            </button>
+          </div>
         </div>
         <div id="confirmWrap" class="hidden field-gap" style="margin-top: var(--space-4);">
           <label for="confirmPassword" id="confirmLabel">Nhập lại mật khẩu</label>
-          <input type="password" id="confirmPassword" autocomplete="new-password" />
+          <div class="password-field">
+            <input class="password-input" type="password" id="confirmPassword" autocomplete="new-password" />
+            <button class="password-toggle" type="button" data-password-target="confirmPassword" aria-label="Hiện mật khẩu" aria-pressed="false">
+              <svg class="eye-on" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                <circle cx="12" cy="12" r="2.5" />
+              </svg>
+              <svg class="eye-off" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 3l18 18M10.6 6.2A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16.8 16.8 0 0 1-2.1 2.8M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3.2-.6M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+              </svg>
+            </button>
+          </div>
         </div>
         <button id="submitBtn" type="submit">Đăng nhập</button>
         <div id="err"></div>
@@ -267,7 +326,9 @@
       signIn: "Đăng nhập",
       backHome: "← Trang chủ",
       passwordMismatch: "Hai mật khẩu không khớp.",
-      emailDomain: "Email phải thuộc miền @baoviet.com.",
+      emailDomain: "Email phải thuộc miền @baoviet.com.vn.",
+      showPassword: "Hiện mật khẩu",
+      hidePassword: "Ẩn mật khẩu",
       signupFailed: "Không thể tạo tài khoản. Vui lòng thử lại.",
       loginFailed: "Sai email hoặc mật khẩu. Vui lòng thử lại.",
       networkError: "Lỗi mạng: ",
@@ -289,7 +350,9 @@
       signIn: "Sign in",
       backHome: "← Home",
       passwordMismatch: "Passwords do not match.",
-      emailDomain: "Email must use the @baoviet.com domain.",
+      emailDomain: "Email must use the @baoviet.com.vn domain.",
+      showPassword: "Show password",
+      hidePassword: "Hide password",
       signupFailed: "Could not create account. Please try again.",
       loginFailed: "Incorrect email or password. Please try again.",
       networkError: "Network error: ",
@@ -298,7 +361,7 @@
 
   const API_ERROR_VI = {
     "Sai email hoặc mật khẩu. Vui lòng thử lại.": "loginFailed",
-    "Email phải thuộc miền @baoviet.com.": "emailDomain",
+    "Email phải thuộc miền @baoviet.com.vn.": "emailDomain",
     "Không thể tạo tài khoản. Vui lòng thử lại.": "signupFailed",
   };
 
@@ -324,6 +387,7 @@
   const langToggle = document.getElementById("langToggle");
   const langVi = document.getElementById("langVi");
   const langEn = document.getElementById("langEn");
+  const passwordToggles = document.querySelectorAll(".password-toggle");
 
   function msg(key) {
     return I18N[locale][key] ?? key;
@@ -348,7 +412,15 @@
     document.getElementById("passwordLabel").textContent = msg("password");
     document.getElementById("confirmLabel").textContent = msg("confirmPassword");
     document.getElementById("backHome").textContent = msg("backHome");
+    passwordToggles.forEach(updatePasswordToggleLabel);
     setMode(signupMode);
+  }
+
+  function updatePasswordToggleLabel(toggle) {
+    const visible = toggle.getAttribute("aria-pressed") === "true";
+    const label = msg(visible ? "hidePassword" : "showPassword");
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
   }
 
   function setLocale(nextLocale) {
@@ -372,6 +444,16 @@
   langVi.addEventListener("click", () => setLocale("vi"));
   langEn.addEventListener("click", () => setLocale("en"));
   modeToggle.addEventListener("click", () => setMode(!signupMode));
+  passwordToggles.forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const input = document.getElementById(toggle.dataset.passwordTarget);
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      toggle.setAttribute("aria-pressed", String(!visible));
+      updatePasswordToggleLabel(toggle);
+      input.focus();
+    });
+  });
   applyLocale();
 
   form.addEventListener("submit", async (e) => {
@@ -386,7 +468,7 @@
           err.textContent = msg("passwordMismatch");
           return;
         }
-        if (!email.toLowerCase().endsWith("@baoviet.com")) {
+        if (!email.toLowerCase().endsWith("@baoviet.com.vn")) {
           err.textContent = msg("emailDomain");
           return;
         }

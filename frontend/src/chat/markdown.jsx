@@ -14,29 +14,33 @@ import katex from "katex";
  * $...$ / $$...$$ math. Nothing else our own backend produces needs more. */
 
 const SOURCES_HEADINGS = ["**Nguồn tham khảo:**", "**References:**"];
+const RESPONSE_TIME_FOOTER = /\n\n_⏱\s*Thời gian trả lời:\s*([^_]+)_\s*$/;
 
 /** Splits a finished answer into its prose body and parsed citation entries
  * from the sources block (app/generation/prompts.py format_sources). */
 export function splitSources(text) {
+  const footer = RESPONSE_TIME_FOOTER.exec(text);
+  const responseTime = footer ? footer[1].trim() : null;
+  const answerText = footer ? text.slice(0, footer.index) : text;
   let idx = -1;
   let headingLen = 0;
   for (const heading of SOURCES_HEADINGS) {
-    const at = text.indexOf(heading);
+    const at = answerText.indexOf(heading);
     if (at !== -1 && (idx === -1 || at < idx)) {
       idx = at;
       headingLen = heading.length;
     }
   }
-  if (idx === -1) return { body: text, citations: [] };
-  const body = text.slice(0, idx).trimEnd();
-  const sourcesText = text.slice(idx + headingLen);
+  if (idx === -1) return { body: answerText, citations: [], responseTime };
+  const body = answerText.slice(0, idx).trimEnd();
+  const sourcesText = answerText.slice(idx + headingLen);
   const citations = [];
   const lineRe = /^-\s*\[(\d+)\]\s*\[(.+?)\]\((.+?)\)\s*(?:—\s*(.*))?$/;
   for (const line of sourcesText.split("\n")) {
     const m = lineRe.exec(line.trim());
     if (m) citations.push({ n: Number(m[1]), title: m[2], url: m[3], meta: m[4] || "" });
   }
-  return { body, citations };
+  return { body, citations, responseTime };
 }
 
 /** Inline [n] markers the model actually cited in the prose (P2-J2). */
@@ -120,6 +124,22 @@ function renderInline(text, keyBase) {
 export function renderMarkdown(text) {
   const blocks = text.trim().split(/\n{2,}/);
   return blocks.map((block, bi) => {
+    const heading = /^(#{1,3})\s+(.+)$/.exec(block.trim());
+    if (heading) {
+      return (
+        <h3 key={bi} style={{ margin: bi === 0 ? 0 : "var(--space-5) 0 0", color: "var(--text-primary)", fontSize: "var(--text-lg)", lineHeight: "var(--leading-snug)" }}>
+          {renderInline(heading[2], `${bi}-heading`)}
+        </h3>
+      );
+    }
+    const boldHeading = /^\*\*(.+?):\*\*$/.exec(block.trim());
+    if (boldHeading) {
+      return (
+        <h3 key={bi} style={{ margin: bi === 0 ? 0 : "var(--space-5) 0 0", color: "var(--text-primary)", fontSize: "var(--text-lg)", lineHeight: "var(--leading-snug)" }}>
+          {boldHeading[1]}:
+        </h3>
+      );
+    }
     const lines = block.split("\n").filter((l) => l.trim());
     const isList = lines.length > 0 && lines.every((l) => /^(-|\d+\.)\s/.test(l.trim()));
     if (isList) {

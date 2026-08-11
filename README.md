@@ -34,13 +34,13 @@ cp .env.example .env          # edit CHAT_MODEL, SESSION_SECRET_KEY, ports if ne
 bash scripts/setup_native.sh    # one-time: UV venv, models, optional frontend build
 bash scripts/run_native.sh      # start Ollama + API
 bash scripts/healthcheck.sh
-bash scripts/seed_demo_accounts.sh   # demo admin: admin@baoviet.com / Admin123!
+bash scripts/seed_demo_accounts.sh   # demo admin: admin@baoviet.com.vn / Admin123!
 ```
 
 | URL | Who |
 |-----|-----|
 | http://localhost:8000/ | Public landing |
-| http://localhost:8000/login | Sign in / sign up (`@baoviet.com`) |
+| http://localhost:8000/login | Sign in / sign up (`@baoviet.com.vn`) |
 | http://localhost:8000/chat | Any signed-in account |
 | http://localhost:8000/admin | Admin role only |
 | http://localhost:8000/health | Health check |

@@ -318,6 +318,12 @@ cảnh, và nếu bạn không chắc chắn thì BỎ QUA nó.\
 """
 
 _FOOTER = """
+TRÌNH BÀY DỄ ĐỌC:
+- Chia câu trả lời thành các đoạn ngắn, mỗi đoạn tối đa 2 câu.
+- Khi có từ 2 ý trở lên, dùng danh sách Markdown với từng dòng bắt đầu bằng "- ".
+- Tiêu đề của một mục phải đứng trên dòng riêng (dùng "### Tiêu đề" hoặc "**Tiêu đề:**"), sau đó xuống dòng trống rồi mới viết nội dung. Không đặt nội dung tiếp ngay sau tiêu đề.
+- Chừa một dòng trống giữa các đoạn, các mục và danh sách. Không dùng dấu "*" rời rạc để nối các ý trong cùng một đoạn.
+
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """
 
@@ -327,6 +333,10 @@ Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâ
 # branches. CLAUDE.md already warns that "ngắn gọn" must not be read as licence
 # to collapse a multi-branch answer — so on coverage turns it is not said.
 _FOOTER_COVERAGE = """
+TRÌNH BÀY DỄ ĐỌC:
+- Dùng tiêu đề Markdown trên dòng riêng cho từng trường hợp và chừa một dòng trống giữa các trường hợp.
+- Dùng danh sách Markdown (mỗi dòng bắt đầu bằng "- ") cho các điều kiện hoặc lưu ý; mỗi ý không quá 2 câu.
+
 Trả lời bằng tiếng Việt, chính xác, đúng trọng tâm câu hỏi. Trình bày ĐẦY ĐỦ \
 theo từng trường hợp như hướng dẫn ở trên — KHÔNG rút gọn thành một câu kết \
 luận.\

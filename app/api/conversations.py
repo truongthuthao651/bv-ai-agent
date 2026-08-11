@@ -18,6 +18,7 @@ class MessagePayload(BaseModel):
     text: str = ""
     streaming: bool = False
     completionId: str | None = None
+    feedbackSent: bool = False
 
 
 class ConversationPayload(BaseModel):

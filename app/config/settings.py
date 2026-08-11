@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     query_timing_log_enabled: bool = True
     query_timing_log_path: Path = Path("./logs/query_timings.jsonl")
     # Thumbs-down signal on one streamed answer (P2-F2, audit/REPORT.md) —
-    # same metadata-only design as query timing above:
+    # stores written user feedback, without copying query/answer text:
     # completion_id + an optional short reason, never the query or answer
     # text. The only quality signal this app has beyond eval/'s golden set;
     # without it a bad answer in production leaves no trace at all.

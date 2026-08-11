@@ -147,12 +147,11 @@ def log_query_timing(
         logger.warning("Could not write query timing log to %s: %s", path, exc)
 
 
-def log_feedback(completion_id: str, reason: str | None) -> None:
-    """Append one thumbs-down record (P2-F2, audit/REPORT.md). Metadata-only,
-    same convention as ``log_query_timing`` above: never the query or answer
-    text, just enough to see *that* and *roughly why* an answer was flagged.
-    Best-effort, never raises — a logging failure must never surface as an
-    error to the person who just took the time to flag a bad answer.
+def log_feedback(completion_id: str, reason: str) -> None:
+    """Append one thumbs-down record with the user's written feedback.
+
+    The log never adds query or answer text itself. Best-effort logging means
+    a failure to write the file never disrupts the person reporting an issue.
     """
     if not settings.feedback_log_enabled:
         return

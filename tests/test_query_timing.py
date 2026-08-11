@@ -225,7 +225,7 @@ def test_static_stream_appends_footer_when_timing_given(monkeypatch) -> None:
 # --- P2-F2: thumbs-down feedback log (audit/REPORT.md) ---
 
 
-def test_log_feedback_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
+def test_log_feedback_writes_feedback_jsonl(tmp_path, monkeypatch) -> None:
     path = tmp_path / "feedback.jsonl"
     monkeypatch.setattr(settings, "feedback_log_enabled", True)
     monkeypatch.setattr(settings, "feedback_log_path", path)
@@ -238,20 +238,19 @@ def test_log_feedback_writes_metadata_only_jsonl(tmp_path, monkeypatch) -> None:
     assert record["completion_id"] == "chatcmpl-abc123"
     assert record["reason"] == "sai_thong_tin"
     assert "ts" in record
-    # Metadata-only: no field on this record could ever carry query/answer
-    # text (matches log_query_timing's own no-content-logging convention).
+    # The log contains only the written feedback, not copied query/answer text.
     assert set(record.keys()) == {"ts", "completion_id", "reason"}
 
 
-def test_log_feedback_reason_is_optional(tmp_path, monkeypatch) -> None:
+def test_log_feedback_preserves_written_feedback(tmp_path, monkeypatch) -> None:
     path = tmp_path / "feedback.jsonl"
     monkeypatch.setattr(settings, "feedback_log_enabled", True)
     monkeypatch.setattr(settings, "feedback_log_path", path)
 
-    log_feedback("chatcmpl-xyz", None)
+    log_feedback("chatcmpl-xyz", "Cần nêu rõ điều kiện loại trừ.")
 
     record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
-    assert record["reason"] is None
+    assert record["reason"] == "Cần nêu rõ điều kiện loại trừ."
 
 
 def test_log_feedback_is_noop_when_disabled(tmp_path, monkeypatch) -> None:
@@ -259,6 +258,6 @@ def test_log_feedback_is_noop_when_disabled(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(settings, "feedback_log_enabled", False)
     monkeypatch.setattr(settings, "feedback_log_path", path)
 
-    log_feedback("chatcmpl-abc123", None)
+    log_feedback("chatcmpl-abc123", "Câu trả lời cần chỉnh sửa.")
 
     assert not path.exists()

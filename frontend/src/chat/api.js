@@ -86,11 +86,9 @@ export async function askStreaming(messages, onDelta, signal) {
   return completionId;
 }
 
-/** P2-F2 (audit/REPORT.md): the only quality signal this app has in
- * production beyond eval/'s golden set — a thumbs-down on one streamed
- * answer, identified by its completion id. Deliberately metadata-only, no
- * query/answer text field exists to send here (matches the backend's
- * FeedbackRequest model and query_timing.py's established convention). */
+/** Send a user's written thumbs-down feedback for one streamed answer.
+ * The app sends the feedback text only; it never copies query or answer text
+ * into the feedback payload. */
 export async function sendFeedback(completionId, reason) {
   const resp = await fetch("/feedback", {
     method: "POST",

@@ -67,43 +67,52 @@ function MessageActions({ text, onRegenerate, onFeedback, feedbackSent }) {
   const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   const btnStyle = { height: 28, padding: "0 var(--space-2)", color: "var(--text-muted)", fontSize: "var(--text-2xs)", border: "none" };
+
+  function requestFeedback() {
+    const feedback = window.prompt(t("chat.feedbackPrompt"));
+    if (!feedback?.trim()) return;
+    onFeedback(feedback.trim()).catch(() => window.alert(t("chat.feedbackSendFailed")));
+  }
+
   return (
-    <div style={{ display: "flex", gap: "var(--space-1)", marginTop: "var(--space-3)", marginLeft: "calc(var(--space-2) * -1)" }}>
-      <Button
-        variant="ghost"
-        style={btnStyle}
-        onClick={() => {
-          navigator.clipboard?.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? t("chat.copied") : t("chat.copy")}
-      </Button>
-      {onRegenerate && (
-        <Button variant="ghost" style={btnStyle} onClick={onRegenerate}>
-          {t("chat.regenerate")}
-        </Button>
-      )}
-      {onFeedback && (
+    <>
+      <div style={{ display: "flex", gap: "var(--space-1)", marginTop: "var(--space-3)", marginLeft: "calc(var(--space-2) * -1)" }}>
         <Button
           variant="ghost"
           style={btnStyle}
-          onClick={onFeedback}
-          disabled={feedbackSent}
-          title={t("chat.feedbackTitle")}
-          aria-label={t("chat.feedbackTitle")}
+          onClick={() => {
+            navigator.clipboard?.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
         >
-          {feedbackSent ? (
-            t("chat.feedbackDone")
-          ) : (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <Icon name="thumbs-down" size={14} /> {t("chat.feedbackBad")}
-            </span>
-          )}
+          {copied ? t("chat.copied") : t("chat.copy")}
         </Button>
-      )}
-    </div>
+        {onRegenerate && (
+          <Button variant="ghost" style={btnStyle} onClick={onRegenerate}>
+            {t("chat.regenerate")}
+          </Button>
+        )}
+        {onFeedback && (
+          <Button
+            variant="ghost"
+            style={btnStyle}
+            onClick={requestFeedback}
+            disabled={feedbackSent}
+            title={t("chat.feedbackTitle")}
+            aria-label={t("chat.feedbackTitle")}
+          >
+            {feedbackSent ? (
+              t("chat.feedbackDone")
+            ) : (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <Icon name="thumbs-down" size={14} /> {t("chat.feedbackBad")}
+              </span>
+            )}
+          </Button>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -170,7 +179,7 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
   }
 
   const isRefusal = !streaming && isRefusalAnswer(text, locale);
-  const { body, citations: allCitations } = streaming ? { body: text, citations: [] } : splitSources(text);
+  const { body, citations: allCitations, responseTime } = streaming ? { body: text, citations: [], responseTime: null } : splitSources(text);
   const citations = citedSourcesOnly(body, allCitations);
 
   return (
@@ -185,6 +194,11 @@ export function ChatMessage({ role, text, streaming, active, onOpen, onRegenerat
           <>
             <div style={{ fontSize: "var(--text-md)", color: "var(--text-primary)" }}>{renderMarkdown(body || " ")}</div>
             {citations.length > 0 && <CitationRow citations={citations} active={active} onOpen={onOpen} />}
+            {responseTime && (
+              <div style={{ marginTop: "var(--space-3)", color: "var(--text-muted)", fontSize: "var(--text-sm)" }}>
+                ⏱ Thời gian trả lời: {responseTime}
+              </div>
+            )}
             {!streaming && (
               <MessageActions text={body} onRegenerate={onRegenerate} onFeedback={onFeedback} feedbackSent={feedbackSent} />
             )}

@@ -42,7 +42,7 @@ class AdminConfigResponse(BaseModel):
 class FeedbackRecord(BaseModel):
     ts: str
     completion_id: str
-    reason: str | None = None
+    reason: str
 
 
 class FeedbackLogResponse(BaseModel):
@@ -140,7 +140,7 @@ async def admin_feedback_log(
         FeedbackRecord(
             ts=str(r.get("ts", "")),
             completion_id=str(r.get("completion_id", "")),
-            reason=r.get("reason"),
+            reason=str(r.get("reason", "")),
         )
         for r in raw
         if r.get("completion_id")

@@ -2,10 +2,10 @@
 """Provision an account (app/accounts.py).
 
 Admin accounts must be created by an operator — employees self-register at
-/login ("Tạo tài khoản") with any @baoviet.com email.
+/login ("Tạo tài khoản") with any @baoviet.com.vn email.
 
-    .venv/bin/python scripts/seed_accounts.py admin@baoviet.com S0meP@ss admin
-    .venv/bin/python scripts/seed_accounts.py employee@baoviet.com S0meP@ss employee
+    .venv/bin/python scripts/seed_accounts.py admin@baoviet.com.vn S0meP@ss admin
+    .venv/bin/python scripts/seed_accounts.py employee@baoviet.com.vn S0meP@ss employee
 
 Email must end in app.accounts.EMAIL_DOMAIN (a format check only — there is
 no corporate identity provider to verify domain membership against).

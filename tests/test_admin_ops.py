@@ -17,14 +17,18 @@ def _client(monkeypatch):
 
 
 def test_admin_config_requires_admin(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         assert client.get("/admin/config").status_code == 403
         client.post("/logout")
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get("/admin/config")
         assert resp.status_code == 200
         data = resp.json()
@@ -39,7 +43,7 @@ def test_admin_feedback_log(monkeypatch, tmp_path) -> None:
             {
                 "ts": "2026-08-09T12:00:00+00:00",
                 "completion_id": "chatcmpl-1",
-                "reason": None,
+                "reason": "Quyền lợi được trả lời chưa đúng điều khoản.",
             }
         )
         + "\n",
@@ -47,20 +51,28 @@ def test_admin_feedback_log(monkeypatch, tmp_path) -> None:
     )
     monkeypatch.setattr(settings, "feedback_log_enabled", True)
     monkeypatch.setattr(settings, "feedback_log_path", str(log_path))
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get("/admin/logs/feedback")
         assert resp.status_code == 200
         assert resp.json()["records"][0]["completion_id"] == "chatcmpl-1"
+        assert (
+            resp.json()["records"][0]["reason"]
+            == "Quyền lợi được trả lời chưa đúng điều khoản."
+        )
 
 
 def test_admin_eval_runs_empty_when_no_results(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get("/admin/eval-runs")
         assert resp.status_code == 200
         assert "runs" in resp.json()

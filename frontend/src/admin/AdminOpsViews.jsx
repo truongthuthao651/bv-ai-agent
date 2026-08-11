@@ -254,7 +254,7 @@ export function LogsView() {
               onHours: setFbHours,
               hourOptions: hoursOpts,
             }}
-            renderRow={(r) => [formatVnTime(r.ts), r.completion_id, r.reason ?? "—"]}
+            renderRow={(r) => [formatVnTime(r.ts), r.completion_id, r.reason]}
           />
         </Card>
       ) : (

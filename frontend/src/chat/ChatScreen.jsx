@@ -52,6 +52,12 @@ function isConversationStreaming(conv) {
   return conv?.messages?.some((m) => m.streaming) ?? false;
 }
 
+const SCROLL_BOTTOM_THRESHOLD = 80;
+
+function isNearBottom(element) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < SCROLL_BOTTOM_THRESHOLD;
+}
+
 export function ChatScreen() {
   const { t } = useLocale();
   const { theme, preference, setTheme, toggleTheme } = useTheme();
@@ -66,6 +72,8 @@ export function ChatScreen() {
   const [error, setError] = useState(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const scrollRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
+  const previousActiveIdRef = useRef(null);
   /** In-flight streams keyed by conversation — survives navigation within chat. */
   const streamsRef = useRef(new Map());
   const mobile = useIsMobile();
@@ -109,8 +117,21 @@ export function ChatScreen() {
 
   const scrollKey = `${activeId}:${messages.length}:${messages[messages.length - 1]?.text?.length ?? 0}`;
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [scrollKey]);
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+    if (previousActiveIdRef.current !== activeId) {
+      previousActiveIdRef.current = activeId;
+      shouldAutoScrollRef.current = true;
+    }
+    if (shouldAutoScrollRef.current) {
+      scrollElement.scrollTo({ top: scrollElement.scrollHeight });
+    }
+  }, [scrollKey, activeId]);
+
+  function handleChatScroll() {
+    const scrollElement = scrollRef.current;
+    if (scrollElement) shouldAutoScrollRef.current = isNearBottom(scrollElement);
+  }
 
   function patchConversation(convId, patchFn) {
     setConvState((prev) => ({
@@ -145,6 +166,7 @@ export function ChatScreen() {
     setInput("");
     setCitation(null);
     setError(null);
+    shouldAutoScrollRef.current = true;
     const history = messages.map((m) => ({ role: m.role, content: m.text }));
     const nextMessages = [...messages, { role: "user", text: query }, { role: "assistant", text: "", streaming: true }];
     patchConversation(convId, (c) => ({
@@ -194,15 +216,23 @@ export function ChatScreen() {
     if (activeId) abortConversationStream(activeId);
   }
 
-  const [feedbackSent, setFeedbackSent] = useState({});
-  async function giveFeedback(index) {
+  async function giveFeedback(index, reason) {
     const msg = messages[index];
-    if (!msg?.completionId || feedbackSent[index]) return;
-    setFeedbackSent((prev) => ({ ...prev, [index]: true }));
+    if (!msg?.completionId || msg.feedbackSent) return;
+    patchConversation(activeId, (c) => {
+      const copy = c.messages.slice();
+      copy[index] = { ...copy[index], feedbackSent: true };
+      return { ...c, messages: copy, updatedAt: Date.now() };
+    });
     try {
-      await sendFeedback(msg.completionId, null);
-    } catch {
-      setFeedbackSent((prev) => ({ ...prev, [index]: false }));
+      await sendFeedback(msg.completionId, reason);
+    } catch (err) {
+      patchConversation(activeId, (c) => {
+        const copy = c.messages.slice();
+        copy[index] = { ...copy[index], feedbackSent: false };
+        return { ...c, messages: copy, updatedAt: Date.now() };
+      });
+      throw err;
     }
   }
 
@@ -218,6 +248,7 @@ export function ChatScreen() {
   }
 
   function newChat() {
+    shouldAutoScrollRef.current = true;
     const id = generateConversationId();
     setConvState((prev) => ({
       ...prev,
@@ -239,6 +270,7 @@ export function ChatScreen() {
       setRailOpen(false);
       return;
     }
+    shouldAutoScrollRef.current = true;
     setConvState((prev) => ({
       ...prev,
       activeId: id,
@@ -403,7 +435,7 @@ export function ChatScreen() {
         ) : (
           <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-              <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+              <div ref={scrollRef} onScroll={handleChatScroll} style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
                 {messages.length === 0 ? (
                   <EmptyState me={me} displayName={prefs.displayName} onPick={send} />
                 ) : (
@@ -428,8 +460,8 @@ export function ChatScreen() {
                         active={citation}
                         onOpen={setCitation}
                         onRegenerate={m.role === "assistant" && !m.streaming ? () => regenerate(i) : null}
-                        onFeedback={m.role === "assistant" && !m.streaming && m.completionId ? () => giveFeedback(i) : null}
-                        feedbackSent={!!feedbackSent[i]}
+                        onFeedback={m.role === "assistant" && !m.streaming && m.completionId ? (reason) => giveFeedback(i, reason) : null}
+                        feedbackSent={!!m.feedbackSent}
                       />
                     ))}
                     {error && <p style={{ margin: 0, fontSize: "var(--text-sm)", color: "var(--danger)" }}>{t("common.error")}: {error}</p>}

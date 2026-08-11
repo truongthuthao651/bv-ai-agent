@@ -30,7 +30,7 @@ def test_gate_disabled_when_no_account_provisioned(monkeypatch) -> None:
 
 def test_protected_path_redirects_html_request_without_session(monkeypatch) -> None:
     # "/admin/" is the gated console; "/" is the public landing page.
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.get(
@@ -41,7 +41,7 @@ def test_protected_path_redirects_html_request_without_session(monkeypatch) -> N
 
 
 def test_root_is_public_landing_page(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.get("/", headers={"accept": "text/html"}, follow_redirects=False)
@@ -51,7 +51,7 @@ def test_root_is_public_landing_page(monkeypatch) -> None:
 def test_protected_path_returns_401_json_for_api_request_without_session(
     monkeypatch,
 ) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.get("/documents", headers={"accept": "application/json"})
@@ -59,15 +59,26 @@ def test_protected_path_returns_401_json_for_api_request_without_session(
 
 
 def test_public_paths_bypass_gate(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         assert client.get("/health").status_code in (200, 503)  # reachable either way
         assert client.get("/login").status_code == 200
 
 
+def test_login_page_uses_current_domain_and_password_toggles(monkeypatch) -> None:
+    client = _client(monkeypatch)
+    with client:
+        resp = client.get("/login")
+        assert resp.status_code == 200
+        assert 'placeholder="you@baoviet.com.vn"' in resp.text
+        assert 'data-password-target="password"' in resp.text
+        assert 'data-password-target="confirmPassword"' in resp.text
+        assert 'aria-label="Hiện mật khẩu"' in resp.text
+
+
 def test_email_outside_domain_is_rejected(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.post(
@@ -77,23 +88,29 @@ def test_email_outside_domain_is_rejected(monkeypatch) -> None:
         assert "bv_admin_session" not in resp.cookies
 
 
+def test_only_baoviet_com_vn_domain_is_valid() -> None:
+    assert accounts.is_valid_domain("user@baoviet.com.vn") is True
+    assert accounts.is_valid_domain("user@baoviet.com") is False
+    assert accounts.is_valid_domain("user@gmail.com") is False
+
+
 def test_wrong_password_rejected(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.post(
-            "/login", data={"email": "admin@baoviet.com", "password": "nope"}
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "nope"}
         )
         assert resp.status_code == 401
         assert "bv_admin_session" not in resp.cookies
 
 
 def test_correct_password_grants_session_cookie_access(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.post(
-            "/login", data={"email": "admin@baoviet.com", "password": "s3cret"}
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
         )
         assert resp.status_code == 200
         assert "bv_admin_session" in client.cookies
@@ -103,7 +120,7 @@ def test_correct_password_grants_session_cookie_access(monkeypatch) -> None:
 
         me = client.get("/me").json()
         assert me == {
-            "email": "admin@baoviet.com",
+            "email": "admin@baoviet.com.vn",
             "role": "admin",
             "display_name": None,
             "avatar_swatch": None,
@@ -111,10 +128,12 @@ def test_correct_password_grants_session_cookie_access(monkeypatch) -> None:
 
 
 def test_logout_clears_session(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         assert "bv_admin_session" in client.cookies
 
         client.post("/logout")
@@ -125,10 +144,12 @@ def test_logout_clears_session(monkeypatch) -> None:
 
 
 def test_employee_role_gets_403_on_admin_only_mutation(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.delete("/documents/whatever")
         assert resp.status_code == 403
 
@@ -136,11 +157,13 @@ def test_employee_role_gets_403_on_admin_only_mutation(monkeypatch) -> None:
 def test_admin_role_is_not_blocked_by_require_admin(monkeypatch) -> None:
     from app.ingestion import indexer
 
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     monkeypatch.setattr(indexer, "count_document_points", lambda doc_id: 0)
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.delete("/documents/whatever")
         # require_admin lets it through; a 404 here means it reached the real
         # handler (no matching doc), not a 401/403 from the auth layer.
@@ -152,10 +175,12 @@ def test_employee_role_gets_403_on_admin_only_reads(monkeypatch) -> None:
     something /chat's employee accounts need (citations resolve via
     /documents/{id}/view and /file instead, which need only a session — see
     test_document_view_and_file_require_a_session_but_not_admin below)."""
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         assert client.get("/documents").status_code == 403
         assert client.get("/metrics/summary").status_code == 403
 
@@ -165,7 +190,7 @@ def test_document_view_and_file_reject_sessionless_requests(monkeypatch) -> None
     session check at all — doc_id is a deterministic uuid5 of the uploaded
     filename, so anyone who could guess a filename could read the full
     document with zero credentials. Confirm both now require a session."""
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
         resp = client.get(
@@ -191,21 +216,25 @@ def test_document_view_and_file_require_a_session_but_not_admin(monkeypatch) -> 
     doesn't need a live Qdrant (and can't collide with one already running)."""
     from app.ingestion import indexer
 
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     monkeypatch.setattr(indexer, "get_document_source_filename", lambda doc_id: None)
     monkeypatch.setattr(indexer, "get_document_chunks", lambda doc_id: [])
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         assert client.get("/documents/whatever/view").status_code == 404
         assert client.get("/documents/whatever/file").status_code == 404
 
 
 def test_employee_hitting_admin_page_is_redirected_to_chat(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get(
             "/admin/", headers={"accept": "text/html"}, follow_redirects=False
         )
@@ -214,10 +243,12 @@ def test_employee_hitting_admin_page_is_redirected_to_chat(monkeypatch) -> None:
 
 
 def test_employee_hitting_admin_api_gets_403_json(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get(
             "/admin/some-asset.js", headers={"accept": "application/json"}
         )
@@ -225,10 +256,12 @@ def test_employee_hitting_admin_api_gets_403_json(monkeypatch) -> None:
 
 
 def test_admin_hitting_admin_page_is_not_redirected(monkeypatch) -> None:
-    accounts.create_account("admin@baoviet.com", "s3cret", "admin")
+    accounts.create_account("admin@baoviet.com.vn", "s3cret", "admin")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "admin@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get(
             "/admin/", headers={"accept": "text/html"}, follow_redirects=False
         )
@@ -292,11 +325,13 @@ def test_v1_route_accepts_account_session_even_with_shared_secret_set(
     of API_SHARED_SECRET) is retired: /chat's browser fetch calls /v1 with the
     account session cookie, never the bearer token — so a session must be
     enough on its own, or turning on API_SHARED_SECRET would break /chat."""
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     monkeypatch.setattr(settings, "api_shared_secret", "topsecret")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get("/v1/models")  # no Authorization header at all
         assert resp.status_code == 200
 
@@ -304,7 +339,7 @@ def test_v1_route_accepts_account_session_even_with_shared_secret_set(
 def test_v1_route_still_rejects_sessionless_request_with_shared_secret_set(
     monkeypatch,
 ) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     monkeypatch.setattr(settings, "api_shared_secret", "topsecret")
     client = _client(monkeypatch)
     with client:
@@ -316,7 +351,7 @@ def test_v1_route_still_rejects_sessionless_request_with_shared_secret_set(
 
 
 def test_change_password_requires_a_session(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
         resp = client.post(
@@ -329,10 +364,12 @@ def test_change_password_requires_a_session(monkeypatch) -> None:
 def test_employee_can_change_own_password_and_login_with_new_one(monkeypatch) -> None:
     """Not admin-only — the whole point is any signed-in account can do this
     for itself (require_admin would defeat that)."""
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.post(
             "/change-password",
             json={"current_password": "s3cret", "new_password": "newpass123"},
@@ -343,20 +380,22 @@ def test_employee_can_change_own_password_and_login_with_new_one(monkeypatch) ->
         # Old password no longer works, new one does.
         client.post("/logout")
         bad = client.post(
-            "/login", data={"email": "user@baoviet.com", "password": "s3cret"}
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
         )
         assert bad.status_code == 401
         good = client.post(
-            "/login", data={"email": "user@baoviet.com", "password": "newpass123"}
+            "/login", data={"email": "user@baoviet.com.vn", "password": "newpass123"}
         )
         assert good.status_code == 200
 
 
 def test_change_password_rejects_wrong_current_password(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.post(
             "/change-password",
             json={"current_password": "wrong", "new_password": "newpass123"},
@@ -365,10 +404,12 @@ def test_change_password_rejects_wrong_current_password(monkeypatch) -> None:
 
 
 def test_change_password_rejects_too_short_new_password(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.post(
             "/change-password",
             json={"current_password": "s3cret", "new_password": "short"},
@@ -380,12 +421,12 @@ def test_change_password_only_ever_targets_the_callers_own_account(monkeypatch) 
     """The request body has no email field at all — confirm an admin's
     session can't be used to change a DIFFERENT account's password by some
     other route of attack; the account always comes from the session."""
-    accounts.create_account("admin@baoviet.com", "adminpass", "admin")
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("admin@baoviet.com.vn", "adminpass", "admin")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
         client.post(
-            "/login", data={"email": "admin@baoviet.com", "password": "adminpass"}
+            "/login", data={"email": "admin@baoviet.com.vn", "password": "adminpass"}
         )
         client.post(
             "/change-password",
@@ -394,7 +435,7 @@ def test_change_password_only_ever_targets_the_callers_own_account(monkeypatch) 
         # The employee's password must be completely unaffected.
         client.post("/logout")
         still_works = client.post(
-            "/login", data={"email": "user@baoviet.com", "password": "s3cret"}
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
         )
         assert still_works.status_code == 200
 
@@ -403,17 +444,19 @@ def test_me_includes_profile_prefs_when_set(monkeypatch, tmp_path) -> None:
     from app import user_prefs
 
     monkeypatch.setattr(user_prefs.settings, "data_dir", tmp_path)
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     user_prefs.update_prefs(
-        "user@baoviet.com", display_name="Hà Test", avatar_swatch="navy"
+        "user@baoviet.com.vn", display_name="Hà Test", avatar_swatch="navy"
     )
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.get("/me")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["email"] == "user@baoviet.com"
+        assert body["email"] == "user@baoviet.com.vn"
         assert body["display_name"] == "Hà Test"
         assert body["avatar_swatch"] == "navy"
 
@@ -422,10 +465,12 @@ def test_patch_me_updates_profile_prefs(monkeypatch, tmp_path) -> None:
     from app import user_prefs
 
     monkeypatch.setattr(user_prefs.settings, "data_dir", tmp_path)
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
-        client.post("/login", data={"email": "user@baoviet.com", "password": "s3cret"})
+        client.post(
+            "/login", data={"email": "user@baoviet.com.vn", "password": "s3cret"}
+        )
         resp = client.patch(
             "/me",
             json={"display_name": "Lan Admin", "avatar_swatch": "success"},
@@ -434,13 +479,13 @@ def test_patch_me_updates_profile_prefs(monkeypatch, tmp_path) -> None:
         body = resp.json()
         assert body["display_name"] == "Lan Admin"
         assert body["avatar_swatch"] == "success"
-        prefs = user_prefs.get_prefs("user@baoviet.com")
+        prefs = user_prefs.get_prefs("user@baoviet.com.vn")
         assert prefs.display_name == "Lan Admin"
         assert prefs.avatar_swatch == "success"
 
 
 def test_patch_me_requires_session(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
     client = _client(monkeypatch)
     with client:
         resp = client.patch("/me", json={"display_name": "X"})
@@ -452,13 +497,13 @@ def test_register_creates_employee_and_logs_in(monkeypatch) -> None:
     with client:
         resp = client.post(
             "/register",
-            data={"email": "new.user@baoviet.com", "password": "newpass123"},
+            data={"email": "new.user@baoviet.com.vn", "password": "newpass123"},
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "role": "employee"}
         assert auth_module.COOKIE_NAME in resp.cookies
         me = client.get("/me").json()
-        assert me["email"] == "new.user@baoviet.com"
+        assert me["email"] == "new.user@baoviet.com.vn"
         assert me["role"] == "employee"
 
 
@@ -470,16 +515,27 @@ def test_register_rejects_non_baoviet_email(monkeypatch) -> None:
             data={"email": "user@gmail.com", "password": "newpass123"},
         )
         assert resp.status_code == 400
-        assert "@baoviet.com" in resp.json()["detail"]
+        assert "@baoviet.com.vn" in resp.json()["detail"]
 
 
-def test_register_rejects_duplicate_email(monkeypatch) -> None:
-    accounts.create_account("user@baoviet.com", "s3cret", "employee")
+def test_register_rejects_old_domain(monkeypatch) -> None:
     client = _client(monkeypatch)
     with client:
         resp = client.post(
             "/register",
-            data={"email": "user@baoviet.com", "password": "otherpass1"},
+            data={"email": "new.user@baoviet.com", "password": "newpass123"},
+        )
+        assert resp.status_code == 400
+        assert "@baoviet.com.vn" in resp.json()["detail"]
+
+
+def test_register_rejects_duplicate_email(monkeypatch) -> None:
+    accounts.create_account("user@baoviet.com.vn", "s3cret", "employee")
+    client = _client(monkeypatch)
+    with client:
+        resp = client.post(
+            "/register",
+            data={"email": "user@baoviet.com.vn", "password": "otherpass1"},
         )
         assert resp.status_code == 400
         assert "đã được đăng ký" in resp.json()["detail"]
@@ -490,6 +546,6 @@ def test_register_rejects_short_password(monkeypatch) -> None:
     with client:
         resp = client.post(
             "/register",
-            data={"email": "short@baoviet.com", "password": "abc"},
+            data={"email": "short@baoviet.com.vn", "password": "abc"},
         )
         assert resp.status_code == 400

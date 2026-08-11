@@ -73,7 +73,7 @@ def _set_session_cookie(response: Response, account: accounts.Account) -> None:
 async def register_submit(
     response: Response, email: str = Form(...), password: str = Form(...)
 ) -> dict[str, bool | str]:
-    """Self-service employee signup — ``@baoviet.com`` only, never ``admin`` role."""
+    """Self-service signup — ``@baoviet.com.vn`` only, never ``admin`` role."""
     try:
         account = accounts.register_employee(email, password)
     except ValueError as exc:
