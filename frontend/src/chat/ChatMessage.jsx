@@ -3,61 +3,98 @@ import { BrandGlobe } from "../brand/BrandGlobe.jsx";
 import { Button, Icon } from "../components/index.js";
 import { isRefusalAnswer } from "../i18n/catalog.js";
 import { useLocale } from "../i18n/LocaleContext.jsx";
-import { renderMarkdown, splitSources, citedSourcesOnly } from "./markdown.jsx";
+import { renderMarkdown, splitSources, citedSourcesOnly, groupCitationsByDocument } from "./markdown.jsx";
 
 function CitationRow({ citations, active, onOpen }) {
   const { t } = useLocale();
+  const groups = groupCitationsByDocument(citations);
   return (
     <div style={{ marginTop: "var(--space-4)" }}>
       <div style={{ fontSize: "var(--text-2xs)", fontWeight: "var(--weight-bold)", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "var(--tracking-wide)", marginBottom: "var(--space-2)" }}>
-        {t("chat.sources")} · {citations.length}
+        {t("chat.sources")} · {t("chat.sourceSummary", { documents: groups.length, citations: citations.length })}
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-        {citations.map((c) => {
-          const on = active && active.n === c.n;
-          return (
-            <button
-              key={c.n}
-              onClick={() => onOpen(c)}
-              title={c.title}
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        {groups.map((group) => (
+          <div
+            key={group.key}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "var(--space-2)",
+              padding: "var(--space-2)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-lg)",
+              background: "var(--surface)",
+            }}
+          >
+            <div
+              title={group.title}
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "var(--space-2)",
-                maxWidth: 300,
-                height: "var(--control-h-sm)",
-                padding: "0 var(--space-3) 0 var(--space-1)",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid " + (on ? "var(--accent)" : "var(--border)"),
-                background: on ? "var(--accent-subtle)" : "var(--surface)",
-                cursor: "pointer",
-                fontFamily: "var(--font-sans)",
+                minWidth: 100,
+                maxWidth: 220,
+                padding: "0 var(--space-2)",
+                fontSize: "var(--text-xs)",
+                fontWeight: "var(--weight-semibold)",
+                color: "var(--text-primary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
-              <span
-                style={{
-                  width: 22,
-                  height: 22,
-                  flexShrink: 0,
-                  borderRadius: "var(--radius-sm)",
-                  background: on ? "var(--accent)" : "var(--surface-sunken)",
-                  color: on ? "var(--text-on-accent)" : "var(--text-secondary)",
-                  fontSize: "var(--text-2xs)",
-                  fontWeight: "var(--weight-bold)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {c.n}
-              </span>
-              <span style={{ fontSize: "var(--text-xs)", fontWeight: "var(--weight-medium)", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {c.title}
-              </span>
-            </button>
-          );
-        })}
+              {group.title}
+            </div>
+            <div style={{ display: "flex", flex: "1 1 240px", flexWrap: "wrap", gap: "var(--space-1)" }}>
+              {group.citations.map((c) => {
+                const on = active && active.n === c.n && active.url === c.url;
+                const location = c.meta || t("chat.sourceN", { n: c.n });
+                return (
+                  <button
+                    key={`${c.n}-${c.url}`}
+                    type="button"
+                    onClick={() => onOpen(c)}
+                    title={`${t("chat.sourceN", { n: c.n })} · ${group.title} · ${location}`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "var(--space-1)",
+                      minWidth: 0,
+                      height: 28,
+                      padding: "0 var(--space-2) 0 var(--space-1)",
+                      borderRadius: "var(--radius-md)",
+                      border: "1px solid " + (on ? "var(--accent)" : "var(--border)"),
+                      background: on ? "var(--accent-subtle)" : "var(--surface-sunken)",
+                      cursor: "pointer",
+                      fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 20,
+                        height: 20,
+                        flexShrink: 0,
+                        borderRadius: "var(--radius-sm)",
+                        background: on ? "var(--accent)" : "var(--surface)",
+                        color: on ? "var(--text-on-accent)" : "var(--text-secondary)",
+                        fontSize: "var(--text-2xs)",
+                        fontWeight: "var(--weight-bold)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {c.n}
+                    </span>
+                    <span style={{ maxWidth: 220, fontSize: "var(--text-2xs)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {location}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

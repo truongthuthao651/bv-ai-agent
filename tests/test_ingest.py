@@ -111,6 +111,53 @@ def test_source_path_none_when_no_matching_upload(tmp_path, monkeypatch) -> None
     assert _source_path_for("no-such-doc") is None
 
 
+def test_citation_view_renders_pdf_passage_instead_of_redirecting(monkeypatch) -> None:
+    from pathlib import Path
+
+    from app.api import ingest
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(ingest, "_source_path_for", lambda doc_id: Path("source.pdf"))
+
+    def fake_render(doc_id, section, chunks, parents, anchors, page):
+        seen.update(
+            doc_id=doc_id,
+            section=section,
+            chunks=chunks,
+            parents=parents,
+            anchors=anchors,
+            page=page,
+        )
+        return "<html><body>highlighted</body></html>"
+
+    monkeypatch.setattr(ingest, "_render_view", fake_render)
+    resp = _client().get(
+        "/documents/d1/view?section=Điều%205&anchor=0123456789abcdef0123&page=3",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert "highlighted" in resp.text
+    assert seen == {
+        "doc_id": "d1",
+        "section": "Điều 5",
+        "chunks": set(),
+        "parents": set(),
+        "anchors": {"0123456789abcdef0123"},
+        "page": 3,
+    }
+
+
+def test_plain_pdf_view_still_redirects_to_original(monkeypatch) -> None:
+    from pathlib import Path
+
+    from app.api import ingest
+
+    monkeypatch.setattr(ingest, "_source_path_for", lambda doc_id: Path("source.pdf"))
+    resp = _client().get("/documents/d1/view?page=3", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/documents/d1/file#page=3"
+
+
 # --------------------------------------------------------------------------- #
 # DELETE /documents/{doc_id} (indexer faked; no Qdrant)
 # --------------------------------------------------------------------------- #

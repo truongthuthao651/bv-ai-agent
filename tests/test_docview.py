@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.api import docview
 from app.auth import is_public_path
+from app.citation_target import citation_anchor
 
 
 def _chunk(
@@ -27,6 +28,7 @@ def test_reconstruct_groups_contiguous_sections() -> None:
     assert title == "Quy trình giải quyết quyền lợi"
     assert [s["section_path"] for s in sections] == ["Điều 1", "Điều 2"]
     assert sections[0]["text"] == "Đoạn A.\n\nĐoạn B."
+    assert sections[0]["block_chunks"] == [[0], [0]]
 
 
 def test_reconstruct_removes_block_level_overlap() -> None:
@@ -38,6 +40,7 @@ def test_reconstruct_removes_block_level_overlap() -> None:
     _, sections = docview.reconstruct_sections(chunks)
     assert len(sections) == 1
     assert sections[0]["text"] == "Đoạn A.\n\nĐoạn B.\n\nĐoạn C."
+    assert sections[0]["block_chunks"] == [[0], [0, 1], [1]]
 
 
 def test_reconstruct_removes_multi_block_overlap() -> None:
@@ -106,6 +109,52 @@ def test_render_page_highlights_requested_section() -> None:
     assert "scrollIntoView" in page  # scroll script only emitted when matched
 
 
+def test_render_page_highlights_exact_requested_chunk_blocks() -> None:
+    _, sections = docview.reconstruct_sections(
+        [
+            _chunk(0, "Điều 1", "Đoạn không liên quan.\n\nĐoạn giao nhau."),
+            _chunk(1, "Điều 1", "Đoạn giao nhau.\n\nĐoạn được trích dẫn."),
+        ]
+    )
+    page = docview.render_page("Doc", sections, doc_id="d1", highlight_chunks={1})
+    assert page.count('class="citation-highlight target"') == 1
+    highlight_start = page.index('class="citation-highlight target"')
+    highlight_end = page.index("</div>", highlight_start)
+    highlighted = page[highlight_start:highlight_end]
+    assert "Đoạn giao nhau." in highlighted
+    assert "Đoạn được trích dẫn." in highlighted
+    assert "Đoạn không liên quan." not in highlighted
+    assert 'class="doc-section target-section"' in page
+    assert "scrollIntoView" in page
+
+
+def test_resolve_highlight_targets_uses_parent_context_anchor() -> None:
+    chunks = [
+        _chunk(
+            3,
+            "Điều 1",
+            "Mẩu child không chứa dữ kiện.",
+            parent_index=8,
+            parent_text="Dữ kiện chỉ có trong ngữ cảnh parent.",
+        ),
+        _chunk(
+            4,
+            "Điều 1",
+            "Mẩu child khác.",
+            parent_index=8,
+            parent_text="Dữ kiện chỉ có trong ngữ cảnh parent.",
+        ),
+    ]
+    anchor = citation_anchor("Điều 1", "Dữ kiện chỉ có trong ngữ cảnh parent.")
+    assert docview.resolve_highlight_targets(chunks, {anchor}) == (set(), {8})
+
+
+def test_resolve_highlight_targets_does_not_use_stale_anchor() -> None:
+    chunks = [_chunk(3, "Điều 1", "Nội dung mới.")]
+    stale = citation_anchor("Điều 1", "Nội dung cũ.")
+    assert docview.resolve_highlight_targets(chunks, {stale}) == (set(), set())
+
+
 def test_render_page_no_highlight_has_no_scroll_script() -> None:
     _, sections = docview.reconstruct_sections([_chunk(0, "Điều 1", "A.")])
     page = docview.render_page("Doc", sections, doc_id="d1")
@@ -116,12 +165,24 @@ def test_render_page_no_highlight_has_no_scroll_script() -> None:
 
 def test_render_page_download_link_only_with_source_file() -> None:
     _, sections = docview.reconstruct_sections([_chunk(0, "Điều 1", "A.")])
-    assert "Tải bản gốc" in docview.render_page(
+    assert "Mở bản gốc" in docview.render_page(
         "Doc", sections, doc_id="d1", has_source_file=True
     )
-    assert "Tải bản gốc" not in docview.render_page(
+    assert "Mở bản gốc" not in docview.render_page(
         "Doc", sections, doc_id="d1", has_source_file=False
     )
+
+
+def test_render_page_original_pdf_link_keeps_cited_page() -> None:
+    _, sections = docview.reconstruct_sections([_chunk(0, "Điều 1", "A.")])
+    page = docview.render_page(
+        "Doc",
+        sections,
+        doc_id="d1",
+        has_source_file=True,
+        original_page=8,
+    )
+    assert 'href="/documents/d1/file#page=8"' in page
 
 
 def test_no_documents_route_is_public() -> None:

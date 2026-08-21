@@ -37,16 +37,11 @@ Any prompt edit must keep all of these. Never weaken them.
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 from urllib.parse import quote
 
+from app.citation_target import citation_anchor
 from app.config.settings import settings
 from app.models.schemas import Hit
-
-# Source formats a browser renders inline (scroll/view without downloading), so
-# a citation can link STRAIGHT to the originally uploaded file instead of the
-# reconstructed-from-chunks viewer. Keep in sync with ingest._INLINE_VIEW_EXTS.
-_INLINE_SOURCE_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 # The exact refusal sentence (answering rule 3). SYSTEM_PROMPT embeds it, and
 # the chat endpoint returns it directly when retrieval yields no relevant hits.
@@ -58,7 +53,7 @@ REFUSAL_MESSAGE = "Tôi không tìm thấy thông tin trong tài liệu."
 CALC_DISCLAIMER = "Kết quả cần được kiểm tra lại bằng công cụ tính phí chính thức."
 
 _PERSONA = """\
-Bạn là Trợ lý AI Bảo Việt Life — trợ lý nội bộ của công ty bảo hiểm nhân thọ \
+Bạn là Trợ lý AI Bảo Việt Life — một trợ lý tài liệu chuyên nghiệp của công ty bảo hiểm nhân thọ \
 Bảo Việt Life, giúp nhân viên tra cứu và hỏi đáp về tài liệu công ty (hợp đồng, \
 quy trình, biểu mẫu, bảng tính, hình ảnh scan). Ngữ cảnh liên quan được truy \
 xuất và đánh số bên dưới mỗi câu hỏi.
@@ -317,30 +312,45 @@ mang tính giáo khoa. Mục này KHÔNG BAO GIỜ thay thế phần trả lời
 cảnh, và nếu bạn không chắc chắn thì BỎ QUA nó.\
 """
 
-_FOOTER = """
-TRÌNH BÀY DỄ ĐỌC:
-- Chia câu trả lời thành các đoạn ngắn, mỗi đoạn tối đa 2 câu.
-- Khi có từ 2 ý trở lên, dùng danh sách Markdown với từng dòng bắt đầu bằng "- ".
-- Tiêu đề của một mục phải đứng trên dòng riêng (dùng "### Tiêu đề" hoặc "**Tiêu đề:**"), sau đó xuống dòng trống rồi mới viết nội dung. Không đặt nội dung tiếp ngay sau tiêu đề.
-- Chừa một dòng trống giữa các đoạn, các mục và danh sách. Không dùng dấu "*" rời rạc để nối các ý trong cùng một đoạn.
+_REPORT_STYLE_RULE = """
+QUY TẮC ĐỊNH DẠNG BẮT BUỘC — TRỢ LÝ TÀI LIỆU CHUYÊN NGHIỆP:
+- Luôn sử dụng Markdown cho câu trả lời có nội dung. Riêng CÂU TỪ CHỐI BẮT BUỘC phải được giữ nguyên chính xác và không thêm tiêu đề hay định dạng khác.
+- Dùng "##" cho tiêu đề của phần chính và "###" cho tiêu đề của phần phụ.
+- Luôn chừa một dòng trống sau mỗi tiêu đề.
+- Luôn chừa một dòng trống giữa các đoạn văn.
+- Ưu tiên danh sách gạch đầu dòng thay cho đoạn văn dài.
+- Mỗi đoạn văn không được có quá 3 câu.
+- Khi liệt kê, đặt mỗi ý trên một dòng riêng và bắt đầu bằng "- ".
+- Tuyệt đối không đặt nhiều đầu mục "- " trong cùng một dòng hoặc sau phần văn xuôi; xuống dòng trước mỗi đầu mục.
+- Ưu tiên khả năng đọc, lướt và tra cứu hơn sự cô đọng.
+- Chia thông tin phức tạp thành nhiều phần rõ ràng.
+- Không tạo các khối văn bản lớn.
+- In đậm (**...**) số liệu, điều kiện, quyền lợi, thời hạn hoặc kết luận quan trọng; không in đậm cả đoạn.
+"""
+
+_FOOTER = (
+    _REPORT_STYLE_RULE
+    + """
 
 Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """
+)
 
 # The footer is the LAST thing the model reads, and a small model weights it
 # accordingly: on the reported conversation every coverage answer collapsed to
 # one line ("Không được claim.") despite the shape rule above demanding
 # branches. CLAUDE.md already warns that "ngắn gọn" must not be read as licence
 # to collapse a multi-branch answer — so on coverage turns it is not said.
-_FOOTER_COVERAGE = """
-TRÌNH BÀY DỄ ĐỌC:
-- Dùng tiêu đề Markdown trên dòng riêng cho từng trường hợp và chừa một dòng trống giữa các trường hợp.
-- Dùng danh sách Markdown (mỗi dòng bắt đầu bằng "- ") cho các điều kiện hoặc lưu ý; mỗi ý không quá 2 câu.
+_FOOTER_COVERAGE = (
+    _REPORT_STYLE_RULE
+    + """
+- Với từng trường hợp bảo hiểm, dùng một tiêu đề "###" riêng và nêu kết luận trước các điều kiện áp dụng.
 
 Trả lời bằng tiếng Việt, chính xác, đúng trọng tâm câu hỏi. Trình bày ĐẦY ĐỦ \
 theo từng trường hợp như hướng dẫn ở trên — KHÔNG rút gọn thành một câu kết \
 luận.\
 """
+)
 
 
 # Coverage questions ("tôi bị X thì có được chi trả không?"). The documents
@@ -508,7 +518,8 @@ HYBRID_DISCLAIMER = (
 # ``hits``) — deliberately a SEPARATE, weaker prompt from SYSTEM_PROMPT, never
 # a modification of it: SYSTEM_PROMPT's "answer only from context" rule must
 # never be diluted for the normal (grounded) path.
-HYBRID_SYSTEM_PROMPT = """\
+HYBRID_SYSTEM_PROMPT = (
+    """\
 Bạn là Trợ lý AI Bảo Việt Life. Không tìm thấy đoạn tài liệu công ty nào liên \
 quan đến câu hỏi này.
 
@@ -524,26 +535,45 @@ Life, bạn ĐƯỢC PHÉP trả lời bằng kiến thức chung của mình, t
 thức bằng LaTeX ($...$, $$...$$) khi liên quan.
 3. Trả lời bằng tiếng Việt, ngắn gọn, chính xác, đúng trọng tâm câu hỏi.\
 """
+    + _REPORT_STYLE_RULE
+)
 
 _CONTEXT_HEADER = "Tài liệu: {doc_title} > {section_path}"
 _NO_CONTEXT = "(Không tìm thấy đoạn tài liệu nào liên quan đến câu hỏi.)"
 
 
+def _citation_key(hit: Hit) -> tuple[str, str, str, str, int]:
+    """Stable identity of the exact generation window behind one citation."""
+    payload = hit.payload
+    if payload.parent_index is not None:
+        return (
+            payload.doc_id,
+            payload.doc_title,
+            payload.section_path,
+            "parent",
+            payload.parent_index,
+        )
+    return (
+        payload.doc_id,
+        payload.doc_title,
+        payload.section_path,
+        "chunk",
+        payload.chunk_index,
+    )
+
+
 def citation_numbers(hits: list[Hit]) -> list[int]:
     """Citation marker per hit, shared by ``format_context`` and ``format_sources``.
 
-    Hits from the same (doc_title, section_path) get the SAME number, and the
-    numbers stay contiguous from 1. Enumerating each side independently used to
-    let the two drift apart: the sources block lists a (doc, section) pair once,
-    so a duplicate hit consumed a number in the context that never appeared
-    under "Nguồn tham khảo" — the model would cite ``[2]`` off a real context
-    block and the employee would find no ``[2]`` to click. Under parent-child
-    chunking two children of one parent are exactly that case.
+    Hits widened to the same parent window get the SAME number; otherwise each
+    retrieved chunk has its own number. Grouping only by section is too broad:
+    two passages far apart in one long section need distinct click/highlight
+    targets. Numbers stay contiguous and identical between context and footer.
     """
     numbers: list[int] = []
-    assigned: dict[tuple[str, str], int] = {}
+    assigned: dict[tuple[str, str, str, str, int], int] = {}
     for hit in hits:
-        key = (hit.payload.doc_title, hit.payload.section_path)
+        key = _citation_key(hit)
         if key not in assigned:
             assigned[key] = len(assigned) + 1
         numbers.append(assigned[key])
@@ -600,22 +630,27 @@ def format_sources(hits: list[Hit]) -> str:
     documents (ingested with a public ``source_url``) link straight to that
     public original and are labeled "nguồn công khai" so an employee can tell
     an external reference from an internal company document at a glance — the
-    URL is only ever rendered, never fetched. Otherwise: when the chunk
-    came from an uploaded file the browser can render inline (PDF, image), the
-    link points STRAIGHT at that original file (``GET /documents/{doc_id}/file``),
-    deep-linked to the cited page for PDFs (``#page=N``) — so clicking a citation
-    opens the exact original document, scrollable, the way ChatGPT/Gemini do.
-    Only formats a browser can't render natively (DOCX/XLSX and chunks with no
-    backing upload) fall back to ``/view``, the reconstructed-from-chunks page.
+    URL is only ever rendered, never fetched. Every internal source opens the
+    reconstructed viewer with the cited section and a stable content anchor.
+    That lets the viewer scroll to and highlight the exact retrieved passage;
+    the viewer still links to the original upload for visual verification.
     """
     if not hits:
         return ""
     base = settings.api_public_base_url
     lines = [SOURCES_HEADING]
-    seen: set[tuple[str, str]] = set()
+    grouped_anchors: dict[tuple[str, str, str, str, int], list[str]] = {}
+    for hit in hits:
+        key = _citation_key(hit)
+        payload = hit.payload
+        anchors = grouped_anchors.setdefault(key, [])
+        anchor = citation_anchor(payload.section_path, payload.context_text)
+        if anchor not in anchors:
+            anchors.append(anchor)
+    seen: set[tuple[str, str, str, str, int]] = set()
     for i, hit in zip(citation_numbers(hits), hits, strict=True):
         payload = hit.payload
-        key = (payload.doc_title, payload.section_path)
+        key = _citation_key(hit)
         if key in seen:
             continue
         seen.add(key)
@@ -627,23 +662,14 @@ def format_sources(hits: list[Hit]) -> str:
                 line += f" (trang {payload.page})"
             lines.append(line)
             continue
-        src_ext = (
-            PurePosixPath(payload.source_filename).suffix.lower()
-            if payload.source_filename
-            else ""
-        )
-        if src_ext in _INLINE_SOURCE_EXTS:
-            # Link directly to the uploaded original; PDFs scroll to the page.
-            source_url = f"{base}/documents/{payload.doc_id}/file"
-            if src_ext == ".pdf" and payload.page is not None:
-                source_url += f"#page={int(payload.page)}"
-        else:
-            # No inline-renderable original: reconstructed viewer, deep-linked
-            # to the cited section (and page, for a native-PDF fallback path).
-            section_q = quote(payload.section_path, safe="")
-            source_url = f"{base}/documents/{payload.doc_id}/view?section={section_q}"
-            if payload.page is not None:
-                source_url += f"&page={int(payload.page)}"
+        # Always use the internal viewer for company documents. Native browser
+        # PDF viewers can sometimes honor #page=N, but they cannot reliably
+        # highlight a cited passage and often fall back to page one.
+        params = [f"section={quote(payload.section_path, safe='')}"]
+        params.extend(f"anchor={value}" for value in grouped_anchors[key])
+        if payload.page is not None:
+            params.append(f"page={int(payload.page)}")
+        source_url = f"{base}/documents/{payload.doc_id}/view?{'&'.join(params)}"
         title_link = f"[{payload.doc_title}]({source_url})"
         line = f"- [{i}] {title_link} — {payload.section_path}"
         if payload.page is not None:

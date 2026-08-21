@@ -306,9 +306,14 @@ def test_coverage_turns_are_never_told_to_be_brief() -> None:
 
 def test_prompt_requires_readable_markdown_layout() -> None:
     prompt = system_prompt(general_knowledge=False)
-    assert "TRÌNH BÀY DỄ ĐỌC" in prompt
-    assert 'từng dòng bắt đầu bằng "- "' in prompt
-    assert "Tiêu đề của một mục phải đứng trên dòng riêng" in prompt
+    assert "TRỢ LÝ TÀI LIỆU CHUYÊN NGHIỆP" in prompt
+    assert "Luôn sử dụng Markdown" in prompt
+    assert 'Dùng "##" cho tiêu đề của phần chính' in prompt
+    assert '"###" cho tiêu đề của phần phụ' in prompt
+    assert "một dòng trống sau mỗi tiêu đề" in prompt
+    assert "không được có quá 3 câu" in prompt
+    assert 'bắt đầu bằng "- "' in prompt
+    assert "Không tạo các khối văn bản lớn" in prompt
 
 
 def test_prompt_carries_the_worked_example_for_grouped_exclusions() -> None:

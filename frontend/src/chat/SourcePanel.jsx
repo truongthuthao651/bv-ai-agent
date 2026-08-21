@@ -29,7 +29,7 @@ export function SourcePanelContent({ citation }) {
           textDecoration: "none",
         }}
       >
-        {t("chat.openDocument")}
+        {t("chat.openCitation")}
       </a>
     </>
   );

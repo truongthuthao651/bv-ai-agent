@@ -9,6 +9,7 @@ import json
 import re
 from urllib.parse import quote
 
+from app.citation_target import citation_anchor
 from app.config.settings import settings
 from app.generation.generator import (
     ThinkStripper,
@@ -51,22 +52,25 @@ def _hit(
     source_filename: str | None = None,
     source_url: str | None = None,
     parent_text: str | None = None,
+    parent_index: int | None = None,
+    chunk_index: int = 0,
+    doc_id: str = "d1",
 ) -> Hit:
     payload = QdrantPayload(
-        doc_id="d1",
+        doc_id=doc_id,
         doc_title=doc_title,
         section_path=section_path,
         page=page,
         doc_type=DocType.OTHER,
         display_text=text,
         parent_text=parent_text,
-        parent_index=0 if parent_text else None,
-        chunk_index=0,
+        parent_index=(0 if parent_text and parent_index is None else parent_index),
+        chunk_index=chunk_index,
         source_filename=source_filename,
         source_url=source_url,
         ingested_at="2026-01-01T00:00:00+00:00",
     )
-    return Hit(point_id="p1", score=1.0, payload=payload)
+    return Hit(point_id=f"p-{doc_id}-{chunk_index}", score=1.0, payload=payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -390,23 +394,43 @@ def test_product_summary_prompt_adds_structure_rule() -> None:
 
 def test_format_sources_numbers_match_context_and_dedupes() -> None:
     hits = [
-        _hit("Quy tắc An Tâm", "Điều 5", "A", page=3),
-        _hit("Quy tắc An Tâm", "Điều 5", "B", page=3),  # same doc+section: once
-        _hit("Hướng dẫn dự phòng", "Điều 2", "C"),
+        _hit(
+            "Quy tắc An Tâm",
+            "Điều 5",
+            "A",
+            page=3,
+            chunk_index=4,
+            parent_text="A\n\nB",
+            parent_index=2,
+        ),
+        _hit(
+            "Quy tắc An Tâm",
+            "Điều 5",
+            "B",
+            page=3,
+            chunk_index=5,
+            parent_text="A\n\nB",
+            parent_index=2,
+        ),
+        _hit("Hướng dẫn dự phòng", "Điều 2", "C", chunk_index=9),
     ]
     block = format_sources(hits)
     assert "**Nguồn tham khảo:**" in block
     base = settings.api_public_base_url
-    # Citation links now target the scrollable viewer, deep-linked to the cited
-    # section via a URL-encoded ?section= query.
+    # Citation links target the scrollable viewer with the exact generation
+    # context's stable content anchor, so re-ingestion cannot mis-target it.
     sec5 = quote("Điều 5", safe="")
-    # Page is carried in the link too, so a native PDF opens at the cited page.
-    link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5}&page=3)"
+    anchor5 = citation_anchor("Điều 5", "A\n\nB")
+    link = (
+        f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec5}"
+        f"&anchor={anchor5}&page=3)"
+    )
     assert f"- [1] {link} — Điều 5 (trang 3)" in block
     # The duplicate shares [1] rather than consuming [2]: numbering stays
     # contiguous, so the third source is [2] here AND [2] in the context.
     sec2 = quote("Điều 2", safe="")
-    link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2})"
+    anchor2 = citation_anchor("Điều 2", "C")
+    link2 = f"[Hướng dẫn dự phòng]({base}/documents/d1/view?section={sec2}&anchor={anchor2})"
     assert f"- [2] {link2} — Điều 2" in block
     assert "[3]" not in block
 
@@ -420,10 +444,24 @@ def test_every_context_number_resolves_to_a_source_line() -> None:
     parent-child chunking, two children of one parent are exactly that case.
     """
     hits = [
-        _hit("Quy tắc An Tâm", "Điều 5", "child A"),
-        _hit("Quy tắc An Tâm", "Điều 5", "child B"),  # same parent section
-        _hit("Hướng dẫn dự phòng", "Điều 2", "C"),
-        _hit("Quy tắc An Tâm", "Điều 9", "D"),
+        _hit(
+            "Quy tắc An Tâm",
+            "Điều 5",
+            "child A",
+            chunk_index=0,
+            parent_text="parent",
+            parent_index=0,
+        ),
+        _hit(
+            "Quy tắc An Tâm",
+            "Điều 5",
+            "child B",
+            chunk_index=1,
+            parent_text="parent",
+            parent_index=0,
+        ),
+        _hit("Hướng dẫn dự phòng", "Điều 2", "C", chunk_index=2),
+        _hit("Quy tắc An Tâm", "Điều 9", "D", chunk_index=3),
     ]
     context_numbers = set(
         re.findall(r"^\[(\d+)\] Tài liệu:", format_context(hits), re.M)
@@ -432,32 +470,77 @@ def test_every_context_number_resolves_to_a_source_line() -> None:
     assert context_numbers == source_numbers == {"1", "2", "3"}
 
 
-def test_format_sources_links_pdf_straight_to_original_file_at_page() -> None:
-    # A PDF the browser renders inline: link to the original upload, not the
-    # reconstructed viewer, deep-linked to the cited page via #page=N.
-    hits = [_hit("Quy tắc An Tâm", "Điều 5", "A", page=7, source_filename="an_tam.pdf")]
+def test_format_sources_keeps_distinct_passages_in_one_section_distinct() -> None:
+    hits = [
+        _hit("Quy tắc An Tâm", "Điều 5", "Đoạn đầu.", chunk_index=4),
+        _hit("Quy tắc An Tâm", "Điều 5", "Đoạn cuối.", chunk_index=9),
+    ]
+    block = format_sources(hits)
+    assert re.findall(r"^- \[(\d+)\]", block, re.M) == ["1", "2"]
+    assert citation_anchor("Điều 5", "Đoạn đầu.") in block
+    assert citation_anchor("Điều 5", "Đoạn cuối.") in block
+
+
+def test_format_sources_links_pdf_to_highlightable_viewer() -> None:
+    # Native PDF viewers cannot reliably highlight a cited passage, so even a
+    # PDF citation opens the internal viewer; it offers the original separately.
+    hits = [
+        _hit(
+            "Quy tắc An Tâm",
+            "Điều 5",
+            "A",
+            page=7,
+            source_filename="an_tam.pdf",
+            chunk_index=12,
+        )
+    ]
     block = format_sources(hits)
     base = settings.api_public_base_url
-    link = f"[Quy tắc An Tâm]({base}/documents/d1/file#page=7)"
+    sec = quote("Điều 5", safe="")
+    anchor = citation_anchor("Điều 5", "A")
+    link = f"[Quy tắc An Tâm]({base}/documents/d1/view?section={sec}&anchor={anchor}&page=7)"
     assert f"- [1] {link} — Điều 5 (trang 7)" in block
-    assert "/view?" not in block  # never the rewritten viewer for a PDF original
+    assert "/file" not in block
 
 
-def test_format_sources_links_image_to_original_without_page_fragment() -> None:
-    hits = [_hit("Ảnh scan", "(toàn văn)", "A", page=1, source_filename="scan.png")]
+def test_format_sources_links_image_to_highlightable_viewer() -> None:
+    hits = [
+        _hit(
+            "Ảnh scan",
+            "(toàn văn)",
+            "A",
+            page=1,
+            source_filename="scan.png",
+            chunk_index=3,
+        )
+    ]
     block = format_sources(hits)
     base = settings.api_public_base_url
-    assert f"[Ảnh scan]({base}/documents/d1/file)" in block
-    assert "#page=" not in block  # images have no pages
+    sec = quote("(toàn văn)", safe="")
+    anchor = citation_anchor("(toàn văn)", "A")
+    assert (
+        f"[Ảnh scan]({base}/documents/d1/view?section={sec}&anchor={anchor}&page=1)"
+        in block
+    )
 
 
 def test_format_sources_falls_back_to_viewer_for_non_inline_original() -> None:
     # DOCX can't render inline in a browser, so keep the reconstructed viewer.
     sec = quote("Điều 2", safe="")
-    hits = [_hit("Quy trình", "Điều 2", "A", page=2, source_filename="quy_trinh.docx")]
+    hits = [
+        _hit(
+            "Quy trình",
+            "Điều 2",
+            "A",
+            page=2,
+            source_filename="quy_trinh.docx",
+            chunk_index=6,
+        )
+    ]
     block = format_sources(hits)
     base = settings.api_public_base_url
-    assert f"{base}/documents/d1/view?section={sec}&page=2" in block
+    anchor = citation_anchor("Điều 2", "A")
+    assert f"{base}/documents/d1/view?section={sec}&anchor={anchor}&page=2" in block
 
 
 def test_format_sources_links_knowledge_pack_to_its_public_url() -> None:

@@ -20,6 +20,8 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from app.citation_target import citation_anchor
+
 # CommonMark + GFM tables, raw HTML disabled (display_text is trusted, but
 # escaping raw HTML costs nothing and keeps the viewer XSS-safe by construction).
 _MD = MarkdownIt("commonmark", {"html": False, "linkify": False}).enable("table")
@@ -48,6 +50,35 @@ def _merge_overlap(emitted: list[str], new: list[str]) -> list[str]:
     return emitted + new
 
 
+def _merge_block_entries(
+    emitted: list[dict[str, Any]],
+    new_blocks: list[str],
+    chunk_index: int,
+    parent_index: int | None,
+) -> list[dict[str, Any]]:
+    """De-duplicate chunk overlap while retaining block-to-chunk provenance."""
+    emitted_text = [entry["text"] for entry in emitted]
+    overlap = 0
+    for k in range(min(len(emitted_text), len(new_blocks)), 0, -1):
+        if emitted_text[-k:] == new_blocks[:k]:
+            overlap = k
+            break
+    if overlap:
+        for entry in emitted[-overlap:]:
+            entry["chunk_indexes"].add(chunk_index)
+            if parent_index is not None:
+                entry["parent_indexes"].add(parent_index)
+    emitted.extend(
+        {
+            "text": block,
+            "chunk_indexes": {chunk_index},
+            "parent_indexes": {parent_index} if parent_index is not None else set(),
+        }
+        for block in new_blocks[overlap:]
+    )
+    return emitted
+
+
 def reconstruct_sections(
     chunks: list[dict[str, Any]],
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -62,19 +93,51 @@ def reconstruct_sections(
     for ch in chunks:
         section_path = ch.get("section_path", "") or ""
         blocks = _blocks(ch.get("display_text", "") or "")
+        chunk_index = int(ch.get("chunk_index", 0))
+        parent_index = ch.get("parent_index")
+        parent_index = int(parent_index) if parent_index is not None else None
         if sections and sections[-1]["section_path"] == section_path:
-            sections[-1]["blocks"] = _merge_overlap(sections[-1]["blocks"], blocks)
+            _merge_block_entries(
+                sections[-1]["_block_entries"], blocks, chunk_index, parent_index
+            )
         else:
             sections.append(
                 {
                     "section_path": section_path,
                     "page": ch.get("page"),
-                    "blocks": blocks,
+                    "_block_entries": _merge_block_entries(
+                        [], blocks, chunk_index, parent_index
+                    ),
                 }
             )
     for section in sections:
+        entries = section.pop("_block_entries")
+        section["blocks"] = [entry["text"] for entry in entries]
+        section["block_chunks"] = [sorted(entry["chunk_indexes"]) for entry in entries]
+        section["block_parents"] = [
+            sorted(entry["parent_indexes"]) for entry in entries
+        ]
         section["text"] = "\n\n".join(section["blocks"])
     return doc_title, sections
+
+
+def resolve_highlight_targets(
+    chunks: list[dict[str, Any]], anchors: set[str]
+) -> tuple[set[int], set[int]]:
+    """Resolve stable content anchors to current chunk/parent indexes."""
+    chunk_indexes: set[int] = set()
+    parent_indexes: set[int] = set()
+    for chunk in chunks:
+        section_path = chunk.get("section_path", "") or ""
+        context_text = chunk.get("parent_text") or chunk.get("display_text", "") or ""
+        if citation_anchor(section_path, context_text) not in anchors:
+            continue
+        parent_index = chunk.get("parent_index")
+        if parent_index is not None:
+            parent_indexes.add(int(parent_index))
+        else:
+            chunk_indexes.add(int(chunk.get("chunk_index", 0)))
+    return chunk_indexes, parent_indexes
 
 
 def render_markdown(md_text: str) -> str:
@@ -141,6 +204,15 @@ section.doc-section {
 }
 section.doc-section.target {
   border-color: var(--hl-border); box-shadow: 0 0 0 3px #f7b92833;
+  background: var(--hl);
+}
+section.doc-section.target-section {
+  border-color: var(--hl-border); box-shadow: 0 0 0 3px #f7b92833;
+}
+.citation-highlight.target {
+  background: var(--hl); border-left: 4px solid var(--hl-border);
+  border-radius: 6px; margin: 10px -10px; padding: 4px 10px;
+  scroll-margin-top: 88px;
 }
 .section-path {
   font-size: 12px; font-weight: 700; color: var(--navy);
@@ -166,40 +238,86 @@ def render_page(
     *,
     doc_id: str,
     highlight_section: str | None = None,
+    highlight_chunks: set[int] | None = None,
+    highlight_parents: set[int] | None = None,
     has_source_file: bool = False,
+    original_page: int | None = None,
 ) -> str:
     """Assemble the full standalone HTML viewer page (self-contained)."""
     safe_title = html.escape(doc_title or "Tài liệu")
+    target_chunks = highlight_chunks or set()
+    target_parents = highlight_parents or set()
     parts: list[str] = []
     matched = False
     for i, section in enumerate(sections):
         path = section.get("section_path") or "(toàn văn)"
-        is_target = (
+        block_chunks = section.get("block_chunks", [])
+        block_parents = section.get("block_parents", [[] for _ in block_chunks])
+        target_flags = [
+            bool(
+                target_chunks.intersection(chunk_ids)
+                or target_parents.intersection(parent_ids)
+            )
+            for chunk_ids, parent_ids in zip(block_chunks, block_parents, strict=True)
+        ]
+        has_chunk_target = any(target_flags)
+        is_section_target = (
             not matched
+            and not has_chunk_target
             and highlight_section is not None
             and section.get("section_path") == highlight_section
         )
-        if is_target:
+        if has_chunk_target or is_section_target:
             matched = True
         page = section.get("page")
         page_html = f' <span class="page">· trang {int(page)}</span>' if page else ""
-        body_html = render_markdown(section.get("text", ""))
+
+        if has_chunk_target:
+            rendered_groups: list[str] = []
+            blocks = section.get("blocks", [])
+            start = 0
+            while start < len(blocks):
+                targeted = target_flags[start]
+                end = start + 1
+                while end < len(blocks) and target_flags[end] == targeted:
+                    end += 1
+                rendered = render_markdown("\n\n".join(blocks[start:end]))
+                if targeted:
+                    target_id = ' id="citation-target"' if not rendered_groups else ""
+                    rendered = (
+                        f'<div{target_id} class="citation-highlight target">'
+                        f"{rendered}</div>"
+                    )
+                rendered_groups.append(rendered)
+                start = end
+            body_html = "".join(rendered_groups)
+        else:
+            body_html = render_markdown(section.get("text", ""))
+
+        section_class = "doc-section"
+        if has_chunk_target:
+            section_class += " target-section"
+        elif is_section_target:
+            section_class += " target"
         parts.append(
-            f'<section id="sec-{i}" class="doc-section{" target" if is_target else ""}">'
+            f'<section id="sec-{i}" class="{section_class}">'
             f'<div class="section-path">{html.escape(path)}{page_html}</div>'
             f"{body_html}</section>"
         )
     body = "\n".join(parts) or '<p class="empty">Tài liệu này chưa có nội dung.</p>'
 
+    original_url = f"/documents/{html.escape(doc_id)}/file"
+    if original_page is not None and original_page > 0:
+        original_url += f"#page={int(original_page)}"
     download = (
-        f'<a class="dl" href="/documents/{html.escape(doc_id)}/file">Tải bản gốc ↓</a>'
+        f'<a class="dl" href="{original_url}">Mở bản gốc ↓</a>'
         if has_source_file
         else ""
     )
     # Scroll the highlighted section into view once loaded (inline, no CDN).
     scroll_js = (
         '<script>document.addEventListener("DOMContentLoaded",function(){'
-        'var t=document.querySelector(".doc-section.target");'
+        'var t=document.querySelector(".citation-highlight.target,.doc-section.target");'
         'if(t){t.scrollIntoView({behavior:"smooth",block:"start"});}});</script>'
         if matched
         else ""

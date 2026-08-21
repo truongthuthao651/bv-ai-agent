@@ -13,7 +13,7 @@ import unicodedata
 import uuid
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -323,7 +323,14 @@ async def get_document_file(doc_id: str) -> FileResponse:
     return FileResponse(path, filename=path.name, content_disposition_type="inline")
 
 
-def _render_view(doc_id: str, highlight_section: str | None) -> str | None:
+def _render_view(
+    doc_id: str,
+    highlight_section: str | None,
+    highlight_chunks: set[int] | None = None,
+    highlight_parents: set[int] | None = None,
+    highlight_anchors: set[str] | None = None,
+    page: int | None = None,
+) -> str | None:
     """Build the HTML viewer page for a document, or None if it isn't indexed.
 
     PDFs/images are left to ``/file`` (the caller redirects); everything else is
@@ -333,36 +340,78 @@ def _render_view(doc_id: str, highlight_section: str | None) -> str | None:
     chunks = indexer.get_document_chunks(doc_id)
     if not chunks:
         return None
+    if highlight_anchors:
+        # An anchor is authoritative: if the document changed and it no longer
+        # resolves, fall back to the named section rather than highlighting a
+        # now-unrelated positional chunk index.
+        highlight_chunks, highlight_parents = docview.resolve_highlight_targets(
+            chunks, highlight_anchors
+        )
     doc_title, sections = docview.reconstruct_sections(chunks)
+    source_path = _source_path_for(doc_id)
+    original_page = (
+        page
+        if source_path is not None and source_path.suffix.lower() == ".pdf"
+        else None
+    )
     return docview.render_page(
         doc_title,
         sections,
         doc_id=doc_id,
         highlight_section=highlight_section,
-        has_source_file=_source_path_for(doc_id) is not None,
+        highlight_chunks=highlight_chunks,
+        highlight_parents=highlight_parents,
+        has_source_file=source_path is not None,
+        original_page=original_page,
     )
 
 
 @router.get("/documents/{doc_id}/view", response_class=HTMLResponse)
 async def view_document(
-    doc_id: str, section: str | None = None, page: int | None = None
+    doc_id: str,
+    section: str | None = None,
+    page: int | None = None,
+    chunk: list[int] | None = Query(default=None),
+    parent: list[int] | None = Query(default=None),
+    anchor: list[str] | None = Query(default=None),
 ):
     """Scrollable rendered view of a source document (citation link target).
 
-    For PDFs/images with a backing upload, redirect to ``/file`` so the browser
-    renders the real document natively; otherwise rebuild a readable HTML page
-    from the indexed chunks. ``section`` deep-links to a cited section; ``page``
-    scrolls a native PDF straight to the cited page via the ``#page=N`` fragment
-    that browser PDF viewers honor (like ChatGPT/Gemini source previews).
+    A plain document link still opens PDFs/images natively. A citation link
+    carries ``section`` and one or more ``chunk`` indexes, so it uses the HTML
+    viewer to scroll to and highlight the exact retrieved passage. ``page`` is
+    retained on the viewer's "Mở bản gốc" PDF link for visual verification.
     """
     path = await run_in_threadpool(_source_path_for, doc_id)
-    if path is not None and path.suffix.lower() in _INLINE_VIEW_EXTS:
+    if (
+        path is not None
+        and path.suffix.lower() in _INLINE_VIEW_EXTS
+        and section is None
+        and not chunk
+        and not parent
+        and not anchor
+    ):
         url = f"/documents/{doc_id}/file"
         if page is not None and page > 0 and path.suffix.lower() == ".pdf":
             url += f"#page={int(page)}"
         return RedirectResponse(url=url, status_code=307)
 
-    rendered = await run_in_threadpool(_render_view, doc_id, section)
+    highlight_chunks = {value for value in (chunk or []) if value >= 0}
+    highlight_parents = {value for value in (parent or []) if value >= 0}
+    highlight_anchors = {
+        value.lower()
+        for value in (anchor or [])
+        if re.fullmatch(r"[0-9a-fA-F]{20}", value)
+    }
+    rendered = await run_in_threadpool(
+        _render_view,
+        doc_id,
+        section,
+        highlight_chunks,
+        highlight_parents,
+        highlight_anchors,
+        page,
+    )
     if rendered is None:
         raise HTTPException(
             status_code=404, detail="Không tìm thấy tài liệu với doc_id này."
